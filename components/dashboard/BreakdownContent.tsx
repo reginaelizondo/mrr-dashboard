@@ -5,6 +5,7 @@ import { parseFiltersFromParams, applyFilters } from '@/lib/filters';
 import { SourceBreakdownChart } from '@/components/charts/SourceBreakdownChart';
 import { RegionBreakdownChart } from '@/components/charts/RegionBreakdownChart';
 import { PlanBreakdownChart } from '@/components/charts/PlanBreakdownChart';
+import { CommissionsBreakdownChart } from '@/components/charts/CommissionsBreakdownChart';
 import { ExportButton } from '@/components/dashboard/ExportButton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { MrrDailySnapshot } from '@/types';
@@ -45,6 +46,12 @@ export function BreakdownContent({
           >
             By Plan
           </TabsTrigger>
+          <TabsTrigger
+            value="commissions"
+            className="data-[state=active]:bg-[#E53E3E] data-[state=active]:text-white data-[state=active]:shadow-sm"
+          >
+            Commissions
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="source" className="mt-4">
           <SourceBreakdownChart data={filtered} />
@@ -54,6 +61,9 @@ export function BreakdownContent({
         </TabsContent>
         <TabsContent value="plan" className="mt-4">
           <PlanBreakdownChart data={filtered} />
+        </TabsContent>
+        <TabsContent value="commissions" className="mt-4">
+          <CommissionsBreakdownChart data={filtered} />
         </TabsContent>
       </Tabs>
     </div>
