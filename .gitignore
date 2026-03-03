@@ -32,6 +32,11 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.local.example
+
+# credentials
+*.p8
+*-service-account*.json
 
 # vercel
 .vercel
