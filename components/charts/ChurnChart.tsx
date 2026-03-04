@@ -22,21 +22,37 @@ interface ChurnChartProps {
 interface ChurnData {
   date: string;
   activeSubs: number;
+  newSubs: number;
   lostSubs: number;
   churnRate: number;
 }
 
+/**
+ * Compute churn data from snapshots.
+ * Lost subs = previous active + new this month − current active
+ * Churn rate = lost / previous active × 100
+ */
 function computeChurnData(data: MrrDailySnapshot[]): ChurnData[] {
-  return data.map((s) => {
-    const totalSubs = Number(s.new_subscriptions) + Number(s.renewals);
-    const lostSubs = Number(s.refund_count);
-    // Churn rate = lost / (active + lost) to estimate the subscriber base churn
-    const base = totalSubs + lostSubs;
-    const churnRate = base > 0 ? (lostSubs / base) * 100 : 0;
+  return data.map((s, i) => {
+    const activeSubs = Number(s.active_subscriptions || 0);
+    const newSubs = Number(s.new_subscriptions || 0);
+
+    let lostSubs = 0;
+    let churnRate = 0;
+
+    if (i > 0) {
+      const prevActive = Number(data[i - 1].active_subscriptions || 0);
+      // Lost = subs that were active last month but aren't this month
+      // prevActive + newSubs - activeSubs = churned out
+      lostSubs = Math.max(0, prevActive + newSubs - activeSubs);
+      // Churn rate relative to previous month's base
+      churnRate = prevActive > 0 ? (lostSubs / prevActive) * 100 : 0;
+    }
 
     return {
       date: s.snapshot_date,
-      activeSubs: totalSubs,
+      activeSubs,
+      newSubs,
       lostSubs,
       churnRate: Number(churnRate.toFixed(1)),
     };
@@ -46,7 +62,7 @@ function computeChurnData(data: MrrDailySnapshot[]): ChurnData[] {
 function CustomTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ name: string; value: number; color: string; dataKey?: string }>; label?: string }) {
   if (!active || !payload || !payload.length) return null;
   return (
-    <div className="rounded-xl border border-border/50 bg-white p-3 shadow-xl min-w-[200px]">
+    <div className="rounded-xl border border-border/50 bg-white p-3 shadow-xl min-w-[220px]">
       <p className="text-xs font-medium text-muted-foreground mb-2">
         {label ? new Date(String(label) + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' }) : ''}
       </p>
@@ -69,7 +85,8 @@ export function ChurnChart({ data }: ChurnChartProps) {
   const exportData = chartData.map((d) => ({
     Period: d.date,
     'Active Subscriptions': d.activeSubs,
-    'Lost (Refunds)': d.lostSubs,
+    'New Subscriptions': d.newSubs,
+    'Lost Subscriptions': d.lostSubs,
     'Churn Rate (%)': d.churnRate,
   }));
 
@@ -81,6 +98,9 @@ export function ChurnChart({ data }: ChurnChartProps) {
           <CardTitle className="text-base font-semibold text-[#0E3687]">Active vs Lost Subscriptions</CardTitle>
           <ChartExportButton data={exportData} filename="churn-analysis" />
         </div>
+        <p className="text-xs text-muted-foreground mt-1">
+          Lost = subscriptions that expired or didn&apos;t renew (previous active + new − current active)
+        </p>
       </CardHeader>
       <CardContent>
         <div className="h-[350px]">
@@ -123,7 +143,7 @@ export function ChurnChart({ data }: ChurnChartProps) {
               <Bar
                 yAxisId="left"
                 dataKey="lostSubs"
-                name="Lost (Refunds)"
+                name="Lost Subscriptions"
                 fill="#E53E3E"
                 radius={[4, 4, 0, 0]}
               />

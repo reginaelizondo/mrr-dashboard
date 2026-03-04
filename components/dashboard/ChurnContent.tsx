@@ -7,8 +7,7 @@ import { ChurnByPlanChart } from '@/components/charts/ChurnByPlanChart';
 import { MetricCard } from '@/components/dashboard/MetricCard';
 import { ExportButton } from '@/components/dashboard/ExportButton';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { formatCurrency } from '@/lib/constants';
-import { Users, TrendingDown, Percent, DollarSign, Clock, AlertTriangle } from 'lucide-react';
+import { Users, TrendingDown, DollarSign, Clock, AlertTriangle } from 'lucide-react';
 import type { MrrDailySnapshot } from '@/types';
 
 export function ChurnContent({ snapshots }: { snapshots: MrrDailySnapshot[] }) {
@@ -18,40 +17,59 @@ export function ChurnContent({ snapshots }: { snapshots: MrrDailySnapshot[] }) {
   const totals = computeTotals(filtered);
   const periodLabel = getPeriodLabel(filtered);
 
-  // Churn metrics
-  const totalSubsCount = totals.newSubs + totals.renewals;
-  const churnRate = totalSubsCount + totals.refundCount > 0
-    ? (totals.refundCount / (totalSubsCount + totals.refundCount)) * 100
-    : 0;
-
-  // Weighted monthly churn: weight each month's churn by its subscriber volume
+  // ─── Churn metrics using active_subscriptions ───
+  // Calculate lost subs per month and weighted churn
+  let totalLost = 0;
   let weightedChurn = 0;
   let totalWeight = 0;
-  for (const s of filtered) {
-    const subs = Number(s.new_subscriptions) + Number(s.renewals);
-    const lost = Number(s.refund_count);
-    const base = subs + lost;
-    if (base > 0) {
-      const monthChurn = lost / base;
-      weightedChurn += monthChurn * base;
-      totalWeight += base;
+  const monthlyChurnRates: number[] = [];
+
+  for (let i = 1; i < filtered.length; i++) {
+    const prevActive = Number(filtered[i - 1].active_subscriptions || 0);
+    const currActive = Number(filtered[i].active_subscriptions || 0);
+    const currNew = Number(filtered[i].new_subscriptions || 0);
+
+    // Lost = previous active + new this month - current active
+    const lost = Math.max(0, prevActive + currNew - currActive);
+    totalLost += lost;
+
+    // Monthly churn rate = lost / previous active base
+    if (prevActive > 0) {
+      const monthChurn = lost / prevActive;
+      monthlyChurnRates.push(monthChurn);
+      weightedChurn += monthChurn * prevActive;
+      totalWeight += prevActive;
     }
   }
+
   const avgWeightedChurn = totalWeight > 0 ? (weightedChurn / totalWeight) * 100 : 0;
 
-  // LTV estimation: Average Revenue Per User / Monthly Churn Rate
-  // ARPU = total net revenue / total subscribers over the period
-  const arpu = totalSubsCount > 0 ? totals.net / totalSubsCount : 0;
+  // Latest month active subs
+  const latestActive = filtered.length > 0
+    ? Number(filtered[filtered.length - 1].active_subscriptions || 0)
+    : 0;
+
+  // ARPU = total net revenue / total active subscription-months
+  const totalActiveSubs = filtered.reduce((sum, s) => sum + Number(s.active_subscriptions || 0), 0);
+  const arpu = totalActiveSubs > 0 ? totals.net / totalActiveSubs : 0;
+
+  // LTV estimation: ARPU / Monthly Churn Rate
   const monthlyChurnDecimal = avgWeightedChurn / 100;
   const ltv = monthlyChurnDecimal > 0 ? arpu / monthlyChurnDecimal : 0;
 
-  // MoM lost renewals trend (last vs prior month)
+  // MoM lost trend (last vs prior month)
   let lostTrend = 0;
-  if (filtered.length >= 2) {
-    const latest = filtered[filtered.length - 1];
-    const prior = filtered[filtered.length - 2];
-    if (prior.refund_count > 0) {
-      lostTrend = ((latest.refund_count - prior.refund_count) / prior.refund_count) * 100;
+  if (filtered.length >= 3) {
+    const prevPrevActive = Number(filtered[filtered.length - 3].active_subscriptions || 0);
+    const prevActive = Number(filtered[filtered.length - 2].active_subscriptions || 0);
+    const prevNew = Number(filtered[filtered.length - 2].new_subscriptions || 0);
+    const currActive = Number(filtered[filtered.length - 1].active_subscriptions || 0);
+    const currNew = Number(filtered[filtered.length - 1].new_subscriptions || 0);
+
+    const prevLost = Math.max(0, prevPrevActive + prevNew - prevActive);
+    const currLost = Math.max(0, prevActive + currNew - currActive);
+    if (prevLost > 0) {
+      lostTrend = ((currLost - prevLost) / prevLost) * 100;
     }
   }
 
@@ -99,18 +117,19 @@ export function ChurnContent({ snapshots }: { snapshots: MrrDailySnapshot[] }) {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard
           label="Active Subscriptions"
-          value={totalSubsCount}
+          value={latestActive}
           format="number"
           icon={Users}
           accentColor="teal"
-          subtitle="New + renewals"
+          subtitle="Current month (by spreading)"
         />
         <MetricCard
-          label="Lost (Refunds)"
-          value={totals.refundCount}
+          label="Lost Subscriptions"
+          value={totalLost}
           format="number"
           icon={TrendingDown}
           accentColor="rose"
+          subtitle="Expired / didn't renew"
         />
         <MetricCard
           label="Refund Amount"
@@ -125,7 +144,7 @@ export function ChurnContent({ snapshots }: { snapshots: MrrDailySnapshot[] }) {
           format="currency"
           icon={Clock}
           accentColor="navy"
-          subtitle="Avg revenue per user"
+          subtitle="Avg revenue per active sub"
         />
       </div>
 
@@ -139,6 +158,9 @@ export function ChurnContent({ snapshots }: { snapshots: MrrDailySnapshot[] }) {
         <div className="h-1 bg-gradient-to-r from-[#45C94E] via-[#F59E0B] to-[#E53E3E]" />
         <CardHeader>
           <CardTitle className="text-base font-semibold text-[#0E3687]">Monthly Churn Detail</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Lost = subscriptions that expired or didn&apos;t renew (prev active + new − current active)
+          </p>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
@@ -146,29 +168,40 @@ export function ChurnContent({ snapshots }: { snapshots: MrrDailySnapshot[] }) {
               <thead>
                 <tr className="border-b border-border/50 bg-[#F8F9FB]">
                   <th className="text-left py-3 px-3 font-semibold text-[#0E3687] text-xs uppercase tracking-wider">Period</th>
+                  <th className="text-right py-3 px-3 font-semibold text-[#0E3687] text-xs uppercase tracking-wider">Active</th>
                   <th className="text-right py-3 px-3 font-semibold text-[#0E3687] text-xs uppercase tracking-wider">New</th>
                   <th className="text-right py-3 px-3 font-semibold text-[#0E3687] text-xs uppercase tracking-wider">Renewals</th>
                   <th className="text-right py-3 px-3 font-semibold text-[#0E3687] text-xs uppercase tracking-wider">Lost</th>
                   <th className="text-right py-3 px-3 font-semibold text-[#0E3687] text-xs uppercase tracking-wider">Churn %</th>
-                  <th className="text-right py-3 px-3 font-semibold text-[#0E3687] text-xs uppercase tracking-wider">Refund $</th>
                   <th className="text-right py-3 px-3 font-semibold text-[#0E3687] text-xs uppercase tracking-wider">Net Change</th>
                   <th className="text-right py-3 px-3 font-semibold text-[#0E3687] text-xs uppercase tracking-wider">MoM Lost</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((s, i) => {
-                  const subs = Number(s.new_subscriptions) + Number(s.renewals);
-                  const lost = Number(s.refund_count);
-                  const base = subs + lost;
-                  const churn = base > 0 ? ((lost / base) * 100).toFixed(1) : '0.0';
-                  const netChange = subs - lost;
+                  const activeSubs = Number(s.active_subscriptions || 0);
+                  const newSubs = Number(s.new_subscriptions || 0);
+                  const renewalCount = Number(s.renewals || 0);
+
+                  let lost = 0;
+                  let churnPct = '0.0';
+                  if (i > 0) {
+                    const prevActive = Number(filtered[i - 1].active_subscriptions || 0);
+                    lost = Math.max(0, prevActive + newSubs - activeSubs);
+                    churnPct = prevActive > 0 ? ((lost / prevActive) * 100).toFixed(1) : '0.0';
+                  }
+
+                  const netChange = activeSubs - Number(i > 0 ? filtered[i - 1].active_subscriptions || 0 : 0);
 
                   // MoM change in lost subs
                   let momLost = '';
-                  if (i > 0) {
-                    const prevLost = Number(filtered[i - 1].refund_count);
+                  if (i > 1) {
+                    const ppActive = Number(filtered[i - 2].active_subscriptions || 0);
+                    const pActive = Number(filtered[i - 1].active_subscriptions || 0);
+                    const pNew = Number(filtered[i - 1].new_subscriptions || 0);
+                    const prevLost = Math.max(0, ppActive + pNew - pActive);
                     const diff = lost - prevLost;
-                    momLost = diff >= 0 ? `+${diff}` : `${diff}`;
+                    momLost = diff >= 0 ? `+${diff.toLocaleString()}` : `${diff.toLocaleString()}`;
                   }
 
                   const d = new Date(s.snapshot_date + 'T00:00:00Z');
@@ -178,17 +211,21 @@ export function ChurnContent({ snapshots }: { snapshots: MrrDailySnapshot[] }) {
                   return (
                     <tr key={s.snapshot_date} className={`border-b border-border/30 last:border-0 hover:bg-[#F0F4FF]/50 transition-colors ${i % 2 === 0 ? '' : 'bg-[#F8F9FB]/50'}`}>
                       <td className="py-2.5 px-3 font-medium">{periodStr}</td>
-                      <td className="text-right py-2.5 px-3 tabular-nums text-[#0086D8]">{s.new_subscriptions.toLocaleString()}</td>
-                      <td className="text-right py-2.5 px-3 tabular-nums text-[#45C94E]">{s.renewals.toLocaleString()}</td>
-                      <td className="text-right py-2.5 px-3 tabular-nums text-[#E53E3E] font-medium">{lost.toLocaleString()}</td>
+                      <td className="text-right py-2.5 px-3 tabular-nums text-[#0E3687] font-medium">{activeSubs.toLocaleString()}</td>
+                      <td className="text-right py-2.5 px-3 tabular-nums text-[#0086D8]">{newSubs.toLocaleString()}</td>
+                      <td className="text-right py-2.5 px-3 tabular-nums text-[#45C94E]">{renewalCount.toLocaleString()}</td>
+                      <td className="text-right py-2.5 px-3 tabular-nums text-[#E53E3E] font-medium">{i === 0 ? '—' : lost.toLocaleString()}</td>
                       <td className="text-right py-2.5 px-3 tabular-nums">
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${Number(churn) > 10 ? 'bg-red-100 text-red-700' : Number(churn) > 5 ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
-                          {churn}%
-                        </span>
+                        {i === 0 ? (
+                          <span className="text-muted-foreground">—</span>
+                        ) : (
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${Number(churnPct) > 10 ? 'bg-red-100 text-red-700' : Number(churnPct) > 5 ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
+                            {churnPct}%
+                          </span>
+                        )}
                       </td>
-                      <td className="text-right py-2.5 px-3 tabular-nums text-[#E53E3E]">{formatCurrency(Number(s.total_refunds))}</td>
-                      <td className={`text-right py-2.5 px-3 tabular-nums font-medium ${netChange >= 0 ? 'text-[#45C94E]' : 'text-[#E53E3E]'}`}>
-                        {netChange >= 0 ? '+' : ''}{netChange.toLocaleString()}
+                      <td className={`text-right py-2.5 px-3 tabular-nums font-medium ${i === 0 ? 'text-muted-foreground' : netChange >= 0 ? 'text-[#45C94E]' : 'text-[#E53E3E]'}`}>
+                        {i === 0 ? '—' : `${netChange >= 0 ? '+' : ''}${netChange.toLocaleString()}`}
                       </td>
                       <td className={`text-right py-2.5 px-3 tabular-nums font-medium ${momLost.startsWith('+') ? 'text-[#E53E3E]' : momLost.startsWith('-') ? 'text-[#45C94E]' : 'text-muted-foreground'}`}>
                         {momLost || '—'}

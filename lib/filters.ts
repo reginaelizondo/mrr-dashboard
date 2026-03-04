@@ -174,8 +174,25 @@ export function computeTotals(snapshots: MrrDailySnapshot[]) {
       newSubs: 0,
       renewals: 0,
       refundCount: 0,
+      activeSubs: 0,
+      lostSubs: 0,
     };
   }
+
+  // Calculate lost subscriptions from month-over-month active sub changes
+  let totalLost = 0;
+  for (let i = 1; i < snapshots.length; i++) {
+    const prevActive = Number(snapshots[i - 1].active_subscriptions || 0);
+    const currActive = Number(snapshots[i].active_subscriptions || 0);
+    const currNew = Number(snapshots[i].new_subscriptions || 0);
+    // Lost = previous active + new this month - current active
+    // (if you had 1000 active, got 200 new, but now have 1050, you lost 150)
+    const lost = Math.max(0, prevActive + currNew - currActive);
+    totalLost += lost;
+  }
+
+  // Latest month's active subs
+  const latestActive = Number(snapshots[snapshots.length - 1].active_subscriptions || 0);
 
   return {
     gross: sumField(snapshots, 'mrr_gross'),
@@ -187,6 +204,8 @@ export function computeTotals(snapshots: MrrDailySnapshot[]) {
     newSubs: sumField(snapshots, 'new_subscriptions'),
     renewals: sumField(snapshots, 'renewals'),
     refundCount: sumField(snapshots, 'refund_count'),
+    activeSubs: latestActive,
+    lostSubs: totalLost,
   };
 }
 

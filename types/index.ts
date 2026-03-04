@@ -65,6 +65,7 @@ export interface MrrDailySnapshot {
   renewals: number;
   trial_conversions: number;
   refund_count: number;
+  active_subscriptions: number;
   // Cash basis fields (charges in THIS month only, normalized to monthly)
   mrr_cash_gross?: number;
   mrr_cash_net?: number;

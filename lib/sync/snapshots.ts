@@ -251,6 +251,7 @@ export async function computeMonthlySnapshot(date: string): Promise<void> {
     renewals: totalRenewals,
     trial_conversions: trialConversions,
     refund_count: refunds.length,
+    active_subscriptions: activeCharges.length,
 
     // Cash basis fields kept for backward compat
     mrr_cash_gross: mrrGross,
@@ -264,12 +265,12 @@ export async function computeMonthlySnapshot(date: string): Promise<void> {
     .from('mrr_daily_snapshots')
     .upsert(snapshot, { onConflict: 'snapshot_date' });
 
-  if (upsertError && upsertError.message.includes('mrr_cash')) {
-    console.log(`[Snapshot ${monthStartStr}] Cash basis columns not yet in DB, upserting without them...`);
-    const { mrr_cash_gross, mrr_cash_net, mrr_cash_apple_gross, mrr_cash_google_gross, mrr_cash_stripe_gross, ...snapshotWithoutCash } = snapshot;
+  if (upsertError && (upsertError.message.includes('mrr_cash') || upsertError.message.includes('active_subscriptions'))) {
+    console.log(`[Snapshot ${monthStartStr}] Some columns not yet in DB, upserting without them...`);
+    const { mrr_cash_gross, mrr_cash_net, mrr_cash_apple_gross, mrr_cash_google_gross, mrr_cash_stripe_gross, active_subscriptions, ...snapshotMinimal } = snapshot;
     const { error: retryError } = await supabase
       .from('mrr_daily_snapshots')
-      .upsert(snapshotWithoutCash, { onConflict: 'snapshot_date' });
+      .upsert(snapshotMinimal, { onConflict: 'snapshot_date' });
     upsertError = retryError;
   }
 
