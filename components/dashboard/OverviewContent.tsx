@@ -28,7 +28,10 @@ export function OverviewContent({ snapshots }: { snapshots: MrrDailySnapshot[] }
   // ARR, growth, and goal always use ALL snapshots (unfiltered) for accuracy
   const allSorted = [...snapshots].sort((a, b) => a.snapshot_date.localeCompare(b.snapshot_date));
   const latestMrr = allSorted.length > 0 ? Number(allSorted[allSorted.length - 1].mrr_net) : 0;
-  const arr = latestMrr * 12;
+
+  // ARR = Trailing Twelve Months (sum of last 12 months of MRR net)
+  const last12 = allSorted.slice(-12);
+  const arr = last12.reduce((sum, s) => sum + Number(s.mrr_net), 0);
 
   // MoM growth (always from latest 2 months, unfiltered)
   let momGrowth = 0;
@@ -99,7 +102,7 @@ export function OverviewContent({ snapshots }: { snapshots: MrrDailySnapshot[] }
           value={arr}
           icon={DollarSign}
           accentColor="navy"
-          subtitle="Latest MRR × 12"
+          subtitle="Trailing 12 months (TTM)"
         />
         <MetricCard
           label="MoM Growth"
