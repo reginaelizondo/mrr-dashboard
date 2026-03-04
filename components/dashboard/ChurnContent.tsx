@@ -7,7 +7,7 @@ import { ChurnByPlanChart } from '@/components/charts/ChurnByPlanChart';
 import { MetricCard } from '@/components/dashboard/MetricCard';
 import { ExportButton } from '@/components/dashboard/ExportButton';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Users, TrendingDown, DollarSign, Clock, AlertTriangle } from 'lucide-react';
+import { Users, TrendingDown, AlertTriangle } from 'lucide-react';
 import type { MrrDailySnapshot } from '@/types';
 
 export function ChurnContent({ snapshots }: { snapshots: MrrDailySnapshot[] }) {
@@ -49,14 +49,6 @@ export function ChurnContent({ snapshots }: { snapshots: MrrDailySnapshot[] }) {
     ? Number(filtered[filtered.length - 1].active_subscriptions || 0)
     : 0;
 
-  // ARPU = total net revenue / total active subscription-months
-  const totalActiveSubs = filtered.reduce((sum, s) => sum + Number(s.active_subscriptions || 0), 0);
-  const arpu = totalActiveSubs > 0 ? totals.net / totalActiveSubs : 0;
-
-  // LTV estimation: ARPU / Monthly Churn Rate
-  const monthlyChurnDecimal = avgWeightedChurn / 100;
-  const ltv = monthlyChurnDecimal > 0 ? arpu / monthlyChurnDecimal : 0;
-
   // MoM lost trend (last vs prior month)
   let lostTrend = 0;
   if (filtered.length >= 3) {
@@ -85,8 +77,8 @@ export function ChurnContent({ snapshots }: { snapshots: MrrDailySnapshot[] }) {
         <ExportButton snapshots={filtered} />
       </div>
 
-      {/* Row 1: Key churn metrics */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      {/* Key churn metrics */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard
           label="Monthly Churn Rate"
           value={avgWeightedChurn}
@@ -95,26 +87,6 @@ export function ChurnContent({ snapshots }: { snapshots: MrrDailySnapshot[] }) {
           accentColor="red"
           subtitle="Weighted avg across period"
         />
-        <MetricCard
-          label="Estimated LTV"
-          value={ltv}
-          format="currency"
-          icon={DollarSign}
-          accentColor="green"
-          subtitle="ARPU / monthly churn"
-        />
-        <MetricCard
-          label="Lost Subs Trend"
-          value={lostTrend}
-          format="percent"
-          icon={AlertTriangle}
-          accentColor={lostTrend > 0 ? 'red' : 'green'}
-          subtitle="Last month vs prior"
-        />
-      </div>
-
-      {/* Row 2: Volume metrics */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard
           label="Active Subscriptions"
           value={latestActive}
@@ -132,19 +104,12 @@ export function ChurnContent({ snapshots }: { snapshots: MrrDailySnapshot[] }) {
           subtitle="Expired / didn't renew"
         />
         <MetricCard
-          label="Refund Amount"
-          value={totals.refunds}
-          format="currency"
-          icon={DollarSign}
-          accentColor="rose"
-        />
-        <MetricCard
-          label="ARPU (Net)"
-          value={arpu}
-          format="currency"
-          icon={Clock}
-          accentColor="navy"
-          subtitle="Avg revenue per active sub"
+          label="Lost Subs Trend"
+          value={lostTrend}
+          format="percent"
+          icon={AlertTriangle}
+          accentColor={lostTrend > 0 ? 'red' : 'green'}
+          subtitle="Last month vs prior"
         />
       </div>
 
