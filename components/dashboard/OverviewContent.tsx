@@ -25,25 +25,26 @@ export function OverviewContent({ snapshots }: { snapshots: MrrDailySnapshot[] }
 
   const commissionPct = totals.gross > 0 ? ((totals.commissions / totals.gross) * 100).toFixed(1) : '0.0';
 
-  // Latest month MRR for ARR calculation
-  const latestMrr = filtered.length > 0 ? Number(filtered[filtered.length - 1].mrr_net) : 0;
+  // ARR, growth, and goal always use ALL snapshots (unfiltered) for accuracy
+  const allSorted = [...snapshots].sort((a, b) => a.snapshot_date.localeCompare(b.snapshot_date));
+  const latestMrr = allSorted.length > 0 ? Number(allSorted[allSorted.length - 1].mrr_net) : 0;
   const arr = latestMrr * 12;
 
-  // MoM growth
+  // MoM growth (always from latest 2 months, unfiltered)
   let momGrowth = 0;
-  if (filtered.length >= 2) {
-    const prev = Number(filtered[filtered.length - 2].mrr_net);
-    const curr = Number(filtered[filtered.length - 1].mrr_net);
+  if (allSorted.length >= 2) {
+    const prev = Number(allSorted[allSorted.length - 2].mrr_net);
+    const curr = Number(allSorted[allSorted.length - 1].mrr_net);
     if (prev > 0) momGrowth = ((curr - prev) / prev) * 100;
   }
 
-  // 6-month growth multiplier
+  // 6-month growth multiplier (always from unfiltered data)
   let sixMonthMultiplier = 0;
-  if (filtered.length >= 7) {
-    const sixAgo = Number(filtered[filtered.length - 7].mrr_net);
+  if (allSorted.length >= 7) {
+    const sixAgo = Number(allSorted[allSorted.length - 7].mrr_net);
     if (sixAgo > 0) sixMonthMultiplier = latestMrr / sixAgo;
-  } else if (filtered.length >= 2) {
-    const first = Number(filtered[0].mrr_net);
+  } else if (allSorted.length >= 2) {
+    const first = Number(allSorted[0].mrr_net);
     if (first > 0) sixMonthMultiplier = latestMrr / first;
   }
 
@@ -120,6 +121,7 @@ export function OverviewContent({ snapshots }: { snapshots: MrrDailySnapshot[] }
           label="Road to $6M ARR"
           current={arr}
           goal={ARR_GOAL}
+          subtitle="Based on current run rate"
         />
       </div>
 

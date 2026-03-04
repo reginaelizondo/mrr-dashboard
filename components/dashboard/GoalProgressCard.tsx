@@ -9,9 +9,10 @@ interface GoalProgressCardProps {
   current: number;
   goal: number;
   format?: 'currency' | 'number';
+  subtitle?: string;
 }
 
-export function GoalProgressCard({ label, current, goal, format = 'currency' }: GoalProgressCardProps) {
+export function GoalProgressCard({ label, current, goal, format = 'currency', subtitle }: GoalProgressCardProps) {
   const pct = goal > 0 ? (current / goal) * 100 : 0;
   const clampedPct = Math.min(pct, 100);
   const exceeded = pct > 100;
