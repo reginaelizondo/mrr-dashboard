@@ -3,12 +3,18 @@
 import { useSearchParams } from 'next/navigation';
 import { parseFiltersFromParams, applyFilters, computeTotals, getPeriodLabel } from '@/lib/filters';
 import { MetricCard } from '@/components/dashboard/MetricCard';
+import { GoalProgressCard } from '@/components/dashboard/GoalProgressCard';
 import { SourceBreakdownChart } from '@/components/charts/SourceBreakdownChart';
 import { ActiveSubsBySourceChart } from '@/components/charts/ActiveSubsBySourceChart';
 import { RevenueCostsChart } from '@/components/charts/RevenueCostsChart';
+import { MonthlyGrowthChart } from '@/components/charts/MonthlyGrowthChart';
+import { NetNewMrrChart } from '@/components/charts/NetNewMrrChart';
 import { ExportButton } from '@/components/dashboard/ExportButton';
-import { TrendingUp, DollarSign, Percent, RotateCcw } from 'lucide-react';
+import { TrendingUp, DollarSign, Percent, RotateCcw, Zap, Activity } from 'lucide-react';
 import type { MrrDailySnapshot } from '@/types';
+
+// ARR Goal — adjust as needed
+const ARR_GOAL = 3_000_000;
 
 export function OverviewContent({ snapshots }: { snapshots: MrrDailySnapshot[] }) {
   const searchParams = useSearchParams();
@@ -18,6 +24,28 @@ export function OverviewContent({ snapshots }: { snapshots: MrrDailySnapshot[] }
   const periodLabel = getPeriodLabel(filtered);
 
   const commissionPct = totals.gross > 0 ? ((totals.commissions / totals.gross) * 100).toFixed(1) : '0.0';
+
+  // Latest month MRR for ARR calculation
+  const latestMrr = filtered.length > 0 ? Number(filtered[filtered.length - 1].mrr_net) : 0;
+  const arr = latestMrr * 12;
+
+  // MoM growth
+  let momGrowth = 0;
+  if (filtered.length >= 2) {
+    const prev = Number(filtered[filtered.length - 2].mrr_net);
+    const curr = Number(filtered[filtered.length - 1].mrr_net);
+    if (prev > 0) momGrowth = ((curr - prev) / prev) * 100;
+  }
+
+  // 6-month growth multiplier
+  let sixMonthMultiplier = 0;
+  if (filtered.length >= 7) {
+    const sixAgo = Number(filtered[filtered.length - 7].mrr_net);
+    if (sixAgo > 0) sixMonthMultiplier = latestMrr / sixAgo;
+  } else if (filtered.length >= 2) {
+    const first = Number(filtered[0].mrr_net);
+    if (first > 0) sixMonthMultiplier = latestMrr / first;
+  }
 
   return (
     <>
@@ -32,6 +60,7 @@ export function OverviewContent({ snapshots }: { snapshots: MrrDailySnapshot[] }
         <ExportButton snapshots={filtered} />
       </div>
 
+      {/* Row 1: Key MRR metrics */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard
           label="MRR (Net Revenue)"
@@ -62,7 +91,45 @@ export function OverviewContent({ snapshots }: { snapshots: MrrDailySnapshot[] }
         />
       </div>
 
+      {/* Row 2: ARR, Growth, Goal */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <MetricCard
+          label="ARR"
+          value={arr}
+          icon={DollarSign}
+          accentColor="navy"
+          subtitle="Latest MRR × 12"
+        />
+        <MetricCard
+          label="MoM Growth"
+          value={momGrowth}
+          format="percent"
+          icon={Zap}
+          accentColor={momGrowth >= 0 ? 'green' : 'red'}
+          subtitle="Net MRR vs prior month"
+        />
+        <MetricCard
+          label="6-Month Growth"
+          value={sixMonthMultiplier}
+          format="multiplier"
+          icon={Activity}
+          accentColor="teal"
+          subtitle="MRR growth over 6 months"
+        />
+        <GoalProgressCard
+          label="Road to $3M ARR"
+          current={arr}
+          goal={ARR_GOAL}
+        />
+      </div>
+
       <RevenueCostsChart data={filtered} />
+
+      {/* Growth charts side by side */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <NetNewMrrChart data={filtered} />
+        <MonthlyGrowthChart data={filtered} />
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <SourceBreakdownChart data={filtered} />

@@ -11,8 +11,8 @@ interface MetricCardProps {
   value: number;
   previousValue?: number;
   prefix?: string;
-  /** 'currency' formats as $X, 'number' formats as plain number with commas, 'percent' formats as X.X% */
-  format?: 'currency' | 'number' | 'percent';
+  /** 'currency' formats as $X, 'number' formats as plain number with commas, 'percent' formats as X.X%, 'multiplier' formats as X.XXx */
+  format?: 'currency' | 'number' | 'percent' | 'multiplier';
   className?: string;
   icon?: LucideIcon;
   accentColor?: AccentColor;
@@ -70,6 +70,8 @@ export function MetricCard({
     displayValue = formatCurrency(value);
   } else if (format === 'percent') {
     displayValue = `${value.toFixed(1)}%`;
+  } else if (format === 'multiplier') {
+    displayValue = `${value.toFixed(2)}x`;
   } else {
     displayValue = formatNumber(value);
   }
