@@ -29,9 +29,9 @@ export function OverviewContent({ snapshots }: { snapshots: MrrDailySnapshot[] }
   const allSorted = [...snapshots].sort((a, b) => a.snapshot_date.localeCompare(b.snapshot_date));
   const latestMrr = allSorted.length > 0 ? Number(allSorted[allSorted.length - 1].mrr_net) : 0;
 
-  // ARR = Trailing Twelve Months (sum of last 12 months of MRR net)
+  // ARR = Trailing Twelve Months (sum of last 12 months of gross revenue)
   const last12 = allSorted.slice(-12);
-  const arr = last12.reduce((sum, s) => sum + Number(s.mrr_net), 0);
+  const arr = last12.reduce((sum, s) => sum + Number(s.mrr_gross), 0);
 
   // MoM growth (always from latest 2 months, unfiltered)
   let momGrowth = 0;
