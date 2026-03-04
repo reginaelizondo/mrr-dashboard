@@ -14,7 +14,7 @@ import { TrendingUp, DollarSign, Percent, RotateCcw, Zap, Activity } from 'lucid
 import type { MrrDailySnapshot } from '@/types';
 
 // ARR Goal — adjust as needed
-const ARR_GOAL = 3_000_000;
+const ARR_GOAL = 6_000_000;
 
 export function OverviewContent({ snapshots }: { snapshots: MrrDailySnapshot[] }) {
   const searchParams = useSearchParams();
@@ -117,7 +117,7 @@ export function OverviewContent({ snapshots }: { snapshots: MrrDailySnapshot[] }
           subtitle="MRR growth over 6 months"
         />
         <GoalProgressCard
-          label="Road to $3M ARR"
+          label="Road to $6M ARR"
           current={arr}
           goal={ARR_GOAL}
         />
