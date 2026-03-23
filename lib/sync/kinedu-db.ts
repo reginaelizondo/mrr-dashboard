@@ -4,25 +4,30 @@
  * Connects to Kinedu's read-only DB replica (dbslave) via SSH tunnel,
  * fetches sales data, and upserts it into Supabase's `transactions` table.
  *
+ * Uses SSH port forwarding (ssh2 forwardOut) + mysql2 for the DB connection,
+ * instead of shelling out to the mysql CLI (which isn't installed on the server).
+ *
  * This replaces the Apple/Google API sync with the same source of truth
  * that Tableau uses (the `sales` table), ensuring MRR numbers match.
  */
 
 import { Client as SSHClient } from 'ssh2';
+import mysql from 'mysql2/promise';
 import { createServerClient } from '@/lib/supabase/server';
 import type { PlanType, Region } from '@/types';
+import type { Socket } from 'net';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 interface KineduSaleRow {
-  id: string;
-  store: string;
-  sku: string;
-  amount: string;
-  currency_code: string;
-  usd_amount: string;
-  created_at: string;
-  renewed_automatically: string;
+  id: number;
+  store: string | null;
+  sku: string | null;
+  amount: number;
+  currency_code: string | null;
+  usd_amount: number;
+  created_at: Date;
+  renewed_automatically: number;
   email: string | null;
   name: string | null;
 }
@@ -117,7 +122,7 @@ function getCountryFromCurrency(currencyCode: string | null): string | null {
   return map[currencyCode.toUpperCase()] || null;
 }
 
-// ─── SSH Connection ─────────────────────────────────────────────────────────
+// ─── SSH Tunnel + MySQL Connection ──────────────────────────────────────────
 
 function connectSSH(): Promise<SSHClient> {
   return new Promise((resolve, reject) => {
@@ -136,22 +141,44 @@ function connectSSH(): Promise<SSHClient> {
   });
 }
 
-function execSSHCommand(ssh: SSHClient, command: string): Promise<string> {
+/**
+ * Creates an SSH tunnel (port forwarding) to the MySQL server
+ * and returns a mysql2 connection through the tunnel.
+ */
+function createTunnelConnection(ssh: SSHClient): Promise<mysql.Connection> {
   return new Promise((resolve, reject) => {
-    ssh.exec(command, (err, stream) => {
-      if (err) return reject(err);
-      let stdout = '';
-      let stderr = '';
-      stream.on('data', (data: Buffer) => { stdout += data.toString(); });
-      stream.stderr.on('data', (data: Buffer) => { stderr += data.toString(); });
-      stream.on('close', (code: number) => {
-        if (code !== 0 && stderr) {
-          reject(new Error(`SSH command failed (code ${code}): ${stderr.slice(0, 500)}`));
-        } else {
-          resolve(stdout);
+    const mysqlConfig = getMySQLConfig();
+
+    // Forward from localhost (on the SSH server side) to the MySQL host
+    ssh.forwardOut(
+      '127.0.0.1',    // srcIP (our side, can be anything)
+      0,              // srcPort (0 = auto-assign)
+      mysqlConfig.host, // dstIP (the MySQL server)
+      mysqlConfig.port, // dstPort (3306)
+      async (err, stream) => {
+        if (err) {
+          console.error('[kinedu-db] SSH tunnel error:', err.message);
+          return reject(err);
         }
-      });
-    });
+
+        try {
+          // Create MySQL connection using the SSH stream as the socket
+          const connection = await mysql.createConnection({
+            user: mysqlConfig.user,
+            password: mysqlConfig.password,
+            database: mysqlConfig.database,
+            stream: stream as unknown as Socket, // ssh2 stream works as a socket
+            connectTimeout: 30000,
+          });
+
+          console.log('[kinedu-db] MySQL connected through SSH tunnel');
+          resolve(connection);
+        } catch (mysqlErr) {
+          console.error('[kinedu-db] MySQL connection error:', (mysqlErr as Error).message);
+          reject(mysqlErr);
+        }
+      }
+    );
   });
 }
 
@@ -160,166 +187,156 @@ function execSSHCommand(ssh: SSHClient, command: string): Promise<string> {
 export async function syncKineduDB(fromDate: string, toDate: string): Promise<SyncResult> {
   console.log(`[kinedu-db] Syncing sales from ${fromDate} to ${toDate}...`);
 
-  // 1. Connect via SSH
+  // 1. Connect via SSH and create tunnel to MySQL
   const ssh = await connectSSH();
+  const mysqlConn = await createTunnelConnection(ssh);
 
-  // 2. Run MySQL query remotely via SSH exec
-  const mysql = getMySQLConfig();
-  const mysqlCmd = `mysql -h ${mysql.host} -u ${mysql.user} -p${mysql.password} ${mysql.database} --batch --raw -e`;
+  try {
+    // 2. Run MySQL query through the tunnel
+    const query = `
+      SELECT
+        s.id, s.store, s.sku, s.amount, s.currency_code, s.usd_amount,
+        s.created_at, s.renewed_automatically,
+        sub.email, sub.name
+      FROM sales s
+      LEFT JOIN subscriptions sub ON s.user_id = sub.user_id
+      WHERE s.created_at >= ?
+        AND s.created_at < ?
+        AND s.payment_status = 'paid'
+        AND s.fraud = 0
+        AND s.livemode = 1
+        AND (sub.email IS NULL OR sub.email NOT LIKE '%@test.com%')
+        AND (sub.name IS NULL OR sub.name NOT LIKE '%click here%')
+      ORDER BY s.created_at ASC
+    `;
 
-  const query = `
-    SELECT
-      s.id, s.store, s.sku, s.amount, s.currency_code, s.usd_amount,
-      s.created_at, s.renewed_automatically,
-      sub.email, sub.name
-    FROM sales s
-    LEFT JOIN subscriptions sub ON s.user_id = sub.user_id
-    WHERE s.created_at >= '${fromDate}'
-      AND s.created_at < '${toDate}'
-      AND s.payment_status = 'paid'
-      AND s.fraud = 0
-      AND s.livemode = 1
-      AND (sub.email IS NULL OR sub.email NOT LIKE '%@test.com%')
-      AND (sub.name IS NULL OR sub.name NOT LIKE '%click here%')
-    ORDER BY s.created_at ASC
-  `;
+    const [rawRows] = await mysqlConn.execute(query, [fromDate, toDate]);
+    const rows = rawRows as KineduSaleRow[];
 
-  const rawOutput = await execSSHCommand(
-    ssh,
-    `${mysqlCmd} "${query.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`
-  );
+    console.log(`[kinedu-db] Fetched ${rows.length} sales from Kinedu DB`);
 
-  // 3. Close SSH immediately after query
-  ssh.end();
-  console.log('[kinedu-db] SSH closed');
-
-  // 4. Parse TSV output (mysql --batch outputs tab-separated)
-  const lines = rawOutput.trim().split('\n');
-  if (lines.length <= 1) {
-    console.log('[kinedu-db] No sales found in date range');
-    return { synced: 0, fetched: 0 };
-  }
-
-  const headers = lines[0].split('\t');
-  const rows: KineduSaleRow[] = [];
-  for (let i = 1; i < lines.length; i++) {
-    const values = lines[i].split('\t');
-    const row: Record<string, string | null> = {};
-    for (let j = 0; j < headers.length; j++) {
-      row[headers[j]] = values[j] === 'NULL' ? null : values[j];
+    if (rows.length === 0) {
+      return { synced: 0, fetched: 0 };
     }
-    rows.push(row as unknown as KineduSaleRow);
-  }
 
-  console.log(`[kinedu-db] Fetched ${rows.length} sales from Kinedu DB`);
+    // 3. Transform sales → transactions format
+    const transactions = rows.map((row) => {
+      const source = mapStore(row.store);
+      const planType = getPlanTypeFromSku(row.sku);
+      const planName = getPlanNameFromSku(row.sku);
+      const usdAmount = Number(row.usd_amount) || 0;
 
-  // 5. Transform sales → transactions format
-  const transactions = rows.map((row) => {
-    const source = mapStore(row.store);
-    const planType = getPlanTypeFromSku(row.sku);
-    const planName = getPlanNameFromSku(row.sku);
-    const usdAmount = Number(row.usd_amount) || 0;
+      // Commission rates (same as Tableau)
+      let commissionRate = 0;
+      if (source === 'apple') commissionRate = 0.30;
+      else if (source === 'google') commissionRate = 0.15;
+      else commissionRate = 0.029;
 
-    // Commission rates (same as Tableau)
-    let commissionRate = 0;
-    if (source === 'apple') commissionRate = 0.30;
-    else if (source === 'google') commissionRate = 0.15;
-    else commissionRate = 0.029;
+      const commission = usdAmount * commissionRate;
+      const netAmount = usdAmount - commission;
 
-    const commission = usdAmount * commissionRate;
-    const netAmount = usdAmount - commission;
+      const createdAt = new Date(row.created_at);
+      const transactionDate = createdAt.toISOString().split('T')[0];
 
-    const createdAt = new Date(row.created_at);
-    const transactionDate = createdAt.toISOString().split('T')[0];
+      const countryCode = getCountryFromCurrency(row.currency_code);
 
-    const countryCode = getCountryFromCurrency(row.currency_code);
+      return {
+        source,
+        transaction_date: transactionDate,
+        order_id: `kinedu_sale_${row.id}`,
+        external_id: `kinedu_sale_${row.id}`,
+        sku: row.sku,
+        plan_type: planType,
+        plan_name: planName,
+        transaction_type: 'charge' as const,
+        is_new_subscription: row.renewed_automatically === 0,
+        is_renewal: row.renewed_automatically === 1,
+        is_trial_conversion: false,
+        subscription_period: null,
+        amount_gross: usdAmount,
+        amount_net: netAmount,
+        commission_amount: commission,
+        tax_amount: 0,
+        original_amount: Number(row.amount) || 0,
+        original_currency: row.currency_code,
+        country_code: countryCode,
+        region: getRegion(countryCode),
+        units: 1,
+        raw_data: { kinedu_sale_id: String(row.id), store: row.store },
+      };
+    });
 
-    return {
-      source,
-      transaction_date: transactionDate,
-      order_id: `kinedu_sale_${row.id}`,
-      external_id: `kinedu_sale_${row.id}`,
-      sku: row.sku,
-      plan_type: planType,
-      plan_name: planName,
-      transaction_type: 'charge' as const,
-      is_new_subscription: row.renewed_automatically === '0',
-      is_renewal: row.renewed_automatically === '1',
-      is_trial_conversion: false,
-      subscription_period: null,
-      amount_gross: usdAmount,
-      amount_net: netAmount,
-      commission_amount: commission,
-      tax_amount: 0,
-      original_amount: Number(row.amount) || 0,
-      original_currency: row.currency_code,
-      country_code: countryCode,
-      region: getRegion(countryCode),
-      units: 1,
-      raw_data: { kinedu_sale_id: row.id, store: row.store },
-    };
-  });
+    // 4. Delete old transactions in this range & upsert new ones
+    const supabase = createServerClient();
 
-  // 6. Delete old transactions in this range & upsert new ones
-  const supabase = createServerClient();
-
-  // Delete old kinedu-sourced transactions in this range
-  console.log(`[kinedu-db] Deleting old transactions from ${fromDate} to ${toDate}...`);
-  const { error: deleteError } = await supabase
-    .from('transactions')
-    .delete()
-    .gte('transaction_date', fromDate)
-    .lt('transaction_date', toDate)
-    .eq('transaction_type', 'charge')
-    .like('external_id', 'kinedu_sale_%');
-
-  if (deleteError) {
-    console.warn('[kinedu-db] Error deleting old kinedu transactions:', deleteError.message);
-  }
-
-  // Also delete old Apple/Google API-sourced transactions to avoid duplicates
-  for (const src of ['apple', 'google'] as const) {
-    const { error: srcDelError } = await supabase
+    // Delete old kinedu-sourced transactions in this range
+    console.log(`[kinedu-db] Deleting old transactions from ${fromDate} to ${toDate}...`);
+    const { error: deleteError } = await supabase
       .from('transactions')
       .delete()
       .gte('transaction_date', fromDate)
       .lt('transaction_date', toDate)
       .eq('transaction_type', 'charge')
-      .eq('source', src)
-      .not('external_id', 'like', 'kinedu_sale_%');
+      .like('external_id', 'kinedu_sale_%');
 
-    if (srcDelError) {
-      console.warn(`[kinedu-db] Error deleting old ${src} transactions:`, srcDelError.message);
+    if (deleteError) {
+      console.warn('[kinedu-db] Error deleting old kinedu transactions:', deleteError.message);
     }
-  }
 
-  // 7. Batch upsert in chunks of 500
-  const BATCH_SIZE = 500;
-  let totalSynced = 0;
+    // Also delete old Apple/Google API-sourced transactions to avoid duplicates
+    for (const src of ['apple', 'google'] as const) {
+      const { error: srcDelError } = await supabase
+        .from('transactions')
+        .delete()
+        .gte('transaction_date', fromDate)
+        .lt('transaction_date', toDate)
+        .eq('transaction_type', 'charge')
+        .eq('source', src)
+        .not('external_id', 'like', 'kinedu_sale_%');
 
-  for (let i = 0; i < transactions.length; i += BATCH_SIZE) {
-    const batch = transactions.slice(i, i + BATCH_SIZE);
-    const { error: upsertError } = await supabase
-      .from('transactions')
-      .upsert(batch, { onConflict: 'external_id' });
-
-    if (upsertError) {
-      console.error(`[kinedu-db] Batch upsert error (offset ${i}):`, upsertError.message);
-      // Fallback: try one by one
-      let singles = 0;
-      for (const tx of batch) {
-        const { error: singleError } = await supabase
-          .from('transactions')
-          .upsert(tx, { onConflict: 'external_id' });
-        if (!singleError) singles++;
+      if (srcDelError) {
+        console.warn(`[kinedu-db] Error deleting old ${src} transactions:`, srcDelError.message);
       }
-      totalSynced += singles;
-      console.log(`[kinedu-db] Recovered ${singles}/${batch.length} via single inserts`);
-    } else {
-      totalSynced += batch.length;
     }
-  }
 
-  console.log(`[kinedu-db] Sync complete: ${totalSynced}/${rows.length} transactions synced`);
-  return { synced: totalSynced, fetched: rows.length };
+    // 5. Batch upsert in chunks of 500
+    const BATCH_SIZE = 500;
+    let totalSynced = 0;
+
+    for (let i = 0; i < transactions.length; i += BATCH_SIZE) {
+      const batch = transactions.slice(i, i + BATCH_SIZE);
+      const { error: upsertError } = await supabase
+        .from('transactions')
+        .upsert(batch, { onConflict: 'external_id' });
+
+      if (upsertError) {
+        console.error(`[kinedu-db] Batch upsert error (offset ${i}):`, upsertError.message);
+        // Fallback: try one by one
+        let singles = 0;
+        for (const tx of batch) {
+          const { error: singleError } = await supabase
+            .from('transactions')
+            .upsert(tx, { onConflict: 'external_id' });
+          if (!singleError) singles++;
+        }
+        totalSynced += singles;
+        console.log(`[kinedu-db] Recovered ${singles}/${batch.length} via single inserts`);
+      } else {
+        totalSynced += batch.length;
+      }
+    }
+
+    console.log(`[kinedu-db] Sync complete: ${totalSynced}/${rows.length} transactions synced`);
+    return { synced: totalSynced, fetched: rows.length };
+  } finally {
+    // Always close MySQL connection and SSH tunnel
+    try {
+      await mysqlConn.end();
+      console.log('[kinedu-db] MySQL connection closed');
+    } catch {
+      // Ignore close errors
+    }
+    ssh.end();
+    console.log('[kinedu-db] SSH closed');
+  }
 }
