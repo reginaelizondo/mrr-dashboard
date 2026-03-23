@@ -4,7 +4,7 @@ export type PlanType = 'monthly' | 'yearly' | 'semesterly' | 'quarterly' | 'week
 export type Region = 'us_canada' | 'mexico' | 'brazil' | 'rest_of_world';
 export type TimeRange = 'daily' | 'weekly' | 'monthly';
 export type DatePreset = 'this_month' | 'last_month' | '3m' | '6m' | '12m' | 'ytd' | 'all' | 'custom';
-export type SyncType = 'daily' | 'backfill' | 'manual';
+export type SyncType = 'daily' | 'backfill' | 'manual' | 'kinedu-db';
 export type SyncStatus = 'running' | 'success' | 'error';
 
 export interface Transaction {
