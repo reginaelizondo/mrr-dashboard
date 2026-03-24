@@ -4,7 +4,7 @@ import { syncKineduDB } from '@/lib/sync/kinedu-db';
 import { computeMonthlySnapshot } from '@/lib/sync/snapshots';
 import { createServerClient } from '@/lib/supabase/server';
 
-export const maxDuration = 60; // Vercel Pro: 60s max
+export const maxDuration = 300; // 5 minutes — SSH tunnel + large queries need time
 
 export async function GET(request: NextRequest) {
   // Verify cron secret
