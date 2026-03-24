@@ -18,9 +18,9 @@ export async function GET(request: NextRequest) {
   const today = format(now, 'yyyy-MM-dd');
   const yesterday = format(subDays(now, 1), 'yyyy-MM-dd');
 
-  // Sync last 7 days to stay within Vercel function timeout
+  // Sync last 3 days to stay within Vercel function timeout (~300s)
   // For full historical re-syncs, use the manual /api/sync/kinedu-db endpoint or local script
-  const fromDate = format(subDays(now, 7), 'yyyy-MM-dd');
+  const fromDate = format(subDays(now, 3), 'yyyy-MM-dd');
   const toDate = format(now, 'yyyy-MM-dd');
 
   // Create sync log entry
