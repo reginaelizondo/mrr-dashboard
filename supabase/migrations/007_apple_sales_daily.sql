@@ -99,17 +99,24 @@ $$ LANGUAGE plpgsql IMMUTABLE;
 -- ----------------------------------------------------------------------------
 -- Calendar-month aggregate for the Refunds chart. Mirrors what App Store
 -- Connect → Trends → Ventas shows.
+-- IMPORTANT details:
+--   1) Filter free rows (customer_price > 0) so Free Trial starts (which
+--      have units > 0 but price = 0) don't inflate the charge unit count.
+--   2) Refund rows have BOTH negative units AND negative customer_price, so
+--      `units * customer_price` is already positive — don't double-negate.
+--   3) The dashboard computes the rate as refunds / (charges - refunds),
+--      which matches App Store Connect's "Reembolso vs Total" display.
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE VIEW v_apple_sales_monthly AS
 SELECT
   TO_CHAR(begin_date, 'YYYY-MM') AS month,
-  SUM(CASE WHEN units > 0 THEN units ELSE 0 END)::BIGINT AS charge_units,
+  SUM(CASE WHEN units > 0 AND customer_price > 0 THEN units ELSE 0 END)::BIGINT AS charge_units,
   SUM(CASE WHEN units < 0 THEN -units ELSE 0 END)::BIGINT AS refund_units,
-  SUM(CASE WHEN units > 0
+  SUM(CASE WHEN units > 0 AND customer_price > 0
             THEN apple_sales_to_usd(customer_price * units, customer_currency, TO_CHAR(begin_date, 'YYYY-MM'))
             ELSE 0 END) AS charge_gross_usd,
   SUM(CASE WHEN units < 0
-            THEN apple_sales_to_usd(-customer_price * units, customer_currency, TO_CHAR(begin_date, 'YYYY-MM'))
+            THEN apple_sales_to_usd(customer_price * units, customer_currency, TO_CHAR(begin_date, 'YYYY-MM'))
             ELSE 0 END) AS refund_gross_usd
 FROM apple_sales_daily
 WHERE product_type_identifier IN ('IAY','IAC','IAS','IA1','IA9')  -- subscriptions only

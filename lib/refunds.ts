@@ -82,8 +82,12 @@ async function getGenericRefundsByMonth(
 
   const out = Array.from(byMonth.values()).sort((a, b) => a.month.localeCompare(b.month));
   for (const r of out) {
-    r.refund_rate_units = r.charge_units > 0 ? r.refund_units / r.charge_units : 0;
-    r.refund_rate_amount = r.charge_gross > 0 ? r.refund_gross / r.charge_gross : 0;
+    // Net-basis rate (refunds / (charges - refunds)) — same definition Apple
+    // App Store Connect uses, so the chart is consistent across sources.
+    const net_units = r.charge_units - r.refund_units;
+    const net_gross = r.charge_gross - r.refund_gross;
+    r.refund_rate_units = net_units > 0 ? r.refund_units / net_units : 0;
+    r.refund_rate_amount = net_gross > 0 ? r.refund_gross / net_gross : 0;
   }
   return out;
 }
@@ -122,14 +126,18 @@ async function getAppleRefundsByMonth(months: number): Promise<RefundMonthlyRow[
     const refund_units = Number(r.refund_units || 0);
     const charge_gross = Number(r.charge_gross_usd || 0);
     const refund_gross = Number(r.refund_gross_usd || 0);
+    // Apple's refund rate is computed against NET sales (refunds / (charges - refunds))
+    // — see App Store Connect → Trends → Ventas. Match that exactly.
+    const net_units = charge_units - refund_units;
+    const net_gross = charge_gross - refund_gross;
     return {
       month: r.month,
       charge_units,
       refund_units,
       charge_gross,
       refund_gross,
-      refund_rate_units: charge_units > 0 ? refund_units / charge_units : 0,
-      refund_rate_amount: charge_gross > 0 ? refund_gross / charge_gross : 0,
+      refund_rate_units: net_units > 0 ? refund_units / net_units : 0,
+      refund_rate_amount: net_gross > 0 ? refund_gross / net_gross : 0,
     };
   });
 }
@@ -227,14 +235,20 @@ export async function getAppleRefundBreakdowns(days = 90): Promise<AppleRefundBr
   };
 
   function toRows(rows: RpcRow[] | null | undefined): BreakdownRow[] {
-    return (rows || []).map((r) => ({
-      bucket: r.bucket,
-      refunds: Number(r.refunds || 0),
-      paid_events: Number(r.paid_events || 0),
-      refund_rate: Number(r.paid_events || 0) > 0
-        ? Number(r.refunds || 0) / Number(r.paid_events || 0)
-        : 0,
-    }));
+    return (rows || []).map((r) => {
+      const refunds = Number(r.refunds || 0);
+      const paid = Number(r.paid_events || 0);
+      // Net-basis rate to match Apple App Store Connect methodology
+      // (refunds / (paid - refunds)). When paid <= refunds the bucket is
+      // pathological and we fall back to gross basis.
+      const net = paid - refunds;
+      return {
+        bucket: r.bucket,
+        refunds,
+        paid_events: paid,
+        refund_rate: net > 0 ? refunds / net : (paid > 0 ? refunds / paid : 0),
+      };
+    });
   }
 
   // Days-to-refund: there's no natural "paid" denominator. Treat rate as
