@@ -111,21 +111,40 @@ async function getGenericRefundsByMonth(
  */
 async function getAppleRefundsByMonth(
   startMonth: string,
-  endMonth: string
+  endMonth: string,
+  countries?: string[]
 ): Promise<RefundMonthlyRow[]> {
   const supabase = createServerClient();
 
-  // Source of truth = v_apple_sales_monthly (Apple SALES report, calendar
-  // months, USD-converted via per-month FX rates). This view returns the
-  // SAME numbers App Store Connect → Trends → Ventas displays.
-  const { data, error } = await supabase
-    .from('v_apple_sales_monthly')
-    .select('month, charge_units, refund_units, charge_gross_usd, refund_gross_usd')
-    .gte('month', startMonth)
-    .lte('month', endMonth)
-    .order('month', { ascending: true });
+  // When a country filter is active we use the RPC so the aggregation runs
+  // only on the filtered rows (the unfiltered view path is fine as-is).
+  let data: { month: string; charge_units: number; refund_units: number; charge_gross_usd: number; refund_gross_usd: number }[] | null;
+  let error: { message: string } | null;
 
-  if (error) console.error('[refunds] apple sales view error:', error);
+  if (countries && countries.length > 0) {
+    // RPC uses DATE bounds, not YYYY-MM strings
+    const startDate = `${startMonth}-01`;
+    const [ey, em] = endMonth.split('-').map(Number);
+    const endDate = new Date(Date.UTC(ey, em, 0)).toISOString().slice(0, 10);
+    const r = await supabase.rpc('apple_sales_monthly_range', {
+      start_date: startDate,
+      end_date: endDate,
+      country_codes: countries,
+    });
+    data = r.data as typeof data;
+    error = r.error as unknown as typeof error;
+  } else {
+    const r = await supabase
+      .from('v_apple_sales_monthly')
+      .select('month, charge_units, refund_units, charge_gross_usd, refund_gross_usd')
+      .gte('month', startMonth)
+      .lte('month', endMonth)
+      .order('month', { ascending: true });
+    data = r.data as typeof data;
+    error = r.error as unknown as typeof error;
+  }
+
+  if (error) console.error('[refunds] apple sales monthly error:', error);
 
   return (data || []).map((r) => {
     const charge_units = Number(r.charge_units || 0);
@@ -162,11 +181,14 @@ async function getAppleRefundsByMonth(
 export async function getRefundsByMonth(
   source: Source,
   startMonth: string,
-  endMonth: string
+  endMonth: string,
+  countries?: string[]
 ): Promise<RefundMonthlyRow[]> {
   if (source === 'apple') {
-    return getAppleRefundsByMonth(startMonth, endMonth);
+    return getAppleRefundsByMonth(startMonth, endMonth, countries);
   }
+  // Country filter not supported for Google/Stripe yet — data is in
+  // `transactions` table which would need a different query path.
   return getGenericRefundsByMonth(source, startMonth, endMonth);
 }
 
@@ -177,20 +199,23 @@ export async function getRefundsByMonth(
  */
 export async function getAppleRefundsByWeek(
   startDate: string,
-  endDate: string
+  endDate: string,
+  countries?: string[]
 ): Promise<RefundMonthlyRow[]> {
   const supabase = createServerClient();
 
-  const { data, error } = await supabase
-    .from('v_apple_sales_weekly')
-    .select('week_start, week_end, charge_units, refund_units, charge_gross_usd, refund_gross_usd')
-    .gte('week_end', startDate) // include weeks that overlap the range
-    .lte('week_start', endDate)
-    .order('week_start', { ascending: true });
+  // Always use the RPC (faster on warm cache: ~1s vs 1.8s for the view;
+  // filtered: <500ms). The RPC pushes begin_date into the WHERE clause
+  // so the idx_apple_sales_daily_begin_date index is used.
+  const { data, error } = await supabase.rpc('apple_sales_weekly_range', {
+    start_date: startDate,
+    end_date: endDate,
+    country_codes: countries && countries.length > 0 ? countries : null,
+  });
 
-  if (error) console.error('[refunds] apple weekly view error:', error);
+  if (error) console.error('[refunds] apple_sales_weekly_range error:', error);
 
-  return (data || []).map((r) => {
+  return (data || []).map((r: { week_start: string; week_end: string; charge_units: number; refund_units: number; charge_gross_usd: number; refund_gross_usd: number }) => {
     const charge_units = Number(r.charge_units || 0);
     const refund_units = Number(r.refund_units || 0);
     const charge_gross = Number(r.charge_gross_usd || 0);
@@ -208,6 +233,32 @@ export async function getAppleRefundsByWeek(
       refund_rate_amount: net_gross > 0 ? refund_gross / net_gross : 0,
     };
   });
+}
+
+/**
+ * Top N countries by gross USD in the Apple Sales Report for a given range.
+ * Used to populate the country filter dropdown on the Refunds page.
+ */
+export async function getAppleTopCountries(
+  startDate: string,
+  endDate: string,
+  topN = 20
+): Promise<{ country_code: string; charges: number; gross_usd: number }[]> {
+  const supabase = createServerClient();
+  const { data, error } = await supabase.rpc('apple_sales_top_countries', {
+    start_date: startDate,
+    end_date: endDate,
+    top_n: topN,
+  });
+  if (error) {
+    console.error('[refunds] apple_sales_top_countries error:', error);
+    return [];
+  }
+  return (data || []).map((r: { country_code: string; charges: number; gross_usd: number }) => ({
+    country_code: r.country_code,
+    charges: Number(r.charges),
+    gross_usd: Number(r.gross_usd),
+  }));
 }
 
 /**

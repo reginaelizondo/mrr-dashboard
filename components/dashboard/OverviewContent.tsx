@@ -143,3 +143,4 @@ export function OverviewContent({ snapshots }: { snapshots: MrrDailySnapshot[] }
     </>
   );
 }
+

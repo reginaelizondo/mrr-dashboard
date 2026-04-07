@@ -1,7 +1,8 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useTransition } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
+import { MultiSelect } from '@/components/ui/multi-select';
 import {
   ComposedChart,
   Bar,
@@ -51,6 +52,8 @@ interface Props {
   startDate: string;
   endDate: string;
   granularity: Granularity;
+  availableCountries: string[];
+  selectedCountries: string[];
 }
 
 const SOURCES: { key: Source; label: string }[] = [
@@ -118,10 +121,17 @@ export function RefundsContent({
   startDate,
   endDate,
   granularity,
+  availableCountries,
+  selectedCountries,
 }: Props) {
   const [source, setSource] = useState<Source>('apple');
   const router = useRouter();
   const pathname = usePathname();
+  const [isPending, startTransition] = useTransition();
+
+  const nav = (url: string) => {
+    startTransition(() => router.push(url));
+  };
 
   // Weekly view is Apple-only (only the SALES report has daily granularity).
   // For Google/Stripe always show monthly.
@@ -130,7 +140,7 @@ export function RefundsContent({
   const rows: RefundMonthlyRow[] =
     effectiveGranularity === 'weekly' ? appleWeekly : data[source] || [];
 
-  function urlParams(overrides: Record<string, string>): string {
+  function urlParams(overrides: Record<string, string | undefined>): string {
     const sp = new URLSearchParams();
     sp.set('preset', preset);
     if (preset === 'custom') {
@@ -138,18 +148,24 @@ export function RefundsContent({
       sp.set('end', endDate);
     }
     if (granularity === 'weekly') sp.set('granularity', 'weekly');
-    for (const [k, v] of Object.entries(overrides)) sp.set(k, v);
+    if (selectedCountries.length > 0) sp.set('countries', selectedCountries.join(','));
+    for (const [k, v] of Object.entries(overrides)) {
+      if (v === undefined || v === '') sp.delete(k);
+      else sp.set(k, v);
+    }
     return sp.toString();
   }
 
+  function setCountries(next: string[]) {
+    nav(`${pathname}?${urlParams({ countries: next.length > 0 ? next.join(',') : undefined })}`);
+  }
+
   function setPreset(next: Preset) {
-    router.push(`${pathname}?${urlParams({ preset: next })}`);
+    nav(`${pathname}?${urlParams({ preset: next })}`);
   }
 
   function setCustomRange(start: string, end: string) {
-    router.push(
-      `${pathname}?${urlParams({ preset: 'custom', start, end })}`
-    );
+    nav(`${pathname}?${urlParams({ preset: 'custom', start, end })}`);
   }
 
   function setGranularity(next: Granularity) {
@@ -160,7 +176,8 @@ export function RefundsContent({
       sp.set('end', endDate);
     }
     if (next === 'weekly') sp.set('granularity', 'weekly');
-    router.push(`${pathname}?${sp.toString()}`);
+    if (selectedCountries.length > 0) sp.set('countries', selectedCountries.join(','));
+    nav(`${pathname}?${sp.toString()}`);
   }
 
   const stats = useMemo(() => {
@@ -196,6 +213,11 @@ export function RefundsContent({
 
   return (
     <>
+      {/* Top loading bar — visible while server re-fetches on filter change */}
+      {isPending && (
+        <div className="fixed top-0 left-0 right-0 z-50 h-0.5 bg-[#0086D8] animate-pulse" />
+      )}
+      <div className={`space-y-6 ${isPending ? 'opacity-60 transition-opacity pointer-events-none' : 'transition-opacity'}`}>
       {/* Filter row: source + date range + sync status */}
       <Card className="border border-border/60">
         <CardContent className="py-4">
@@ -318,6 +340,31 @@ export function RefundsContent({
           </div>
         </CardContent>
       </Card>
+
+      {/* Country filter (Apple-only) */}
+      {source === 'apple' && availableCountries.length > 0 && (
+        <Card className="border border-border/60">
+          <CardContent className="py-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <MultiSelect
+                label="País"
+                options={availableCountries.map((c) => ({
+                  value: c,
+                  label: c,
+                }))}
+                selected={selectedCountries}
+                onChange={setCountries}
+                allLabel="Todos los países"
+              />
+              {selectedCountries.length > 0 && (
+                <span className="text-[11px] text-muted-foreground">
+                  ⚠ Filtro aplicado al chart/KPIs principales. Los breakdowns (CPP, duración, SKU) siguen mostrando el total.
+                </span>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Apple context banner */}
       {source === 'apple' && (
@@ -452,6 +499,7 @@ export function RefundsContent({
       {source === 'apple' && appleBreakdowns?.hasData && (
         <FindingsSection breakdowns={appleBreakdowns} stats={stats} />
       )}
+      </div>
     </>
   );
 }

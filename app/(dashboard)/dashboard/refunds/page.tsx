@@ -19,6 +19,7 @@ interface PageParams {
   start?: string; // YYYY-MM-DD
   end?: string;   // YYYY-MM-DD
   granularity?: string;
+  countries?: string; // comma-separated ISO-2 codes
 }
 
 function resolveDateRange(params: PageParams): {
@@ -78,12 +79,17 @@ export default async function RefundsPage({
   const range = resolveDateRange(params);
   const granularity: Granularity = params.granularity === 'weekly' ? 'weekly' : 'monthly';
 
+  // Parse country filter from URL
+  const countries = params.countries
+    ? params.countries.split(',').map((c) => c.trim().toUpperCase()).filter(Boolean)
+    : undefined;
+
   const [apple, google, stripe, appleWeekly, appleBreakdowns, lastSync] = await Promise.all([
-    getRefundsByMonth('apple', range.startMonth, range.endMonth),
+    getRefundsByMonth('apple', range.startMonth, range.endMonth, countries),
     getRefundsByMonth('google', range.startMonth, range.endMonth),
     getRefundsByMonth('stripe', range.startMonth, range.endMonth),
     granularity === 'weekly'
-      ? getAppleRefundsByWeek(range.startDate, range.endDate)
+      ? getAppleRefundsByWeek(range.startDate, range.endDate, countries)
       : Promise.resolve([]),
     getAppleRefundBreakdowns(range.startDate, range.endDate).catch((err) => {
       console.error('[refunds] apple breakdowns failed:', err);
@@ -91,6 +97,12 @@ export default async function RefundsPage({
     }),
     getLastAppleSalesSync(),
   ]);
+
+  // Reuse the byCountry breakdown (already fetched) to populate the country
+  // dropdown instead of a separate 6-second `apple_sales_top_countries` call.
+  const availableCountries: string[] = appleBreakdowns
+    ? appleBreakdowns.byCountry.map((c) => c.bucket).filter(Boolean)
+    : [];
 
   const data: Record<Source, Awaited<ReturnType<typeof getRefundsByMonth>>> = {
     apple,
@@ -117,6 +129,8 @@ export default async function RefundsPage({
           startDate={range.startDate}
           endDate={range.endDate}
           granularity={granularity}
+          availableCountries={availableCountries}
+          selectedCountries={countries || []}
         />
       </Suspense>
     </div>
