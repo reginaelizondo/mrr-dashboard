@@ -99,123 +99,68 @@ async function getGenericRefundsByMonth(
 async function getAppleRefundsByMonth(months: number): Promise<RefundMonthlyRow[]> {
   const supabase = createServerClient();
 
-  // The events table only retains ~365 days, so cap the lookback there.
-  const today = new Date();
+  // Pull pre-aggregated rows from the v_apple_refund_monthly view (~13 rows)
+  // and the v_apple_charge_gross_monthly view (~24 rows) — both backed by
+  // Postgres GROUP BY, so this is two ~30ms queries instead of paginating
+  // hundreds of thousands of raw rows.
   const monthsCapped = Math.min(months, 13);
+  const today = new Date();
   const start = new Date(
     Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - (monthsCapped - 1), 1)
   );
-  const startStr = start.toISOString().slice(0, 10);
+  const startMonth = start.toISOString().slice(0, 7);
 
-  // ---- 1) Pull events (units, classification) ----
-  interface EvRow {
-    event_date: string;
-    event: string;
-    quantity: number | null;
-  }
-  const events: EvRow[] = [];
-  const pageSize = 1000;
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await supabase
-      .from('apple_subscription_events')
-      .select('event_date, event, quantity')
-      .gte('event_date', startStr)
-      .range(from, from + pageSize - 1);
-    if (error) {
-      console.error('[refunds] apple events query error:', error);
-      break;
-    }
-    if (!data || data.length === 0) break;
-    events.push(...(data as EvRow[]));
-    if (data.length < pageSize) break;
-  }
+  const [unitsRes, grossRes] = await Promise.all([
+    supabase
+      .from('v_apple_refund_monthly')
+      .select('month, charge_units, refund_units')
+      .gte('month', startMonth)
+      .order('month', { ascending: true }),
+    supabase
+      .from('v_apple_charge_gross_monthly')
+      .select('month, charge_gross, refund_gross')
+      .gte('month', startMonth)
+      .order('month', { ascending: true }),
+  ]);
 
-  // ---- 2) Pull charge $ from transactions (Finance Report) for the same range ----
-  interface TxRowApple {
-    transaction_date: string;
-    transaction_type: string;
-    amount_gross: number | null;
-  }
-  const txs: TxRowApple[] = [];
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await supabase
-      .from('transactions')
-      .select('transaction_date, transaction_type, amount_gross')
-      .eq('source', 'apple')
-      .in('transaction_type', ['charge', 'refund'])
-      .gte('transaction_date', startStr)
-      .range(from, from + pageSize - 1);
-    if (error) {
-      console.error('[refunds] apple tx query error:', error);
-      break;
-    }
-    if (!data || data.length === 0) break;
-    txs.push(...(data as TxRowApple[]));
-    if (data.length < pageSize) break;
+  if (unitsRes.error) console.error('[refunds] apple units view error:', unitsRes.error);
+  if (grossRes.error) console.error('[refunds] apple gross view error:', grossRes.error);
+
+  const grossByMonth = new Map<string, { charge_gross: number; refund_gross: number }>();
+  for (const r of grossRes.data || []) {
+    grossByMonth.set(r.month, {
+      charge_gross: Math.abs(Number(r.charge_gross || 0)),
+      refund_gross: Math.abs(Number(r.refund_gross || 0)),
+    });
   }
 
-  // ---- 3) Aggregate per month ----
-  const byMonth = new Map<string, RefundMonthlyRow>();
-  function ensure(month: string): RefundMonthlyRow {
-    let r = byMonth.get(month);
-    if (!r) {
-      r = {
-        month,
-        charge_units: 0,
-        refund_units: 0,
-        charge_gross: 0,
-        refund_gross: 0,
-        refund_rate_units: 0,
-        refund_rate_amount: 0,
-      };
-      byMonth.set(month, r);
-    }
-    return r;
-  }
+  const out: RefundMonthlyRow[] = [];
+  for (const u of unitsRes.data || []) {
+    const charge_units = Number(u.charge_units || 0);
+    const refund_units = Number(u.refund_units || 0);
+    const refund_rate_units = charge_units > 0 ? refund_units / charge_units : 0;
 
-  for (const e of events) {
-    const month = (e.event_date || '').slice(0, 7);
-    if (!month) continue;
-    const qty = Math.abs(Number(e.quantity || 0));
-    const ev = e.event || '';
-    if (ev.startsWith('Refund')) {
-      ensure(month).refund_units += qty;
-    } else if (
-      ev !== 'Cancel' &&
-      ev !== 'Canceled from Billing Retry' &&
-      ev !== 'Start Introductory Offer' &&
-      !ev.startsWith('Billing Retry')
-    ) {
-      ensure(month).charge_units += qty;
-    }
-  }
-
-  for (const t of txs) {
-    const month = (t.transaction_date || '').slice(0, 7);
-    if (!month) continue;
-    const gross = Math.abs(Number(t.amount_gross || 0));
-    const r = ensure(month);
-    if (t.transaction_type === 'charge') r.charge_gross += gross;
-    else if (t.transaction_type === 'refund') r.refund_gross += gross;
-  }
-
-  // ---- 4) Compute rates. Refund $ is approximated when missing. ----
-  const out = Array.from(byMonth.values()).sort((a, b) => a.month.localeCompare(b.month));
-  for (const r of out) {
-    r.refund_rate_units = r.charge_units > 0 ? r.refund_units / r.charge_units : 0;
-    // If refund $ is missing or implausibly low (e.g. only 1 month had Finance refund rows),
-    // approximate it from units rate × charge $.
-    if (r.refund_gross === 0 && r.charge_gross > 0 && r.refund_units > 0) {
-      r.refund_gross = r.charge_gross * r.refund_rate_units;
+    const g = grossByMonth.get(u.month) || { charge_gross: 0, refund_gross: 0 };
+    let { charge_gross, refund_gross } = g;
+    // If refund $ is missing (Finance Report didn't have refund rows for this
+    // month historically), approximate it from units rate × charge $.
+    if (refund_gross === 0 && charge_gross > 0 && refund_units > 0) {
+      refund_gross = charge_gross * refund_rate_units;
     }
     // Fallback: if Finance Report charges aren't synced yet for this month
     // (e.g. current month before Apple publishes), mirror the units rate so
     // the chart line stays continuous instead of dropping to zero.
-    if (r.charge_gross > 0) {
-      r.refund_rate_amount = r.refund_gross / r.charge_gross;
-    } else {
-      r.refund_rate_amount = r.refund_rate_units;
-    }
+    const refund_rate_amount = charge_gross > 0 ? refund_gross / charge_gross : refund_rate_units;
+
+    out.push({
+      month: u.month,
+      charge_units,
+      refund_units,
+      charge_gross,
+      refund_gross,
+      refund_rate_units,
+      refund_rate_amount,
+    });
   }
   return out;
 }
@@ -254,117 +199,6 @@ export interface BreakdownRow {
   refund_rate: number; // refunds / paid_events (0..1)
 }
 
-interface EventRow {
-  event: string;
-  event_date: string;
-  consecutive_paid_periods: number | null;
-  days_before_canceling: number | null;
-  original_start_date: string | null;
-  subscription_name: string | null;
-  country: string | null;
-  standard_subscription_duration: string | null;
-  subscription_offer_type: string | null;
-  quantity: number;
-}
-
-async function fetchAppleEvents(days: number): Promise<EventRow[]> {
-  const supabase = createServerClient();
-  const today = new Date();
-  const start = new Date(today);
-  start.setUTCDate(start.getUTCDate() - days);
-  const startStr = start.toISOString().slice(0, 10);
-
-  const pageSize = 1000;
-  const rows: EventRow[] = [];
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await supabase
-      .from('apple_subscription_events')
-      .select(
-        'event, event_date, consecutive_paid_periods, days_before_canceling, original_start_date, subscription_name, country, standard_subscription_duration, subscription_offer_type, quantity'
-      )
-      .gte('event_date', startStr)
-      .range(from, from + pageSize - 1);
-
-    if (error) {
-      console.error('[refunds] apple events query error:', error);
-      break;
-    }
-    if (!data || data.length === 0) break;
-    rows.push(...(data as EventRow[]));
-    if (data.length < pageSize) break;
-  }
-
-  return rows;
-}
-
-// Apple events that represent a paid transaction (charge to the customer).
-// Based on actual SUBSCRIPTION_EVENT report data.
-// Excludes: Start Introductory Offer (free trial start), Cancel, Billing Retry (= retry started, not succeeded).
-const PAID_EVENT_PATTERNS = [
-  'Subscribe',                              // initial paid
-  'Subscribe with Contingent Price',
-  'Paid Subscription from Introductory Offer', // first paid charge after trial
-  'Renew',                                  // paid renewal
-  'Renewal from Billing Retry',             // recovered renewal
-  'Reactivate',                             // and all 'Reactivate ...' variants
-  'Upgrade',                                // and all 'Upgrade ...' variants
-  'Downgrade',                              // and all 'Downgrade ...' variants
-  'Crossgrade',                             // and all 'Crossgrade ...' variants
-];
-
-function isPaidEvent(e: string): boolean {
-  // Exclude refunds and explicit non-paid events
-  if (isRefundEvent(e)) return false;
-  if (e === 'Cancel') return false;
-  if (e === 'Canceled from Billing Retry') return false;
-  if (e.startsWith('Billing Retry')) return false; // retry STARTED (not yet succeeded)
-  if (e === 'Start Introductory Offer') return false; // trial start (no charge)
-
-  // Treat upgrade/downgrade/crossgrade FROM Introductory Offer as paid (they convert)
-  for (const p of PAID_EVENT_PATTERNS) {
-    if (e === p || e.startsWith(p + ' ') || e.startsWith(p + ' from')) return true;
-  }
-  return false;
-}
-
-function isRefundEvent(e: string): boolean {
-  return e === 'Refund' || e.startsWith('Refund');
-}
-
-function bucketDaysBeforeCanceling(d: number | null): string {
-  if (d == null) return 'Unknown';
-  if (d <= 1) return '0–1 days';
-  if (d <= 7) return '2–7 days';
-  if (d <= 30) return '8–30 days';
-  if (d <= 90) return '31–90 days';
-  return '90+ days';
-}
-
-/**
- * For Refund events Apple leaves "Days Before Canceling" empty.
- * Compute it as event_date − original_start_date when both are present.
- * NOTE: original_start_date is the FIRST EVER subscription start, so for
- * CPP=2+ this measures total time as a subscriber, not time since the
- * refunded charge specifically. Most useful for CPP=1 refunds.
- */
-function effectiveDaysBeforeCanceling(ev: EventRow): number | null {
-  if (ev.days_before_canceling != null) return ev.days_before_canceling;
-  if (!ev.event_date || !ev.original_start_date) return null;
-  const start = Date.parse(ev.original_start_date + 'T00:00:00Z');
-  const end = Date.parse(ev.event_date + 'T00:00:00Z');
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
-  return Math.round((end - start) / (24 * 3600 * 1000));
-}
-
-function bucketCpp(n: number | null): string {
-  if (n == null || n <= 0) return 'Unknown';
-  if (n === 1) return '1 — Initial purchase';
-  if (n === 2) return '2 — 1st renewal';
-  if (n === 3) return '3 — 2nd renewal';
-  if (n === 4) return '4 — 3rd renewal';
-  return '5+ renewals';
-}
-
 export interface AppleRefundBreakdowns {
   byConsecutivePaidPeriod: BreakdownRow[];
   byDaysBeforeCanceling: BreakdownRow[];
@@ -380,11 +214,35 @@ export interface AppleRefundBreakdowns {
 }
 
 /**
- * Compute Apple-specific refund breakdowns from the SUBSCRIPTION_EVENT table.
- * Each breakdown returns refund count, paid event count (denominator), and rate.
+ * Compute Apple-specific refund breakdowns from the SUBSCRIPTION_EVENT table
+ * via Postgres functions (apple_refunds_by_*) so we never pull raw rows
+ * client-side. ~6 small RPC calls in parallel.
  */
 export async function getAppleRefundBreakdowns(days = 90): Promise<AppleRefundBreakdowns> {
-  const events = await fetchAppleEvents(days);
+  const supabase = createServerClient();
+
+  type RpcRow = { bucket: string; refunds: number; paid_events: number };
+  type DaysRpcRow = { bucket: string; refunds: number };
+
+  const [cppRes, daysRes, planRes, offerRes, countryRes, skuRes] = await Promise.all([
+    supabase.rpc('apple_refunds_by_cpp', { days }),
+    supabase.rpc('apple_refunds_by_days_to_refund', { days }),
+    supabase.rpc('apple_refunds_by_dimension', { dim: 'duration', days, top_n: 20 }),
+    supabase.rpc('apple_refunds_by_dimension', { dim: 'offer', days, top_n: 20 }),
+    supabase.rpc('apple_refunds_by_dimension', { dim: 'country', days, top_n: 15 }),
+    supabase.rpc('apple_refunds_by_dimension', { dim: 'sku', days, top_n: 15 }),
+  ]);
+
+  for (const [name, res] of [
+    ['cpp', cppRes],
+    ['days', daysRes],
+    ['plan', planRes],
+    ['offer', offerRes],
+    ['country', countryRes],
+    ['sku', skuRes],
+  ] as const) {
+    if (res.error) console.error(`[refunds] apple breakdown rpc ${name} error:`, res.error);
+  }
 
   const empty: AppleRefundBreakdowns = {
     byConsecutivePaidPeriod: [],
@@ -400,90 +258,43 @@ export async function getAppleRefundBreakdowns(days = 90): Promise<AppleRefundBr
     lookbackDays: days,
   };
 
-  if (events.length === 0) return empty;
-
-  type Agg = { refunds: number; paid: number };
-  const mk = () => new Map<string, Agg>();
-  const cppMap = mk();
-  const daysMap = mk();
-  const planMap = mk();
-  const offerMap = mk();
-  const countryMap = mk();
-  const skuMap = mk();
-
-  let totalRefunds = 0;
-  let totalPaid = 0;
-
-  function bump(map: Map<string, Agg>, key: string, isRefund: boolean, qty: number) {
-    let v = map.get(key);
-    if (!v) {
-      v = { refunds: 0, paid: 0 };
-      map.set(key, v);
-    }
-    if (isRefund) v.refunds += qty;
-    else v.paid += qty;
-  }
-
-  for (const ev of events) {
-    const isRefund = isRefundEvent(ev.event);
-    const isPaid = isPaidEvent(ev.event);
-    if (!isRefund && !isPaid) continue;
-
-    const qty = Math.max(0, Number(ev.quantity || 0));
-    if (qty === 0) continue;
-
-    if (isRefund) totalRefunds += qty;
-    if (isPaid) totalPaid += qty;
-
-    bump(cppMap, bucketCpp(ev.consecutive_paid_periods), isRefund, qty);
-    // For days-before-canceling we only care about refunds (denominator = total refunds)
-    if (isRefund) {
-      bump(daysMap, bucketDaysBeforeCanceling(effectiveDaysBeforeCanceling(ev)), true, qty);
-    }
-    bump(planMap, ev.standard_subscription_duration || 'Unknown', isRefund, qty);
-    bump(offerMap, ev.subscription_offer_type || 'Standard', isRefund, qty);
-    bump(countryMap, ev.country || 'Unknown', isRefund, qty);
-    bump(skuMap, ev.subscription_name || 'Unknown', isRefund, qty);
-  }
-
-  function toRows(map: Map<string, Agg>, sort: 'key' | 'refunds' = 'refunds'): BreakdownRow[] {
-    const rows = Array.from(map.entries()).map(([bucket, v]) => ({
-      bucket,
-      refunds: v.refunds,
-      paid_events: v.paid,
-      refund_rate: v.paid > 0 ? v.refunds / v.paid : 0,
+  function toRows(rows: RpcRow[] | null | undefined): BreakdownRow[] {
+    return (rows || []).map((r) => ({
+      bucket: r.bucket,
+      refunds: Number(r.refunds || 0),
+      paid_events: Number(r.paid_events || 0),
+      refund_rate: Number(r.paid_events || 0) > 0
+        ? Number(r.refunds || 0) / Number(r.paid_events || 0)
+        : 0,
     }));
-    if (sort === 'refunds') {
-      rows.sort((a, b) => b.refunds - a.refunds || b.paid_events - a.paid_events);
-    } else {
-      rows.sort((a, b) => a.bucket.localeCompare(b.bucket));
-    }
-    return rows;
   }
 
-  // For the days-before-canceling breakdown there is no natural denominator
-  // (we can't compute "refunds per paid event at day X"). Instead, treat the
-  // rate as "share of total refunds in this bucket".
-  function toDaysRows(map: Map<string, Agg>): BreakdownRow[] {
-    const total = Array.from(map.values()).reduce((a, v) => a + v.refunds, 0);
-    const order = ['0–1 days', '2–7 days', '8–30 days', '31–90 days', '90+ days', 'Unknown'];
-    return Array.from(map.entries())
-      .map(([bucket, v]) => ({
-        bucket,
-        refunds: v.refunds,
-        paid_events: total, // total refunds as the denominator for the share
-        refund_rate: total > 0 ? v.refunds / total : 0,
-      }))
-      .sort((a, b) => order.indexOf(a.bucket) - order.indexOf(b.bucket));
+  // Days-to-refund: there's no natural "paid" denominator. Treat rate as
+  // share of total refunds in each bucket.
+  function toDaysRows(rows: DaysRpcRow[] | null | undefined): BreakdownRow[] {
+    const list = rows || [];
+    const total = list.reduce((a, r) => a + Number(r.refunds || 0), 0);
+    return list.map((r) => ({
+      bucket: r.bucket,
+      refunds: Number(r.refunds || 0),
+      paid_events: total,
+      refund_rate: total > 0 ? Number(r.refunds || 0) / total : 0,
+    }));
   }
+
+  const cpp = toRows(cppRes.data as RpcRow[] | null);
+  if (cpp.length === 0) return empty;
+
+  const totalRefunds = cpp.reduce((a, r) => a + r.refunds, 0);
+  const totalPaid = cpp.reduce((a, r) => a + r.paid_events, 0);
 
   return {
-    byConsecutivePaidPeriod: toRows(cppMap, 'key'),
-    byDaysBeforeCanceling: toDaysRows(daysMap),
-    byPlanDuration: toRows(planMap),
-    byOfferType: toRows(offerMap),
-    byCountry: toRows(countryMap).slice(0, 15),
-    bySku: toRows(skuMap).slice(0, 15),
+    byConsecutivePaidPeriod: cpp,
+    byDaysBeforeCanceling: toDaysRows(daysRes.data as DaysRpcRow[] | null),
+    byPlanDuration: toRows(planRes.data as RpcRow[] | null),
+    byOfferType: toRows(offerRes.data as RpcRow[] | null),
+    byCountry: toRows(countryRes.data as RpcRow[] | null),
+    bySku: toRows(skuRes.data as RpcRow[] | null),
     totalRefunds,
     totalPaid,
     overallRate: totalPaid > 0 ? totalRefunds / totalPaid : 0,
