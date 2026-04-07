@@ -18,25 +18,10 @@ interface TxRow {
   amount_gross: number | null;
 }
 
-/**
- * Fetch monthly refund metrics for a given source over the last `months` months.
- * Computes refund rate as refund_units / charge_units (Apple-style) and
- * refund_gross / charge_gross (dollar-weighted).
- */
-export async function getRefundsByMonth(
+async function getGenericRefundsByMonth(
   source: Source,
-  months = 24
+  months: number
 ): Promise<RefundMonthlyRow[]> {
-  // Apple is a special case: the `transactions` table is populated from the
-  // Apple Finance Report (which only carries refunds for the months actively
-  // synced — historical CSV imports never had refund rows). The
-  // `apple_subscription_events` table comes from the SUBSCRIPTION_EVENT report
-  // and is the source of truth that matches App Store Connect → Trends.
-  // For Apple we read from there and join $ context from `transactions`.
-  if (source === 'apple') {
-    return getAppleRefundsByMonth(months);
-  }
-
   const supabase = createServerClient();
 
   // Build date range: first day of (months - 1) months ago to today
@@ -233,6 +218,28 @@ async function getAppleRefundsByMonth(months: number): Promise<RefundMonthlyRow[
     }
   }
   return out;
+}
+
+/**
+ * Fetch monthly refund metrics for a given source over the last `months` months.
+ * Computes refund rate as refund_units / charge_units (Apple-style) and
+ * refund_gross / charge_gross (dollar-weighted).
+ *
+ * Apple is a special case: the `transactions` table is populated from the
+ * Apple Finance Report (which only carries refunds for the months actively
+ * synced — historical CSV imports never had refund rows). The
+ * `apple_subscription_events` table comes from the SUBSCRIPTION_EVENT report
+ * and is the source of truth that matches App Store Connect → Trends.
+ * For Apple we read from there and join $ context from `transactions`.
+ */
+export async function getRefundsByMonth(
+  source: Source,
+  months = 24
+): Promise<RefundMonthlyRow[]> {
+  if (source === 'apple') {
+    return getAppleRefundsByMonth(months);
+  }
+  return getGenericRefundsByMonth(source, months);
 }
 
 // ============================================================================
