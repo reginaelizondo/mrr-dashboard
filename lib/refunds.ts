@@ -27,6 +27,16 @@ export async function getRefundsByMonth(
   source: Source,
   months = 24
 ): Promise<RefundMonthlyRow[]> {
+  // Apple is a special case: the `transactions` table is populated from the
+  // Apple Finance Report (which only carries refunds for the months actively
+  // synced — historical CSV imports never had refund rows). The
+  // `apple_subscription_events` table comes from the SUBSCRIPTION_EVENT report
+  // and is the source of truth that matches App Store Connect → Trends.
+  // For Apple we read from there and join $ context from `transactions`.
+  if (source === 'apple') {
+    return getAppleRefundsByMonth(months);
+  }
+
   const supabase = createServerClient();
 
   // Build date range: first day of (months - 1) months ago to today
@@ -89,6 +99,138 @@ export async function getRefundsByMonth(
   for (const r of out) {
     r.refund_rate_units = r.charge_units > 0 ? r.refund_units / r.charge_units : 0;
     r.refund_rate_amount = r.charge_gross > 0 ? r.refund_gross / r.charge_gross : 0;
+  }
+  return out;
+}
+
+/**
+ * Apple-specific monthly refund metrics, sourced from `apple_subscription_events`
+ * (the SUBSCRIPTION_EVENT report — same data App Store Connect → Trends shows).
+ * Joins charge $ from `transactions` (Finance Report) for the dollar-based
+ * refund rate. Refund $ is approximated as charge_gross × (refund_units / charge_units)
+ * because the SUBSCRIPTION_EVENT report does not carry $ amounts and the Finance
+ * Report has incomplete refund history.
+ */
+async function getAppleRefundsByMonth(months: number): Promise<RefundMonthlyRow[]> {
+  const supabase = createServerClient();
+
+  // The events table only retains ~365 days, so cap the lookback there.
+  const today = new Date();
+  const monthsCapped = Math.min(months, 13);
+  const start = new Date(
+    Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - (monthsCapped - 1), 1)
+  );
+  const startStr = start.toISOString().slice(0, 10);
+
+  // ---- 1) Pull events (units, classification) ----
+  interface EvRow {
+    event_date: string;
+    event: string;
+    quantity: number | null;
+  }
+  const events: EvRow[] = [];
+  const pageSize = 1000;
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from('apple_subscription_events')
+      .select('event_date, event, quantity')
+      .gte('event_date', startStr)
+      .range(from, from + pageSize - 1);
+    if (error) {
+      console.error('[refunds] apple events query error:', error);
+      break;
+    }
+    if (!data || data.length === 0) break;
+    events.push(...(data as EvRow[]));
+    if (data.length < pageSize) break;
+  }
+
+  // ---- 2) Pull charge $ from transactions (Finance Report) for the same range ----
+  interface TxRowApple {
+    transaction_date: string;
+    transaction_type: string;
+    amount_gross: number | null;
+  }
+  const txs: TxRowApple[] = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('transaction_date, transaction_type, amount_gross')
+      .eq('source', 'apple')
+      .in('transaction_type', ['charge', 'refund'])
+      .gte('transaction_date', startStr)
+      .range(from, from + pageSize - 1);
+    if (error) {
+      console.error('[refunds] apple tx query error:', error);
+      break;
+    }
+    if (!data || data.length === 0) break;
+    txs.push(...(data as TxRowApple[]));
+    if (data.length < pageSize) break;
+  }
+
+  // ---- 3) Aggregate per month ----
+  const byMonth = new Map<string, RefundMonthlyRow>();
+  function ensure(month: string): RefundMonthlyRow {
+    let r = byMonth.get(month);
+    if (!r) {
+      r = {
+        month,
+        charge_units: 0,
+        refund_units: 0,
+        charge_gross: 0,
+        refund_gross: 0,
+        refund_rate_units: 0,
+        refund_rate_amount: 0,
+      };
+      byMonth.set(month, r);
+    }
+    return r;
+  }
+
+  for (const e of events) {
+    const month = (e.event_date || '').slice(0, 7);
+    if (!month) continue;
+    const qty = Math.abs(Number(e.quantity || 0));
+    const ev = e.event || '';
+    if (ev.startsWith('Refund')) {
+      ensure(month).refund_units += qty;
+    } else if (
+      ev !== 'Cancel' &&
+      ev !== 'Canceled from Billing Retry' &&
+      ev !== 'Start Introductory Offer' &&
+      !ev.startsWith('Billing Retry')
+    ) {
+      ensure(month).charge_units += qty;
+    }
+  }
+
+  for (const t of txs) {
+    const month = (t.transaction_date || '').slice(0, 7);
+    if (!month) continue;
+    const gross = Math.abs(Number(t.amount_gross || 0));
+    const r = ensure(month);
+    if (t.transaction_type === 'charge') r.charge_gross += gross;
+    else if (t.transaction_type === 'refund') r.refund_gross += gross;
+  }
+
+  // ---- 4) Compute rates. Refund $ is approximated when missing. ----
+  const out = Array.from(byMonth.values()).sort((a, b) => a.month.localeCompare(b.month));
+  for (const r of out) {
+    r.refund_rate_units = r.charge_units > 0 ? r.refund_units / r.charge_units : 0;
+    // If refund $ is missing or implausibly low (e.g. only 1 month had Finance refund rows),
+    // approximate it from units rate × charge $.
+    if (r.refund_gross === 0 && r.charge_gross > 0 && r.refund_units > 0) {
+      r.refund_gross = r.charge_gross * r.refund_rate_units;
+    }
+    // Fallback: if Finance Report charges aren't synced yet for this month
+    // (e.g. current month before Apple publishes), mirror the units rate so
+    // the chart line stays continuous instead of dropping to zero.
+    if (r.charge_gross > 0) {
+      r.refund_rate_amount = r.refund_gross / r.charge_gross;
+    } else {
+      r.refund_rate_amount = r.refund_rate_units;
+    }
   }
   return out;
 }
