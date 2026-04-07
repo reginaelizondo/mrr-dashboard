@@ -20,14 +20,17 @@ interface TxRow {
 
 async function getGenericRefundsByMonth(
   source: Source,
-  months: number
+  startMonth: string,
+  endMonth: string
 ): Promise<RefundMonthlyRow[]> {
   const supabase = createServerClient();
 
-  // Build date range: first day of (months - 1) months ago to today
-  const today = new Date();
-  const start = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - (months - 1), 1));
-  const startStr = start.toISOString().slice(0, 10);
+  const startStr = `${startMonth}-01`;
+  // End is the LAST day of endMonth — compute by going to the first day of
+  // the next month and subtracting one.
+  const [ey, em] = endMonth.split('-').map(Number);
+  const endDate = new Date(Date.UTC(ey, em, 0));
+  const endStr = endDate.toISOString().slice(0, 10);
 
   // Page through results to avoid Supabase 1000-row cap
   const pageSize = 1000;
@@ -39,6 +42,7 @@ async function getGenericRefundsByMonth(
       .eq('source', source)
       .in('transaction_type', ['charge', 'refund'])
       .gte('transaction_date', startStr)
+      .lte('transaction_date', endStr)
       .order('transaction_date', { ascending: true })
       .range(from, from + pageSize - 1);
 
@@ -100,23 +104,20 @@ async function getGenericRefundsByMonth(
  * because the SUBSCRIPTION_EVENT report does not carry $ amounts and the Finance
  * Report has incomplete refund history.
  */
-async function getAppleRefundsByMonth(months: number): Promise<RefundMonthlyRow[]> {
+async function getAppleRefundsByMonth(
+  startMonth: string,
+  endMonth: string
+): Promise<RefundMonthlyRow[]> {
   const supabase = createServerClient();
 
   // Source of truth = v_apple_sales_monthly (Apple SALES report, calendar
   // months, USD-converted via per-month FX rates). This view returns the
   // SAME numbers App Store Connect → Trends → Ventas displays.
-  const monthsCapped = Math.min(months, 13);
-  const today = new Date();
-  const start = new Date(
-    Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - (monthsCapped - 1), 1)
-  );
-  const startMonth = start.toISOString().slice(0, 7);
-
   const { data, error } = await supabase
     .from('v_apple_sales_monthly')
     .select('month, charge_units, refund_units, charge_gross_usd, refund_gross_usd')
     .gte('month', startMonth)
+    .lte('month', endMonth)
     .order('month', { ascending: true });
 
   if (error) console.error('[refunds] apple sales view error:', error);
@@ -143,9 +144,9 @@ async function getAppleRefundsByMonth(months: number): Promise<RefundMonthlyRow[
 }
 
 /**
- * Fetch monthly refund metrics for a given source over the last `months` months.
- * Computes refund rate as refund_units / charge_units (Apple-style) and
- * refund_gross / charge_gross (dollar-weighted).
+ * Fetch monthly refund metrics for a given source between [startMonth, endMonth]
+ * (inclusive, both YYYY-MM). Computes refund rate as refunds / (charges - refunds)
+ * to match App Store Connect's "Reembolso vs Total" methodology.
  *
  * Apple is a special case: we read from `v_apple_sales_monthly` which is
  * built from the Apple SALES (DAILY) report — the same calendar-aligned
@@ -155,12 +156,62 @@ async function getAppleRefundsByMonth(months: number): Promise<RefundMonthlyRow[
  */
 export async function getRefundsByMonth(
   source: Source,
-  months = 24
+  startMonth: string,
+  endMonth: string
 ): Promise<RefundMonthlyRow[]> {
   if (source === 'apple') {
-    return getAppleRefundsByMonth(months);
+    return getAppleRefundsByMonth(startMonth, endMonth);
   }
-  return getGenericRefundsByMonth(source, months);
+  return getGenericRefundsByMonth(source, startMonth, endMonth);
+}
+
+/**
+ * Returns the most recent Apple Sales sync timestamp.
+ * Tries sync_log first (populated by the daily cron), falls back to the
+ * latest synced_at on `apple_sales_daily` (covers manual backfills).
+ */
+export async function getLastAppleSalesSync(): Promise<{
+  completedAt: string | null;
+  records: number;
+  status: string | null;
+  latestDataDate: string | null;
+}> {
+  const supabase = createServerClient();
+
+  // 1) Try sync_log
+  const { data: logs } = await supabase
+    .from('sync_log')
+    .select('completed_at, records_synced, status, details')
+    .eq('source', 'apple')
+    .order('started_at', { ascending: false })
+    .limit(20);
+
+  const sale = (logs || []).find(
+    (r) => (r.details as { source?: string } | null)?.source === 'apple-sales'
+  );
+
+  // 2) Fallback: latest synced_at on apple_sales_daily, plus the latest
+  //    begin_date so the user can see how recent the actual data is.
+  const { data: latestSync } = await supabase
+    .from('apple_sales_daily')
+    .select('synced_at')
+    .order('synced_at', { ascending: false })
+    .limit(1)
+    .single();
+
+  const { data: latestData } = await supabase
+    .from('apple_sales_daily')
+    .select('begin_date')
+    .order('begin_date', { ascending: false })
+    .limit(1)
+    .single();
+
+  return {
+    completedAt: sale?.completed_at || latestSync?.synced_at || null,
+    records: sale ? Number(sale.records_synced || 0) : 0,
+    status: sale?.status || (latestSync ? 'success' : null),
+    latestDataDate: latestData?.begin_date || null,
+  };
 }
 
 // ============================================================================
@@ -186,27 +237,32 @@ export interface AppleRefundBreakdowns {
   totalPaid: number;
   overallRate: number;
   hasData: boolean;
-  lookbackDays: number;
+  startDate: string;
+  endDate: string;
 }
 
 /**
  * Compute Apple-specific refund breakdowns from the SUBSCRIPTION_EVENT table
- * via Postgres functions (apple_refunds_by_*) so we never pull raw rows
- * client-side. ~6 small RPC calls in parallel.
+ * via Postgres functions (apple_refunds_by_*_range) for an arbitrary
+ * [startDate, endDate] window. Returns 6 breakdowns in parallel via RPC.
  */
-export async function getAppleRefundBreakdowns(days = 90): Promise<AppleRefundBreakdowns> {
+export async function getAppleRefundBreakdowns(
+  startDate: string,
+  endDate: string
+): Promise<AppleRefundBreakdowns> {
   const supabase = createServerClient();
 
   type RpcRow = { bucket: string; refunds: number; paid_events: number };
   type DaysRpcRow = { bucket: string; refunds: number };
 
+  const args = { start_date: startDate, end_date: endDate };
   const [cppRes, daysRes, planRes, offerRes, countryRes, skuRes] = await Promise.all([
-    supabase.rpc('apple_refunds_by_cpp', { days }),
-    supabase.rpc('apple_refunds_by_days_to_refund', { days }),
-    supabase.rpc('apple_refunds_by_dimension', { dim: 'duration', days, top_n: 20 }),
-    supabase.rpc('apple_refunds_by_dimension', { dim: 'offer', days, top_n: 20 }),
-    supabase.rpc('apple_refunds_by_dimension', { dim: 'country', days, top_n: 15 }),
-    supabase.rpc('apple_refunds_by_dimension', { dim: 'sku', days, top_n: 15 }),
+    supabase.rpc('apple_refunds_by_cpp_range', args),
+    supabase.rpc('apple_refunds_by_days_to_refund_range', args),
+    supabase.rpc('apple_refunds_by_dimension_range', { dim: 'duration', ...args, top_n: 20 }),
+    supabase.rpc('apple_refunds_by_dimension_range', { dim: 'offer', ...args, top_n: 20 }),
+    supabase.rpc('apple_refunds_by_dimension_range', { dim: 'country', ...args, top_n: 15 }),
+    supabase.rpc('apple_refunds_by_dimension_range', { dim: 'sku', ...args, top_n: 15 }),
   ]);
 
   for (const [name, res] of [
@@ -231,7 +287,8 @@ export async function getAppleRefundBreakdowns(days = 90): Promise<AppleRefundBr
     totalPaid: 0,
     overallRate: 0,
     hasData: false,
-    lookbackDays: days,
+    startDate,
+    endDate,
   };
 
   function toRows(rows: RpcRow[] | null | undefined): BreakdownRow[] {
@@ -279,8 +336,9 @@ export async function getAppleRefundBreakdowns(days = 90): Promise<AppleRefundBr
     bySku: toRows(skuRes.data as RpcRow[] | null),
     totalRefunds,
     totalPaid,
-    overallRate: totalPaid > 0 ? totalRefunds / totalPaid : 0,
+    overallRate: totalPaid > totalRefunds ? totalRefunds / (totalPaid - totalRefunds) : 0,
     hasData: true,
-    lookbackDays: days,
+    startDate,
+    endDate,
   };
 }
