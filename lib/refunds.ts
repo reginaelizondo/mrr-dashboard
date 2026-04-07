@@ -99,10 +99,9 @@ async function getGenericRefundsByMonth(
 async function getAppleRefundsByMonth(months: number): Promise<RefundMonthlyRow[]> {
   const supabase = createServerClient();
 
-  // Pull pre-aggregated rows from the v_apple_refund_monthly view (~13 rows)
-  // and the v_apple_charge_gross_monthly view (~24 rows) — both backed by
-  // Postgres GROUP BY, so this is two ~30ms queries instead of paginating
-  // hundreds of thousands of raw rows.
+  // Source of truth = v_apple_sales_monthly (Apple SALES report, calendar
+  // months, USD-converted via per-month FX rates). This view returns the
+  // SAME numbers App Store Connect → Trends → Ventas displays.
   const monthsCapped = Math.min(months, 13);
   const today = new Date();
   const start = new Date(
@@ -110,59 +109,29 @@ async function getAppleRefundsByMonth(months: number): Promise<RefundMonthlyRow[
   );
   const startMonth = start.toISOString().slice(0, 7);
 
-  const [unitsRes, grossRes] = await Promise.all([
-    supabase
-      .from('v_apple_refund_monthly')
-      .select('month, charge_units, refund_units')
-      .gte('month', startMonth)
-      .order('month', { ascending: true }),
-    supabase
-      .from('v_apple_charge_gross_monthly')
-      .select('month, charge_gross, refund_gross')
-      .gte('month', startMonth)
-      .order('month', { ascending: true }),
-  ]);
+  const { data, error } = await supabase
+    .from('v_apple_sales_monthly')
+    .select('month, charge_units, refund_units, charge_gross_usd, refund_gross_usd')
+    .gte('month', startMonth)
+    .order('month', { ascending: true });
 
-  if (unitsRes.error) console.error('[refunds] apple units view error:', unitsRes.error);
-  if (grossRes.error) console.error('[refunds] apple gross view error:', grossRes.error);
+  if (error) console.error('[refunds] apple sales view error:', error);
 
-  const grossByMonth = new Map<string, { charge_gross: number; refund_gross: number }>();
-  for (const r of grossRes.data || []) {
-    grossByMonth.set(r.month, {
-      charge_gross: Math.abs(Number(r.charge_gross || 0)),
-      refund_gross: Math.abs(Number(r.refund_gross || 0)),
-    });
-  }
-
-  const out: RefundMonthlyRow[] = [];
-  for (const u of unitsRes.data || []) {
-    const charge_units = Number(u.charge_units || 0);
-    const refund_units = Number(u.refund_units || 0);
-    const refund_rate_units = charge_units > 0 ? refund_units / charge_units : 0;
-
-    const g = grossByMonth.get(u.month) || { charge_gross: 0, refund_gross: 0 };
-    let { charge_gross, refund_gross } = g;
-    // If refund $ is missing (Finance Report didn't have refund rows for this
-    // month historically), approximate it from units rate × charge $.
-    if (refund_gross === 0 && charge_gross > 0 && refund_units > 0) {
-      refund_gross = charge_gross * refund_rate_units;
-    }
-    // Fallback: if Finance Report charges aren't synced yet for this month
-    // (e.g. current month before Apple publishes), mirror the units rate so
-    // the chart line stays continuous instead of dropping to zero.
-    const refund_rate_amount = charge_gross > 0 ? refund_gross / charge_gross : refund_rate_units;
-
-    out.push({
-      month: u.month,
+  return (data || []).map((r) => {
+    const charge_units = Number(r.charge_units || 0);
+    const refund_units = Number(r.refund_units || 0);
+    const charge_gross = Number(r.charge_gross_usd || 0);
+    const refund_gross = Number(r.refund_gross_usd || 0);
+    return {
+      month: r.month,
       charge_units,
       refund_units,
       charge_gross,
       refund_gross,
-      refund_rate_units,
-      refund_rate_amount,
-    });
-  }
-  return out;
+      refund_rate_units: charge_units > 0 ? refund_units / charge_units : 0,
+      refund_rate_amount: charge_gross > 0 ? refund_gross / charge_gross : 0,
+    };
+  });
 }
 
 /**
@@ -170,12 +139,11 @@ async function getAppleRefundsByMonth(months: number): Promise<RefundMonthlyRow[
  * Computes refund rate as refund_units / charge_units (Apple-style) and
  * refund_gross / charge_gross (dollar-weighted).
  *
- * Apple is a special case: the `transactions` table is populated from the
- * Apple Finance Report (which only carries refunds for the months actively
- * synced — historical CSV imports never had refund rows). The
- * `apple_subscription_events` table comes from the SUBSCRIPTION_EVENT report
- * and is the source of truth that matches App Store Connect → Trends.
- * For Apple we read from there and join $ context from `transactions`.
+ * Apple is a special case: we read from `v_apple_sales_monthly` which is
+ * built from the Apple SALES (DAILY) report — the same calendar-aligned
+ * data App Store Connect → Trends → Ventas shows. The `transactions` table
+ * for Apple is sourced from the Finance Report which uses Apple's fiscal
+ * calendar and would not match App Store Connect month-to-month.
  */
 export async function getRefundsByMonth(
   source: Source,
