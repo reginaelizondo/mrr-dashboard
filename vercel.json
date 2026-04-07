@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/sync",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/apple-events",
+      "schedule": "0 8 * * *"
     }
   ]
 }
