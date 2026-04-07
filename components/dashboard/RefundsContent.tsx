@@ -33,6 +33,7 @@ import type { RefundMonthlyRow, AppleRefundBreakdowns, BreakdownRow } from '@/li
 import type { Source } from '@/types';
 
 type Preset = '3m' | '6m' | '12m' | 'ytd' | 'all' | 'custom';
+type Granularity = 'monthly' | 'weekly';
 
 interface SyncInfo {
   completedAt: string | null;
@@ -43,11 +44,13 @@ interface SyncInfo {
 
 interface Props {
   data: Record<Source, RefundMonthlyRow[]>;
+  appleWeekly: RefundMonthlyRow[];
   appleBreakdowns: AppleRefundBreakdowns | null;
   lastSync: SyncInfo;
   preset: Preset;
   startDate: string;
   endDate: string;
+  granularity: Granularity;
 }
 
 const SOURCES: { key: Source; label: string }[] = [
@@ -68,6 +71,22 @@ function formatMonth(ym: string): string {
   const [y, m] = ym.split('-').map(Number);
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   return `${months[(m || 1) - 1]} ${y}`;
+}
+
+function formatWeek(weekStart: string, weekEnd?: string): string {
+  // YYYY-MM-DD → "Mar 30 – Apr 5"
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const [, sm, sd] = weekStart.split('-').map(Number);
+  if (!weekEnd) return `${months[(sm || 1) - 1]} ${sd}`;
+  const [, em, ed] = weekEnd.split('-').map(Number);
+  if (sm === em) return `${months[(sm || 1) - 1]} ${sd}–${ed}`;
+  return `${months[(sm || 1) - 1]} ${sd} – ${months[(em || 1) - 1]} ${ed}`;
+}
+
+function formatPeriod(row: RefundMonthlyRow, granularity: Granularity): string {
+  return granularity === 'weekly'
+    ? formatWeek(row.month, row.week_end)
+    : formatMonth(row.month);
 }
 
 function rateColor(ratePct: number): string {
@@ -92,28 +111,55 @@ function formatTimeAgo(iso: string | null): string {
 
 export function RefundsContent({
   data,
+  appleWeekly,
   appleBreakdowns,
   lastSync,
   preset,
   startDate,
   endDate,
+  granularity,
 }: Props) {
   const [source, setSource] = useState<Source>('apple');
   const router = useRouter();
   const pathname = usePathname();
-  const rows = data[source] || [];
+
+  // Weekly view is Apple-only (only the SALES report has daily granularity).
+  // For Google/Stripe always show monthly.
+  const effectiveGranularity: Granularity =
+    granularity === 'weekly' && source === 'apple' ? 'weekly' : 'monthly';
+  const rows: RefundMonthlyRow[] =
+    effectiveGranularity === 'weekly' ? appleWeekly : data[source] || [];
+
+  function urlParams(overrides: Record<string, string>): string {
+    const sp = new URLSearchParams();
+    sp.set('preset', preset);
+    if (preset === 'custom') {
+      sp.set('start', startDate);
+      sp.set('end', endDate);
+    }
+    if (granularity === 'weekly') sp.set('granularity', 'weekly');
+    for (const [k, v] of Object.entries(overrides)) sp.set(k, v);
+    return sp.toString();
+  }
 
   function setPreset(next: Preset) {
-    const sp = new URLSearchParams();
-    sp.set('preset', next);
-    router.push(`${pathname}?${sp.toString()}`);
+    router.push(`${pathname}?${urlParams({ preset: next })}`);
   }
 
   function setCustomRange(start: string, end: string) {
+    router.push(
+      `${pathname}?${urlParams({ preset: 'custom', start, end })}`
+    );
+  }
+
+  function setGranularity(next: Granularity) {
     const sp = new URLSearchParams();
-    sp.set('preset', 'custom');
-    sp.set('start', start);
-    sp.set('end', end);
+    sp.set('preset', preset);
+    if (preset === 'custom') {
+      sp.set('start', startDate);
+      sp.set('end', endDate);
+    }
+    if (next === 'weekly') sp.set('granularity', 'weekly');
     router.push(`${pathname}?${sp.toString()}`);
   }
 
@@ -143,7 +189,7 @@ export function RefundsContent({
   }, [rows]);
 
   const chartData = rows.map((r) => ({
-    date: formatMonth(r.month),
+    date: formatPeriod(r, effectiveGranularity),
     rateUnits: Number((r.refund_rate_units * 100).toFixed(2)),
     rateAmount: Number((r.refund_rate_amount * 100).toFixed(2)),
   }));
@@ -209,6 +255,37 @@ export function RefundsContent({
                 />
               </div>
             </div>
+          </div>
+
+          {/* Granularity toggle */}
+          <div className="flex items-center gap-2 mt-3">
+            <span className="text-xs uppercase tracking-wider text-muted-foreground mr-1">
+              Granularity
+            </span>
+            {(['monthly', 'weekly'] as const).map((g) => {
+              const disabled = g === 'weekly' && source !== 'apple';
+              return (
+                <button
+                  key={g}
+                  onClick={() => !disabled && setGranularity(g)}
+                  disabled={disabled}
+                  title={
+                    disabled
+                      ? 'Weekly view is only available for Apple (Sales report has daily data)'
+                      : ''
+                  }
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                    granularity === g && !disabled
+                      ? 'bg-[#45C94E] text-white'
+                      : disabled
+                      ? 'bg-gray-100 border border-border text-gray-400 cursor-not-allowed'
+                      : 'bg-white border border-border text-muted-foreground hover:bg-[#F0F4FF]'
+                  }`}
+                >
+                  {g === 'monthly' ? 'Monthly' : 'Weekly'}
+                </button>
+              );
+            })}
           </div>
 
           {/* Sync status row */}
@@ -277,9 +354,14 @@ export function RefundsContent({
               ? 'rose'
               : 'green'
           }
-          subtitle={`${formatMonth(rows[0]?.month || '')} → ${formatMonth(
-            rows[rows.length - 1]?.month || ''
-          )}`}
+          subtitle={
+            rows.length > 0
+              ? `${formatPeriod(rows[0], effectiveGranularity)} → ${formatPeriod(
+                  rows[rows.length - 1],
+                  effectiveGranularity
+                )}`
+              : ''
+          }
         />
         <MetricCard
           label="Period Rate (units)"
@@ -304,7 +386,7 @@ export function RefundsContent({
           subtitle={`${formatCurrency(stats.totalRefundGross)} refunded`}
         />
         <MetricCard
-          label="Latest Month Rate"
+          label={effectiveGranularity === 'weekly' ? 'Latest Week Rate' : 'Latest Month Rate'}
           value={stats.currentMonthRate}
           previousValue={stats.priorMonthRate}
           format="percent"
@@ -316,7 +398,9 @@ export function RefundsContent({
               ? 'rose'
               : 'green'
           }
-          subtitle={rows.length > 0 ? formatMonth(rows[rows.length - 1].month) : ''}
+          subtitle={
+            rows.length > 0 ? formatPeriod(rows[rows.length - 1], effectiveGranularity) : ''
+          }
         />
       </div>
 
@@ -325,7 +409,8 @@ export function RefundsContent({
         <div className="h-1 bg-gradient-to-r from-[#45C94E] via-[#F59E0B] to-[#E53E3E]" />
         <CardHeader>
           <CardTitle className="text-base font-semibold text-[#0E3687]">
-            Monthly Refund Rate — {SOURCES.find((s) => s.key === source)?.label}
+            {effectiveGranularity === 'weekly' ? 'Weekly' : 'Monthly'} Refund Rate —{' '}
+            {SOURCES.find((s) => s.key === source)?.label}
           </CardTitle>
           <p className="text-xs text-muted-foreground">
             Bars = refund rate by units • Line = refund rate by $ gross • Net basis (refunds / (charges − refunds))
@@ -358,7 +443,7 @@ export function RefundsContent({
       </Card>
 
       {/* Detail table */}
-      <MonthlyDetailTable rows={rows} />
+      <MonthlyDetailTable rows={rows} granularity={effectiveGranularity} />
 
       {/* Apple-only segmentation from SUBSCRIPTION_EVENT report */}
       {source === 'apple' && <AppleBreakdownSections breakdowns={appleBreakdowns} />}
@@ -384,7 +469,13 @@ type MonthlySortKey =
   | 'refund_gross'
   | 'refund_rate_amount';
 
-function MonthlyDetailTable({ rows }: { rows: RefundMonthlyRow[] }) {
+function MonthlyDetailTable({
+  rows,
+  granularity,
+}: {
+  rows: RefundMonthlyRow[];
+  granularity: Granularity;
+}) {
   const [sortKey, setSortKey] = useState<MonthlySortKey>('month');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
@@ -443,14 +534,16 @@ function MonthlyDetailTable({ rows }: { rows: RefundMonthlyRow[] }) {
     <Card className="overflow-hidden">
       <div className="h-1 bg-gradient-to-r from-[#0E3687] to-[#0086D8]" />
       <CardHeader>
-        <CardTitle className="text-base font-semibold text-[#0E3687]">Monthly Detail</CardTitle>
+        <CardTitle className="text-base font-semibold text-[#0E3687]">
+          {granularity === 'weekly' ? 'Weekly' : 'Monthly'} Detail
+        </CardTitle>
       </CardHeader>
       <CardContent>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border/50 bg-[#F8F9FB]">
-                {header('Month', 'month', 'left')}
+                {header(granularity === 'weekly' ? 'Week' : 'Month', 'month', 'left')}
                 {header('Charges', 'charge_units', 'right')}
                 {header('Refunds', 'refund_units', 'right')}
                 {header('Rate (units)', 'refund_rate_units', 'right')}
@@ -470,7 +563,7 @@ function MonthlyDetailTable({ rows }: { rows: RefundMonthlyRow[] }) {
                       i % 2 === 0 ? '' : 'bg-[#F8F9FB]/50'
                     }`}
                   >
-                    <td className="py-2.5 px-3 font-medium">{formatMonth(r.month)}</td>
+                    <td className="py-2.5 px-3 font-medium">{formatPeriod(r, granularity)}</td>
                     <td className="text-right py-2.5 px-3 tabular-nums text-[#0086D8]">
                       {r.charge_units.toLocaleString()}
                     </td>
@@ -511,7 +604,9 @@ function MonthlyDetailTable({ rows }: { rows: RefundMonthlyRow[] }) {
             {sorted.length > 0 && (
               <tfoot>
                 <tr className="border-t-2 border-border bg-[#F8F9FB] font-semibold">
-                  <td className="py-2.5 px-3 text-[#0E3687]">Total ({rows.length} mo)</td>
+                  <td className="py-2.5 px-3 text-[#0E3687]">
+                    Total ({rows.length} {granularity === 'weekly' ? 'wk' : 'mo'})
+                  </td>
                   <td className="text-right py-2.5 px-3 tabular-nums text-[#0086D8]">
                     {totalCharges.toLocaleString()}
                   </td>

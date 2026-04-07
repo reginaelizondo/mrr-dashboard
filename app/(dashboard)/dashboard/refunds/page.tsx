@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic';
 import { Suspense } from 'react';
 import {
   getRefundsByMonth,
+  getAppleRefundsByWeek,
   getAppleRefundBreakdowns,
   getLastAppleSalesSync,
 } from '@/lib/refunds';
@@ -11,11 +12,13 @@ import { Skeleton } from '@/components/ui/skeleton';
 import type { Source } from '@/types';
 
 type Preset = '3m' | '6m' | '12m' | 'ytd' | 'all' | 'custom';
+type Granularity = 'monthly' | 'weekly';
 
 interface PageParams {
   preset?: string;
   start?: string; // YYYY-MM-DD
   end?: string;   // YYYY-MM-DD
+  granularity?: string;
 }
 
 function resolveDateRange(params: PageParams): {
@@ -73,11 +76,15 @@ export default async function RefundsPage({
 }) {
   const params = await searchParams;
   const range = resolveDateRange(params);
+  const granularity: Granularity = params.granularity === 'weekly' ? 'weekly' : 'monthly';
 
-  const [apple, google, stripe, appleBreakdowns, lastSync] = await Promise.all([
+  const [apple, google, stripe, appleWeekly, appleBreakdowns, lastSync] = await Promise.all([
     getRefundsByMonth('apple', range.startMonth, range.endMonth),
     getRefundsByMonth('google', range.startMonth, range.endMonth),
     getRefundsByMonth('stripe', range.startMonth, range.endMonth),
+    granularity === 'weekly'
+      ? getAppleRefundsByWeek(range.startDate, range.endDate)
+      : Promise.resolve([]),
     getAppleRefundBreakdowns(range.startDate, range.endDate).catch((err) => {
       console.error('[refunds] apple breakdowns failed:', err);
       return null;
@@ -103,11 +110,13 @@ export default async function RefundsPage({
       <Suspense fallback={<Skeleton className="h-96 w-full" />}>
         <RefundsContent
           data={data}
+          appleWeekly={appleWeekly}
           appleBreakdowns={appleBreakdowns}
           lastSync={lastSync}
           preset={range.preset}
           startDate={range.startDate}
           endDate={range.endDate}
+          granularity={granularity}
         />
       </Suspense>
     </div>

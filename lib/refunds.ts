@@ -1,8 +1,13 @@
 import { createServerClient } from '@/lib/supabase/server';
 import type { Source } from '@/types';
 
+export type Granularity = 'monthly' | 'weekly';
+
 export interface RefundMonthlyRow {
-  month: string; // YYYY-MM
+  /** YYYY-MM for monthly, YYYY-MM-DD (week start) for weekly */
+  month: string;
+  /** YYYY-MM-DD week end (only set for weekly granularity) */
+  week_end?: string;
   charge_units: number;
   refund_units: number;
   charge_gross: number;
@@ -163,6 +168,46 @@ export async function getRefundsByMonth(
     return getAppleRefundsByMonth(startMonth, endMonth);
   }
   return getGenericRefundsByMonth(source, startMonth, endMonth);
+}
+
+/**
+ * Apple weekly aggregation (ISO weeks, Mon→Sun) over an arbitrary date range.
+ * Backed by v_apple_sales_weekly. Same shape as getAppleRefundsByMonth so the
+ * dashboard can reuse the chart and detail-table components.
+ */
+export async function getAppleRefundsByWeek(
+  startDate: string,
+  endDate: string
+): Promise<RefundMonthlyRow[]> {
+  const supabase = createServerClient();
+
+  const { data, error } = await supabase
+    .from('v_apple_sales_weekly')
+    .select('week_start, week_end, charge_units, refund_units, charge_gross_usd, refund_gross_usd')
+    .gte('week_end', startDate) // include weeks that overlap the range
+    .lte('week_start', endDate)
+    .order('week_start', { ascending: true });
+
+  if (error) console.error('[refunds] apple weekly view error:', error);
+
+  return (data || []).map((r) => {
+    const charge_units = Number(r.charge_units || 0);
+    const refund_units = Number(r.refund_units || 0);
+    const charge_gross = Number(r.charge_gross_usd || 0);
+    const refund_gross = Number(r.refund_gross_usd || 0);
+    const net_units = charge_units - refund_units;
+    const net_gross = charge_gross - refund_gross;
+    return {
+      month: r.week_start,
+      week_end: r.week_end,
+      charge_units,
+      refund_units,
+      charge_gross,
+      refund_gross,
+      refund_rate_units: net_units > 0 ? refund_units / net_units : 0,
+      refund_rate_amount: net_gross > 0 ? refund_gross / net_gross : 0,
+    };
+  });
 }
 
 /**
