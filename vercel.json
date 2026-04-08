@@ -11,6 +11,10 @@
     {
       "path": "/api/cron/apple-sales",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/apple-reviews",
+      "schedule": "0 10 * * *"
     }
   ]
 }
