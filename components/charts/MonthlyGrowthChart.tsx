@@ -13,6 +13,7 @@ import {
 } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ChartExportButton } from '@/components/charts/ChartExportButton';
+import { buildProjectionBundle } from '@/lib/mrr-projection';
 import type { MrrDailySnapshot } from '@/types';
 
 interface MonthlyGrowthChartProps {
@@ -21,35 +22,85 @@ interface MonthlyGrowthChartProps {
 
 interface GrowthData {
   month: string;
+  snapshot_date: string;
   growthPct: number;
+  projectedExtra: number;
+  projectedTotal: number;
+  is_stale: boolean;
 }
 
 function computeGrowth(data: MrrDailySnapshot[]): GrowthData[] {
+  const bundle = buildProjectionBundle(data);
   const result: GrowthData[] = [];
-  for (let i = 1; i < data.length; i++) {
-    const prev = Number(data[i - 1].mrr_net);
-    const curr = Number(data[i].mrr_net);
-    const growthPct = prev > 0 ? ((curr - prev) / prev) * 100 : 0;
 
-    const d = new Date(data[i].snapshot_date + 'T00:00:00Z');
-    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  for (let i = 1; i < data.length; i++) {
+    const prev = data[i - 1];
+    const curr = data[i];
+    const actualPrev = Number(prev.mrr_net);
+    const actualCurr = Number(curr.mrr_net);
+    const actualGrowth = actualPrev > 0 ? ((actualCurr - actualPrev) / actualPrev) * 100 : 0;
+
+    const projCurr = bundle.rows.get(curr.snapshot_date);
+    const projPrev = bundle.rows.get(prev.snapshot_date);
+    const projectedCurrVal = projCurr?.fields.mrr_net?.projected ?? actualCurr;
+    const projectedPrevVal = projPrev?.fields.mrr_net?.projected ?? actualPrev;
+    const projectedGrowth =
+      projectedPrevVal > 0 ? ((projectedCurrVal - projectedPrevVal) / projectedPrevVal) * 100 : 0;
+
+    const is_stale = projCurr?.is_stale || false;
+    // Only overlay when the month is stale AND the projection increases the
+    // growth rate. Mirrors the convention used by the other charts.
+    const projectedExtra = is_stale ? Math.max(0, projectedGrowth - actualGrowth) : 0;
+
+    const d = new Date(curr.snapshot_date + 'T00:00:00Z');
+    const months = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
     const monthLabel = `${months[d.getUTCMonth()]} ${d.getUTCFullYear().toString().slice(2)}`;
 
-    result.push({ month: monthLabel, growthPct: Number(growthPct.toFixed(1)) });
+    result.push({
+      month: monthLabel,
+      snapshot_date: curr.snapshot_date,
+      growthPct: Number(actualGrowth.toFixed(1)),
+      projectedExtra: Number(projectedExtra.toFixed(1)),
+      projectedTotal: Number((actualGrowth + projectedExtra).toFixed(1)),
+      is_stale,
+    });
   }
   return result;
 }
 
-function CustomTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number }>; label?: string }) {
+interface TooltipPayload {
+  payload?: GrowthData;
+}
+
+function CustomTooltip({ active, payload, label }: { active?: boolean; payload?: TooltipPayload[]; label?: string }) {
   if (!active || !payload || !payload.length) return null;
-  const val = payload[0].value;
+  const row = payload[0]?.payload;
+  if (!row) return null;
+  const val = row.growthPct;
   return (
-    <div className="rounded-xl border border-border/50 bg-white p-3 shadow-xl min-w-[160px]">
-      <p className="text-xs font-medium text-muted-foreground mb-1">{label}</p>
+    <div className="rounded-xl border border-border/50 bg-white p-3 shadow-xl min-w-[200px]">
+      <p className="text-xs font-medium text-muted-foreground mb-1">
+        {label}
+        {row.is_stale && (
+          <span className="ml-2 inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 uppercase tracking-wider">
+            Stale
+          </span>
+        )}
+      </p>
       <p className={`text-lg font-bold ${val >= 0 ? 'text-[#45C94E]' : 'text-[#E53E3E]'}`}>
         {val >= 0 ? '+' : ''}{val}%
       </p>
-      <p className="text-xs text-muted-foreground">MRR Net growth MoM</p>
+      {row.is_stale && row.projectedExtra > 0 && (
+        <>
+          <div className="text-xs text-[#0086D8] mt-1">
+            + {row.projectedExtra.toFixed(1)}pp proyectado
+          </div>
+          <div className="text-sm font-semibold text-[#0E3687] border-t border-border/40 mt-1 pt-1">
+            Proyectado total: {row.projectedTotal >= 0 ? '+' : ''}{row.projectedTotal}%
+          </div>
+        </>
+      )}
+      <p className="text-xs text-muted-foreground mt-1">MRR Net growth MoM</p>
     </div>
   );
 }
@@ -59,10 +110,14 @@ export function MonthlyGrowthChart({ data }: MonthlyGrowthChartProps) {
 
   // Show max last 6 months for cleaner view
   const displayData = chartData.slice(-6);
+  const hasProjections = displayData.some((d) => d.projectedExtra > 0);
 
   const exportData = chartData.map((d) => ({
     Month: d.month,
     'Growth Rate (%)': d.growthPct,
+    'Projected Extra (pp)': d.projectedExtra,
+    'Projected Total (%)': d.projectedTotal,
+    'Is Stale': d.is_stale,
   }));
 
   return (
@@ -83,6 +138,12 @@ export function MonthlyGrowthChart({ data }: MonthlyGrowthChartProps) {
               layout="vertical"
               margin={{ top: 5, right: 40, left: 10, bottom: 5 }}
             >
+              <defs>
+                <pattern id="growth-hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+                  <rect width="8" height="8" fill="#0086D8" fillOpacity="0.15" />
+                  <line x1="0" y1="0" x2="0" y2="8" stroke="#0086D8" strokeWidth="1.5" strokeOpacity="0.6" />
+                </pattern>
+              </defs>
               <CartesianGrid stroke="#E2E8F0" strokeOpacity={0.6} horizontal={false} />
               <XAxis
                 type="number"
@@ -99,7 +160,7 @@ export function MonthlyGrowthChart({ data }: MonthlyGrowthChartProps) {
               />
               <Tooltip content={<CustomTooltip />} />
               <ReferenceLine x={0} stroke="#94A3B8" strokeDasharray="3 3" />
-              <Bar dataKey="growthPct" radius={[0, 4, 4, 0]} barSize={20}>
+              <Bar dataKey="growthPct" stackId="growth" barSize={20}>
                 {displayData.map((entry, i) => (
                   <Cell
                     key={i}
@@ -108,9 +169,23 @@ export function MonthlyGrowthChart({ data }: MonthlyGrowthChartProps) {
                   />
                 ))}
               </Bar>
+              <Bar
+                dataKey="projectedExtra"
+                stackId="growth"
+                fill="url(#growth-hatch)"
+                stroke="#0086D8"
+                strokeWidth={1.5}
+                strokeDasharray="4 2"
+                radius={[0, 4, 4, 0]}
+              />
             </BarChart>
           </ResponsiveContainer>
         </div>
+        {hasProjections && (
+          <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed border-t border-border/40 pt-2">
+            Área rayada = puntos porcentuales adicionales proyectados para meses stale. Se calcula como growth MoM usando valores proyectados menos growth MoM usando valores actuales.
+          </p>
+        )}
       </CardContent>
     </Card>
   );
