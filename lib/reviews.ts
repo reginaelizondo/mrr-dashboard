@@ -378,6 +378,65 @@ export async function getLatestRatingsSummary(): Promise<RatingsSummary> {
   };
 }
 
+/**
+ * Returns the most recent App Store Connect Reviews sync timestamp.
+ * Tries sync_log first (populated by /api/cron/apple-reviews), falls back
+ * to the latest synced_at on apple_reviews when no sync_log entry exists
+ * (e.g. before the first cron run).
+ */
+export async function getLastAppleReviewsSync(): Promise<{
+  completedAt: string | null;
+  records: number;
+  status: string | null;
+  latestReviewDate: string | null;
+  latestRatingsSnapshot: string | null;
+}> {
+  const supabase = createServerClient();
+
+  // 1) sync_log — filter by source=apple and details.source=apple-reviews
+  const { data: logs } = await supabase
+    .from('sync_log')
+    .select('completed_at, records_synced, status, details')
+    .eq('source', 'apple')
+    .order('started_at', { ascending: false })
+    .limit(20);
+
+  const review = (logs || []).find(
+    (r) => (r.details as { source?: string } | null)?.source === 'apple-reviews'
+  );
+
+  // 2) Fallback: latest synced_at + created_at on apple_reviews
+  const { data: latestSync } = await supabase
+    .from('apple_reviews')
+    .select('synced_at')
+    .order('synced_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const { data: latestReview } = await supabase
+    .from('apple_reviews')
+    .select('created_at')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  // 3) Latest ratings snapshot (iTunes Lookup sync)
+  const { data: latestRatings } = await supabase
+    .from('apple_ratings_summary')
+    .select('snapshot_date')
+    .order('snapshot_date', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return {
+    completedAt: review?.completed_at || latestSync?.synced_at || null,
+    records: review ? Number(review.records_synced || 0) : 0,
+    status: review?.status || (latestSync ? 'success' : null),
+    latestReviewDate: latestReview?.created_at || null,
+    latestRatingsSnapshot: latestRatings?.snapshot_date || null,
+  };
+}
+
 /** Territories present in apple_reviews ordered by review count desc. */
 export async function getAvailableTerritories(): Promise<string[]> {
   const supabase = createServerClient();

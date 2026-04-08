@@ -27,6 +27,7 @@ import {
   Filter,
   Info,
   Users,
+  Clock,
 } from 'lucide-react';
 import {
   TOPIC_LABELS,
@@ -52,6 +53,14 @@ interface Summary {
   territories: number;
 }
 
+interface LastSyncInfo {
+  completedAt: string | null;
+  records: number;
+  status: string | null;
+  latestReviewDate: string | null;
+  latestRatingsSnapshot: string | null;
+}
+
 interface Props {
   monthly: MonthlyReviewRow[];
   topics: TopicCountRow[];
@@ -62,11 +71,22 @@ interface Props {
   ratingsSummary: RatingsSummary;
   insights: Insight[];
   availableTerritories: string[];
+  lastSync: LastSyncInfo;
   preset: Preset;
   startDate: string;
   endDate: string;
   selectedTopic?: string;
   selectedTerritories: string[];
+}
+
+function formatTimeAgo(iso: string | null): string {
+  if (!iso) return 'never';
+  const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 }
 
 const PRESETS: { key: Preset; label: string }[] = [
@@ -114,6 +134,7 @@ export function ReviewsContent({
   ratingsSummary,
   insights,
   availableTerritories,
+  lastSync,
   preset,
   startDate,
   endDate,
@@ -257,6 +278,41 @@ export function ReviewsContent({
               />
             </div>
           )}
+
+          {/* Sync status row */}
+          <div className="flex items-center gap-2 pt-3 border-t border-border/40 flex-wrap">
+            <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-xs text-muted-foreground">
+              Last App Store Connect sync:{' '}
+              <span className="font-medium text-[#0E3687]">
+                {formatTimeAgo(lastSync.completedAt)}
+              </span>
+              {lastSync.completedAt && (
+                <>
+                  {' '}· {new Date(lastSync.completedAt).toLocaleString()}
+                </>
+              )}
+              {lastSync.latestReviewDate && (
+                <>
+                  {' '}· newest review{' '}
+                  <span className="font-medium text-[#0E3687]">
+                    {lastSync.latestReviewDate.slice(0, 10)}
+                  </span>
+                </>
+              )}
+              {lastSync.latestRatingsSnapshot && (
+                <>
+                  {' '}· ratings snapshot{' '}
+                  <span className="font-medium text-[#0E3687]">
+                    {lastSync.latestRatingsSnapshot}
+                  </span>
+                </>
+              )}
+              {lastSync.status === 'error' && (
+                <span className="ml-2 text-red-600 font-medium">⚠️ last sync errored</span>
+              )}
+            </span>
+          </div>
         </CardContent>
       </Card>
 

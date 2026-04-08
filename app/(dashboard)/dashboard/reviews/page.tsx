@@ -10,6 +10,7 @@ import {
   getReviewsSummary,
   getLatestRatingsSummary,
   getAvailableTerritories,
+  getLastAppleReviewsSync,
 } from '@/lib/reviews';
 import { generateInsights } from '@/lib/review-insights';
 import { ReviewsContent } from '@/components/dashboard/ReviewsContent';
@@ -94,6 +95,7 @@ async function ReviewsData({
     summary,
     ratingsSummary,
     availableTerritories,
+    lastSync,
   ] = await Promise.all([
     getReviewsByMonth(startDate, endDate, territoriesFilter),
     getTopComplaintTopics(startDate, endDate, { onlyNegative: true, territories: territoriesFilter }),
@@ -103,6 +105,7 @@ async function ReviewsData({
     getReviewsSummary(startDate, endDate, territoriesFilter),
     getLatestRatingsSummary(),
     getAvailableTerritories(),
+    getLastAppleReviewsSync(),
   ]);
 
   const insights = generateInsights({
@@ -125,6 +128,7 @@ async function ReviewsData({
       ratingsSummary={ratingsSummary}
       insights={insights}
       availableTerritories={availableTerritories}
+      lastSync={lastSync}
       preset={preset}
       startDate={startDate}
       endDate={endDate}
