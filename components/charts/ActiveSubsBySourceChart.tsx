@@ -45,28 +45,29 @@ function CustomTooltip({ active, payload, label }: { active?: boolean; payload?:
 export function ActiveSubsBySourceChart({ data }: ActiveSubsBySourceChartProps) {
   const bundle = buildProjectionBundle(data);
 
-  // Estimate active subs by source using revenue proportion.
-  // Total subs = new_subscriptions + renewals
-  // Source share = mrr_{source}_gross / mrr_gross
-  // For stale months we project the totals field-by-field then redistribute.
+  // Use `active_subscriptions` (the real live-subscriber count for the
+  // month) — NOT new_subscriptions + renewals, which is just monthly
+  // activity. active_subscriptions is a distinct field on the snapshot
+  // computed from the "spreading" logic in lib/sync/snapshots.ts.
+  //
+  // Since the snapshot doesn't split active_subscriptions by source, we
+  // estimate each source's share using the MRR proportion for the month
+  // (mrr_{source}_gross / mrr_gross). For stale months we overlay the
+  // projected delta as a hatched extra.
   const chartData = data.map((s) => {
     const row = bundle.rows.get(s.snapshot_date);
     const is_stale = row?.is_stale || false;
 
-    // Actual values
-    const totalSubsActual = Number(s.new_subscriptions) + Number(s.renewals);
-    const grossTotalActual = Number(s.mrr_gross) || 1;
-    const appleA = Math.round(totalSubsActual * (Number(s.mrr_apple_gross) / grossTotalActual));
-    const googleA = Math.round(totalSubsActual * (Number(s.mrr_google_gross) / grossTotalActual));
-    const stripeA = Math.round(totalSubsActual * (Number(s.mrr_stripe_gross) / grossTotalActual));
+    const activeActual = Number(s.active_subscriptions || 0);
+    const grossTotal = Number(s.mrr_gross) || 1;
+    const appleA = Math.round(activeActual * (Number(s.mrr_apple_gross) / grossTotal));
+    const googleA = Math.round(activeActual * (Number(s.mrr_google_gross) / grossTotal));
+    const stripeA = Math.round(activeActual * (Number(s.mrr_stripe_gross) / grossTotal));
 
-    // Projected total (only used if stale)
     let projectedExtra = 0;
     if (is_stale && row) {
-      const newSubsP = row.fields.new_subscriptions?.projected || 0;
-      const renewalsP = row.fields.renewals?.projected || 0;
-      const totalSubsP = newSubsP + renewalsP;
-      projectedExtra = Math.max(0, Math.round(totalSubsP - totalSubsActual));
+      const projected = row.fields.active_subscriptions?.projected || activeActual;
+      projectedExtra = Math.max(0, Math.round(projected - activeActual));
     }
 
     return {
@@ -141,7 +142,8 @@ export function ActiveSubsBySourceChart({ data }: ActiveSubsBySourceChartProps) 
         </div>
         {hasProjections && (
           <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed border-t border-border/40 pt-2">
-            Área rayada = estimación de suscripciones adicionales para los meses stale (basada en la proyección de new_subscriptions + renewals).
+            Conteo real de suscripciones activas (campo <code>active_subscriptions</code>) con split estimado por fuente
+            vía proporción de MRR. Área rayada = proyección de suscriptores adicionales para meses stale.
           </p>
         )}
       </CardContent>
