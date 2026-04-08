@@ -305,9 +305,13 @@ export async function syncKineduDB(fromDate: string, toDate: string): Promise<Sy
 
     for (let i = 0; i < transactions.length; i += BATCH_SIZE) {
       const batch = transactions.slice(i, i + BATCH_SIZE);
+      // Compound unique index: (source, external_id) WHERE external_id IS NOT NULL.
+      // Passing `external_id` alone as the conflict target makes Postgres
+      // throw 42P10 ("no unique constraint matching the ON CONFLICT spec").
+      // Must pass both columns.
       const { error: upsertError } = await supabase
         .from('transactions')
-        .upsert(batch, { onConflict: 'external_id' });
+        .upsert(batch, { onConflict: 'source,external_id' });
 
       if (upsertError) {
         console.error(`[kinedu-db] Batch upsert error (offset ${i}):`, upsertError.message);
@@ -316,7 +320,7 @@ export async function syncKineduDB(fromDate: string, toDate: string): Promise<Sy
         for (const tx of batch) {
           const { error: singleError } = await supabase
             .from('transactions')
-            .upsert(tx, { onConflict: 'external_id' });
+            .upsert(tx, { onConflict: 'source,external_id' });
           if (!singleError) singles++;
         }
         totalSynced += singles;
