@@ -13,6 +13,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatCurrency, PLAN_COLORS, PLAN_LABELS } from '@/lib/constants';
 import { ChartExportButton } from '@/components/charts/ChartExportButton';
+import { buildProjectionBundle } from '@/lib/mrr-projection';
 import type { MrrDailySnapshot } from '@/types';
 
 interface PlanBreakdownChartProps {
@@ -48,6 +49,22 @@ function CustomTooltip({ active, payload, label }: { active?: boolean; payload?:
 }
 
 export function PlanBreakdownChart({ data }: PlanBreakdownChartProps) {
+  const bundle = buildProjectionBundle(data);
+
+  const enrichedData = data.map((s) => {
+    const row = bundle.rows.get(s.snapshot_date);
+    const is_stale = row?.is_stale || false;
+    let projectedExtra = 0;
+    if (is_stale && row) {
+      for (const pt of planTypes) {
+        const fld = row.fields[pt.key];
+        if (fld) projectedExtra += Math.max(0, fld.projected - fld.actual);
+      }
+    }
+    return { ...s, _projected_extra: Math.round(projectedExtra), _is_stale: is_stale };
+  });
+  const hasProjections = enrichedData.some((r) => r._projected_extra > 0);
+
   const exportData = data.map((s) => ({
     Period: s.snapshot_date,
     Lifetime: Number(s.mrr_lifetime),
@@ -71,7 +88,13 @@ export function PlanBreakdownChart({ data }: PlanBreakdownChartProps) {
       <CardContent>
         <div className="h-[350px]">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+            <BarChart data={enrichedData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+              <defs>
+                <pattern id="plan-hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+                  <rect width="8" height="8" fill="#0086D8" fillOpacity="0.15" />
+                  <line x1="0" y1="0" x2="0" y2="8" stroke="#0086D8" strokeWidth="1.5" strokeOpacity="0.6" />
+                </pattern>
+              </defs>
               <CartesianGrid stroke="#E2E8F0" strokeOpacity={0.6} strokeDasharray="3 3" />
               <XAxis
                 dataKey="snapshot_date"
@@ -79,7 +102,7 @@ export function PlanBreakdownChart({ data }: PlanBreakdownChartProps) {
                 stroke="#94A3B8"
                 tickFormatter={(val) => {
                   const d = new Date(val + 'T00:00:00Z');
-                  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                  const months = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
                   return `${months[d.getUTCMonth()]} ${d.getUTCFullYear().toString().slice(2)}`;
                 }}
               />
@@ -90,19 +113,33 @@ export function PlanBreakdownChart({ data }: PlanBreakdownChartProps) {
               />
               <Tooltip content={<CustomTooltip />} />
               <Legend />
-              {planTypes.map((pt, i) => (
+              {planTypes.map((pt) => (
                 <Bar
                   key={pt.key}
                   dataKey={pt.key}
                   name={pt.label}
                   stackId="plan"
                   fill={pt.color}
-                  radius={i === planTypes.length - 1 ? [4, 4, 0, 0] : undefined}
                 />
               ))}
+              <Bar
+                dataKey="_projected_extra"
+                name="Proyectado (stale)"
+                stackId="plan"
+                fill="url(#plan-hatch)"
+                stroke="#0086D8"
+                strokeWidth={1.5}
+                strokeDasharray="4 2"
+                radius={[4, 4, 0, 0]}
+              />
             </BarChart>
           </ResponsiveContainer>
         </div>
+        {hasProjections && (
+          <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed border-t border-border/40 pt-2">
+            Área rayada = proyección de los meses stale, suma de extras por plan.
+          </p>
+        )}
       </CardContent>
     </Card>
   );

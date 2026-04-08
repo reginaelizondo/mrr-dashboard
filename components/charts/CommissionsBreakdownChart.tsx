@@ -14,6 +14,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatCurrency, SOURCE_COLORS } from '@/lib/constants';
 import { ChartExportButton } from '@/components/charts/ChartExportButton';
+import { buildProjectionBundle } from '@/lib/mrr-projection';
 import type { MrrDailySnapshot } from '@/types';
 
 interface CommissionsBreakdownChartProps {
@@ -41,8 +42,14 @@ function CustomTooltip({ active, payload, label }: { active?: boolean; payload?:
 }
 
 export function CommissionsBreakdownChart({ data }: CommissionsBreakdownChartProps) {
-  // Commission per source = gross - net for each source
+  const bundle = buildProjectionBundle(data);
+
+  // Commission per source = gross - net for each source. For stale months
+  // we use projected gross/net to estimate the commission that would land.
   const chartData = data.map((s) => {
+    const row = bundle.rows.get(s.snapshot_date);
+    const is_stale = row?.is_stale || false;
+
     const appleComm = Number(s.mrr_apple_gross) - Number(s.mrr_apple_net);
     const googleComm = Number(s.mrr_google_gross) - Number(s.mrr_google_net);
     const stripeComm = Number(s.mrr_stripe_gross) - Number(s.mrr_stripe_net);
@@ -50,14 +57,29 @@ export function CommissionsBreakdownChart({ data }: CommissionsBreakdownChartPro
     const totalComm = Number(s.total_commissions);
     const rate = totalGross > 0 ? (totalComm / totalGross) * 100 : 0;
 
+    let projectedExtra = 0;
+    if (is_stale && row) {
+      const projAppleComm =
+        (row.fields.mrr_apple_gross?.projected || 0) - (row.fields.mrr_apple_net?.projected || 0);
+      const projGoogleComm =
+        (row.fields.mrr_google_gross?.projected || 0) - (row.fields.mrr_google_net?.projected || 0);
+      const projStripeComm =
+        (row.fields.mrr_stripe_gross?.projected || 0) - (row.fields.mrr_stripe_net?.projected || 0);
+      const projTotalComm = projAppleComm + projGoogleComm + projStripeComm;
+      projectedExtra = Math.max(0, Math.round(projTotalComm - totalComm));
+    }
+
     return {
       date: s.snapshot_date,
       'App Store (iOS)': Math.round(appleComm),
       'Google Play': Math.round(googleComm),
       'Web (Stripe)': Math.round(stripeComm),
+      _projected_extra: projectedExtra,
+      _is_stale: is_stale,
       commissionRate: Number(rate.toFixed(1)),
     };
   });
+  const hasProjections = chartData.some((d) => d._projected_extra > 0);
 
   const exportData = data.map((s) => {
     const appleComm = Number(s.mrr_apple_gross) - Number(s.mrr_apple_net);
@@ -91,6 +113,12 @@ export function CommissionsBreakdownChart({ data }: CommissionsBreakdownChartPro
         <div className="h-[350px]">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+              <defs>
+                <pattern id="comm-hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+                  <rect width="8" height="8" fill="#0086D8" fillOpacity="0.15" />
+                  <line x1="0" y1="0" x2="0" y2="8" stroke="#0086D8" strokeWidth="1.5" strokeOpacity="0.6" />
+                </pattern>
+              </defs>
               <CartesianGrid stroke="#E2E8F0" strokeOpacity={0.6} strokeDasharray="3 3" />
               <XAxis
                 dataKey="date"
@@ -98,7 +126,7 @@ export function CommissionsBreakdownChart({ data }: CommissionsBreakdownChartPro
                 stroke="#94A3B8"
                 tickFormatter={(val) => {
                   const d = new Date(val + 'T00:00:00Z');
-                  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                  const months = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
                   return `${months[d.getUTCMonth()]} ${d.getUTCFullYear().toString().slice(2)}`;
                 }}
               />
@@ -135,6 +163,16 @@ export function CommissionsBreakdownChart({ data }: CommissionsBreakdownChartPro
                 dataKey="Web (Stripe)"
                 stackId="comm"
                 fill={SOURCE_COLORS.stripe}
+              />
+              <Bar
+                yAxisId="left"
+                dataKey="_projected_extra"
+                name="Proyectado (stale)"
+                stackId="comm"
+                fill="url(#comm-hatch)"
+                stroke="#0086D8"
+                strokeWidth={1.5}
+                strokeDasharray="4 2"
                 radius={[4, 4, 0, 0]}
               />
               <Line
@@ -150,6 +188,11 @@ export function CommissionsBreakdownChart({ data }: CommissionsBreakdownChartPro
             </ComposedChart>
           </ResponsiveContainer>
         </div>
+        {hasProjections && (
+          <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed border-t border-border/40 pt-2">
+            Área rayada = commission adicional proyectada para los meses stale (calculada con gross/net proyectados por fuente).
+          </p>
+        )}
       </CardContent>
     </Card>
   );

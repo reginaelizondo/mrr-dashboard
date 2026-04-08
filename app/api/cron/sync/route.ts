@@ -49,15 +49,22 @@ export async function GET(request: NextRequest) {
       toDate,
     };
 
-    // Compute monthly MRR snapshot for the current month
-    await computeMonthlySnapshot(today);
-
-    // Also recompute previous month if we're in the first few days (late-arriving data)
-    if (now.getDate() <= 3) {
-      await computeMonthlySnapshot(yesterday);
+    // Recompute the last 3 monthly snapshots every day. Snapshots were
+    // previously only touching the current month (plus previous month on days
+    // 1-3), which left prior months permanently frozen once that 3-day window
+    // passed — causing the "stale Feb" problem. Always recomputing the last 3
+    // is cheap (3 upserts of aggregate rows) and catches any late-arriving
+    // transactions that land after month end.
+    const monthsToRecompute = [
+      today,                                           // current month
+      format(subMonths(now, 1), 'yyyy-MM-01'),         // previous month
+      format(subMonths(now, 2), 'yyyy-MM-01'),         // two months ago
+    ];
+    for (const m of monthsToRecompute) {
+      await computeMonthlySnapshot(m);
     }
 
-    details.snapshots = { current: format(now, 'yyyy-MM'), recomputedPrevious: now.getDate() <= 3 };
+    details.snapshots = { recomputed: monthsToRecompute };
 
     // Update sync log with success
     if (syncLog) {

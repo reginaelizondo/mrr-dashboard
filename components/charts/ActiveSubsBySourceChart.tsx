@@ -13,6 +13,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { SOURCE_COLORS } from '@/lib/constants';
 import { ChartExportButton } from '@/components/charts/ChartExportButton';
+import { buildProjectionBundle } from '@/lib/mrr-projection';
 import type { MrrDailySnapshot } from '@/types';
 
 interface ActiveSubsBySourceChartProps {
@@ -42,23 +43,42 @@ function CustomTooltip({ active, payload, label }: { active?: boolean; payload?:
 }
 
 export function ActiveSubsBySourceChart({ data }: ActiveSubsBySourceChartProps) {
-  // Estimate active subs by source using revenue proportion
+  const bundle = buildProjectionBundle(data);
+
+  // Estimate active subs by source using revenue proportion.
   // Total subs = new_subscriptions + renewals
   // Source share = mrr_{source}_gross / mrr_gross
+  // For stale months we project the totals field-by-field then redistribute.
   const chartData = data.map((s) => {
-    const totalSubs = Number(s.new_subscriptions) + Number(s.renewals);
-    const grossTotal = Number(s.mrr_gross) || 1; // avoid division by zero
-    const appleShare = Number(s.mrr_apple_gross) / grossTotal;
-    const googleShare = Number(s.mrr_google_gross) / grossTotal;
-    const stripeShare = Number(s.mrr_stripe_gross) / grossTotal;
+    const row = bundle.rows.get(s.snapshot_date);
+    const is_stale = row?.is_stale || false;
+
+    // Actual values
+    const totalSubsActual = Number(s.new_subscriptions) + Number(s.renewals);
+    const grossTotalActual = Number(s.mrr_gross) || 1;
+    const appleA = Math.round(totalSubsActual * (Number(s.mrr_apple_gross) / grossTotalActual));
+    const googleA = Math.round(totalSubsActual * (Number(s.mrr_google_gross) / grossTotalActual));
+    const stripeA = Math.round(totalSubsActual * (Number(s.mrr_stripe_gross) / grossTotalActual));
+
+    // Projected total (only used if stale)
+    let projectedExtra = 0;
+    if (is_stale && row) {
+      const newSubsP = row.fields.new_subscriptions?.projected || 0;
+      const renewalsP = row.fields.renewals?.projected || 0;
+      const totalSubsP = newSubsP + renewalsP;
+      projectedExtra = Math.max(0, Math.round(totalSubsP - totalSubsActual));
+    }
 
     return {
       date: s.snapshot_date,
-      'App Store (iOS)': Math.round(totalSubs * appleShare),
-      'Google Play': Math.round(totalSubs * googleShare),
-      'Web (Stripe)': Math.round(totalSubs * stripeShare),
+      'App Store (iOS)': appleA,
+      'Google Play': googleA,
+      'Web (Stripe)': stripeA,
+      _projected_extra: projectedExtra,
+      _is_stale: is_stale,
     };
   });
+  const hasProjections = chartData.some((d) => d._projected_extra > 0);
 
   const exportData = chartData.map((d) => ({
     Period: d.date,
@@ -79,6 +99,12 @@ export function ActiveSubsBySourceChart({ data }: ActiveSubsBySourceChartProps) 
         <div className="h-[300px]">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+              <defs>
+                <pattern id="subs-hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+                  <rect width="8" height="8" fill="#0086D8" fillOpacity="0.15" />
+                  <line x1="0" y1="0" x2="0" y2="8" stroke="#0086D8" strokeWidth="1.5" strokeOpacity="0.6" />
+                </pattern>
+              </defs>
               <CartesianGrid stroke="#E2E8F0" strokeOpacity={0.6} strokeDasharray="3 3" />
               <XAxis
                 dataKey="date"
@@ -86,7 +112,7 @@ export function ActiveSubsBySourceChart({ data }: ActiveSubsBySourceChartProps) 
                 stroke="#94A3B8"
                 tickFormatter={(val) => {
                   const d = new Date(val + 'T00:00:00Z');
-                  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                  const months = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
                   return `${months[d.getUTCMonth()]} ${d.getUTCFullYear().toString().slice(2)}`;
                 }}
               />
@@ -97,25 +123,27 @@ export function ActiveSubsBySourceChart({ data }: ActiveSubsBySourceChartProps) 
               />
               <Tooltip content={<CustomTooltip />} />
               <Legend />
+              <Bar dataKey="App Store (iOS)" stackId="source" fill={SOURCE_COLORS.apple} />
+              <Bar dataKey="Google Play" stackId="source" fill={SOURCE_COLORS.google} />
+              <Bar dataKey="Web (Stripe)" stackId="source" fill={SOURCE_COLORS.stripe} />
               <Bar
-                dataKey="App Store (iOS)"
+                dataKey="_projected_extra"
+                name="Proyectado (stale)"
                 stackId="source"
-                fill={SOURCE_COLORS.apple}
-              />
-              <Bar
-                dataKey="Google Play"
-                stackId="source"
-                fill={SOURCE_COLORS.google}
-              />
-              <Bar
-                dataKey="Web (Stripe)"
-                stackId="source"
-                fill={SOURCE_COLORS.stripe}
+                fill="url(#subs-hatch)"
+                stroke="#0086D8"
+                strokeWidth={1.5}
+                strokeDasharray="4 2"
                 radius={[4, 4, 0, 0]}
               />
             </BarChart>
           </ResponsiveContainer>
         </div>
+        {hasProjections && (
+          <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed border-t border-border/40 pt-2">
+            Área rayada = estimación de suscripciones adicionales para los meses stale (basada en la proyección de new_subscriptions + renewals).
+          </p>
+        )}
       </CardContent>
     </Card>
   );

@@ -13,6 +13,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatCurrency, REGION_COLORS, REGION_LABELS } from '@/lib/constants';
 import { ChartExportButton } from '@/components/charts/ChartExportButton';
+import { buildProjectionBundle } from '@/lib/mrr-projection';
 import type { MrrDailySnapshot } from '@/types';
 
 interface RegionBreakdownChartProps {
@@ -38,6 +39,22 @@ function CustomTooltip({ active, payload, label }: { active?: boolean; payload?:
 }
 
 export function RegionBreakdownChart({ data }: RegionBreakdownChartProps) {
+  const bundle = buildProjectionBundle(data);
+
+  const enrichedData = data.map((s) => {
+    const row = bundle.rows.get(s.snapshot_date);
+    const is_stale = row?.is_stale || false;
+    let projectedExtra = 0;
+    if (is_stale && row) {
+      for (const f of ['mrr_us_canada', 'mrr_mexico', 'mrr_brazil', 'mrr_rest_of_world']) {
+        const fld = row.fields[f];
+        if (fld) projectedExtra += Math.max(0, fld.projected - fld.actual);
+      }
+    }
+    return { ...s, _projected_extra: Math.round(projectedExtra), _is_stale: is_stale };
+  });
+  const hasProjections = enrichedData.some((r) => r._projected_extra > 0);
+
   const exportData = data.map((s) => ({
     Period: s.snapshot_date,
     'US & Canada': Number(s.mrr_us_canada),
@@ -58,7 +75,7 @@ export function RegionBreakdownChart({ data }: RegionBreakdownChartProps) {
       <CardContent>
         <div className="h-[300px]">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={data} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+            <AreaChart data={enrichedData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
               <defs>
                 <linearGradient id="regionUsCanada" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor={REGION_COLORS.us_canada} stopOpacity={0.8} />
@@ -76,6 +93,10 @@ export function RegionBreakdownChart({ data }: RegionBreakdownChartProps) {
                   <stop offset="5%" stopColor={REGION_COLORS.rest_of_world} stopOpacity={0.8} />
                   <stop offset="95%" stopColor={REGION_COLORS.rest_of_world} stopOpacity={0.3} />
                 </linearGradient>
+                <pattern id="region-hatch" patternUnits="userSpaceOnUse" width="8" height="8" patternTransform="rotate(45)">
+                  <rect width="8" height="8" fill="#0086D8" fillOpacity="0.15" />
+                  <line x1="0" y1="0" x2="0" y2="8" stroke="#0086D8" strokeWidth="1.5" strokeOpacity="0.6" />
+                </pattern>
               </defs>
               <CartesianGrid stroke="#E2E8F0" strokeOpacity={0.6} strokeDasharray="3 3" />
               <XAxis
@@ -131,9 +152,24 @@ export function RegionBreakdownChart({ data }: RegionBreakdownChartProps) {
                 stroke={REGION_COLORS.rest_of_world}
                 strokeWidth={1.5}
               />
+              <Area
+                type="monotone"
+                dataKey="_projected_extra"
+                name="Proyectado (stale)"
+                stackId="region"
+                fill="url(#region-hatch)"
+                stroke="#0086D8"
+                strokeWidth={1.5}
+                strokeDasharray="4 2"
+              />
             </AreaChart>
           </ResponsiveContainer>
         </div>
+        {hasProjections && (
+          <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed border-t border-border/40 pt-2">
+            Banda rayada superior = proyección de los meses stale (suma de extras por región).
+          </p>
+        )}
       </CardContent>
     </Card>
   );
