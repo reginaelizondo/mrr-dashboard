@@ -83,6 +83,19 @@ export interface MonthlyReviewRow {
   positive: number; // rating >= 4
 }
 
+export interface WeeklyReviewRow {
+  week: string; // YYYY-MM-DD (Monday of the week)
+  total: number;
+  avg_rating: number;
+  r1: number;
+  r2: number;
+  r3: number;
+  r4: number;
+  r5: number;
+  negative: number;
+  positive: number;
+}
+
 export interface TopicCountRow {
   topic: string;
   label: string;
@@ -182,6 +195,51 @@ export async function getReviewsByMonth(
   }
 
   return Array.from(byMonth.values()).sort((a, b) => a.month.localeCompare(b.month));
+}
+
+function weekKey(isoTs: string): string {
+  const d = new Date(isoTs);
+  const day = d.getUTCDay();
+  const monday = new Date(d);
+  monday.setUTCDate(d.getUTCDate() - ((day + 6) % 7));
+  return monday.toISOString().slice(0, 10);
+}
+
+export async function getReviewsByWeek(
+  startDate: string,
+  endDate: string,
+  territories?: string[]
+): Promise<WeeklyReviewRow[]> {
+  const rows = await fetchReviewsInRange(startDate, endDate, territories);
+
+  const byWeek = new Map<string, WeeklyReviewRow>();
+  for (const r of rows) {
+    const w = weekKey(r.created_at);
+    let cell = byWeek.get(w);
+    if (!cell) {
+      cell = {
+        week: w,
+        total: 0,
+        avg_rating: 0,
+        r1: 0, r2: 0, r3: 0, r4: 0, r5: 0,
+        negative: 0,
+        positive: 0,
+      };
+      byWeek.set(w, cell);
+    }
+    cell.total++;
+    (cell as any)[`r${r.rating}`]++;
+    if (r.rating <= 2) cell.negative++;
+    if (r.rating >= 4) cell.positive++;
+  }
+
+  for (const cell of byWeek.values()) {
+    const sum =
+      cell.r1 * 1 + cell.r2 * 2 + cell.r3 * 3 + cell.r4 * 4 + cell.r5 * 5;
+    cell.avg_rating = cell.total > 0 ? sum / cell.total : 0;
+  }
+
+  return Array.from(byWeek.values()).sort((a, b) => a.week.localeCompare(b.week));
 }
 
 export async function getTopComplaintTopics(

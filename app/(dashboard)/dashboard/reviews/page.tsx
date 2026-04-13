@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic';
 import { Suspense } from 'react';
 import {
   getReviewsByMonth,
+  getReviewsByWeek,
   getTopComplaintTopics,
   getTopComplaintTopicsByMonth,
   getReviewsByTerritory,
@@ -88,6 +89,7 @@ async function ReviewsData({
 
   const [
     monthly,
+    weekly,
     topics,
     topicsByMonth,
     territories,
@@ -98,6 +100,7 @@ async function ReviewsData({
     lastSync,
   ] = await Promise.all([
     getReviewsByMonth(startDate, endDate, territoriesFilter),
+    getReviewsByWeek(startDate, endDate, territoriesFilter),
     getTopComplaintTopics(startDate, endDate, { onlyNegative: true, territories: territoriesFilter }),
     getTopComplaintTopicsByMonth(startDate, endDate, territoriesFilter),
     getReviewsByTerritory(startDate, endDate, 5, territoriesFilter),
@@ -120,6 +123,7 @@ async function ReviewsData({
   return (
     <ReviewsContent
       monthly={monthly}
+      weekly={weekly}
       topics={topics}
       topicsByMonth={topicsByMonth}
       territories={territories}

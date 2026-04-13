@@ -33,6 +33,7 @@ import {
   TOPIC_LABELS,
   type ReviewTopic,
   type MonthlyReviewRow,
+  type WeeklyReviewRow,
   type TopicCountRow,
   type TerritoryRow,
   type ReviewRow,
@@ -63,6 +64,7 @@ interface LastSyncInfo {
 
 interface Props {
   monthly: MonthlyReviewRow[];
+  weekly: WeeklyReviewRow[];
   topics: TopicCountRow[];
   topicsByMonth: Record<string, Record<string, number>>;
   territories: TerritoryRow[];
@@ -126,6 +128,7 @@ const COMPLAINT_COLORS = [
 
 export function ReviewsContent({
   monthly,
+  weekly,
   topics,
   topicsByMonth,
   territories,
@@ -144,6 +147,7 @@ export function ReviewsContent({
   const router = useRouter();
   const pathname = usePathname();
   const [expandedReview, setExpandedReview] = useState<string | null>(null);
+  const [timeGranularity, setTimeGranularity] = useState<'monthly' | 'weekly'>('monthly');
   const [isPending, startTransition] = useTransition();
   const nav = (url: string) => startTransition(() => router.push(url));
 
@@ -191,6 +195,30 @@ export function ReviewsContent({
       })),
     [monthly]
   );
+
+  // Weekly stacked rating chart
+  const weeklyChartData = useMemo(
+    () =>
+      weekly.map((w) => {
+        const d = new Date(w.week + 'T00:00:00Z');
+        const day = d.getUTCDate();
+        const monthIdx = d.getUTCMonth();
+        const label = `${day} ${MONTHS_ES[monthIdx]}`;
+        return {
+          month: label,
+          '★1': w.r1,
+          '★2': w.r2,
+          '★3': w.r3,
+          '★4': w.r4,
+          '★5': w.r5,
+          avg: Number(w.avg_rating.toFixed(2)),
+          negRate: Number(((w.negative / (w.total || 1)) * 100).toFixed(1)),
+        };
+      }),
+    [weekly]
+  );
+
+  const activeChartData = timeGranularity === 'weekly' ? weeklyChartData : monthlyChartData;
 
   // Top 8 complaint topics for the trend chart
   const top8Topics = useMemo(() => topics.slice(0, 8).map((t) => t.topic), [topics]);
@@ -498,17 +526,45 @@ export function ReviewsContent({
         />
       </div>
 
-      {/* Monthly rating chart */}
+      {/* Rating distribution chart with monthly/weekly toggle */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Distribución de Ratings por Mes</CardTitle>
-          <p className="text-xs text-muted-foreground">
-            Barras apiladas = cantidad por estrellas. Línea = rating promedio.
-          </p>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-lg">
+                Distribución de Ratings por {timeGranularity === 'weekly' ? 'Semana' : 'Mes'}
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Barras apiladas = cantidad por estrellas. Línea = rating promedio.
+              </p>
+            </div>
+            <div className="flex items-center gap-1 bg-white border border-border/50 rounded-md p-0.5 shadow-sm">
+              <button
+                onClick={() => setTimeGranularity('monthly')}
+                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                  timeGranularity === 'monthly'
+                    ? 'bg-[#0086D8] text-white'
+                    : 'text-muted-foreground hover:bg-[#F0F4FF]'
+                }`}
+              >
+                Mensual
+              </button>
+              <button
+                onClick={() => setTimeGranularity('weekly')}
+                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                  timeGranularity === 'weekly'
+                    ? 'bg-[#0086D8] text-white'
+                    : 'text-muted-foreground hover:bg-[#F0F4FF]'
+                }`}
+              >
+                Semanal
+              </button>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           <ResponsiveContainer width="100%" height={320}>
-            <ComposedChart data={monthlyChartData}>
+            <ComposedChart data={activeChartData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
               <XAxis dataKey="month" tick={{ fontSize: 12 }} />
               <YAxis yAxisId="left" tick={{ fontSize: 12 }} />
