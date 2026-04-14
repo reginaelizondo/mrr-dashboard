@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { BarChart3, LogOut, LayoutDashboard, PieChart, TrendingUp, UserMinus, RotateCcw, MessageSquare } from 'lucide-react';
+import { BarChart3, LogOut, LayoutDashboard, PieChart, TrendingUp, UserMinus, RotateCcw, MessageSquare, MessageSquareWarning } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -13,6 +13,7 @@ const navItems = [
   { label: 'Churn', href: '/dashboard/churn', icon: UserMinus },
   { label: 'Refunds', href: '/dashboard/refunds', icon: RotateCcw },
   { label: 'Reviews', href: '/dashboard/reviews', icon: MessageSquare },
+  { label: 'Voice of Refund', href: '/dashboard/refund-voice', icon: MessageSquareWarning },
 ];
 
 export function Navbar() {
