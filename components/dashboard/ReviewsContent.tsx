@@ -149,7 +149,13 @@ export function ReviewsContent({
   const [expandedReview, setExpandedReview] = useState<string | null>(null);
   const [timeGranularity, setTimeGranularity] = useState<'monthly' | 'weekly'>('monthly');
   const [isPending, startTransition] = useTransition();
-  const nav = (url: string) => startTransition(() => router.push(url));
+  const nav = (url: string) => startTransition(() => {
+    router.push(url);
+    // Next.js 16 sometimes reuses the in-memory server-rendered payload when only
+    // search params change. router.refresh() forces the server component tree
+    // (including async data fetchers) to re-run for the new URL.
+    router.refresh();
+  });
 
   function urlParams(overrides: Record<string, string | undefined>): string {
     const sp = new URLSearchParams();
