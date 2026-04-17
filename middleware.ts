@@ -6,7 +6,7 @@ export async function middleware(request: NextRequest) {
   const response = NextResponse.next();
 
   // Skip auth for login page, API auth, cron endpoints, and static files
-  const { pathname } = request.nextUrl;
+  const { pathname, searchParams } = request.nextUrl;
   if (
     pathname.startsWith('/login') ||
     pathname.startsWith('/api/auth') ||
@@ -16,6 +16,14 @@ export async function middleware(request: NextRequest) {
     pathname === '/favicon.ico'
   ) {
     return response;
+  }
+
+  // Allow embed routes when a valid embed_token is provided (used by investors.html iframes)
+  if (pathname.startsWith('/embed')) {
+    const embedToken = process.env.EMBED_TOKEN;
+    if (embedToken && searchParams.get('embed_token') === embedToken) {
+      return response;
+    }
   }
 
   const session = await getIronSession<SessionData>(request, response, {
