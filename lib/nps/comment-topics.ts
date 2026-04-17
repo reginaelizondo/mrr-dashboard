@@ -148,7 +148,7 @@ export function bucketize(responses: NpsResponse[], topics: TopicDef[]): TopicBu
       key: t.key,
       label: t.label,
       count: buckets[t.key].length,
-      examples: buckets[t.key].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5),
+      examples: buckets[t.key].sort((a, b) => b.date.localeCompare(a.date)),
     }))
     .filter((b) => b.count > 0)
     .sort((a, b) => b.count - a.count);

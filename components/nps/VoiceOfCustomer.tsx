@@ -103,7 +103,7 @@ function TopicPanel({ title, description, icon: Icon, iconBg, accent, buckets, e
                   }
                 </button>
                 {expanded === b.key && (
-                  <div className="border-t border-border divide-y divide-border/60">
+                  <div className="border-t border-border divide-y divide-border/60 max-h-[480px] overflow-y-auto">
                     {b.examples.map((r, i) => (
                       <div key={`${r.dedupKey}-${i}`} className="p-3 flex items-start gap-3 text-sm">
                         <div className={cn(
