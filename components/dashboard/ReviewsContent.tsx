@@ -149,13 +149,7 @@ export function ReviewsContent({
   const [expandedReview, setExpandedReview] = useState<string | null>(null);
   const [timeGranularity, setTimeGranularity] = useState<'monthly' | 'weekly'>('monthly');
   const [isPending, startTransition] = useTransition();
-  const nav = (url: string) => startTransition(() => {
-    router.push(url);
-    // Next.js 16 sometimes reuses the in-memory server-rendered payload when only
-    // search params change. router.refresh() forces the server component tree
-    // (including async data fetchers) to re-run for the new URL.
-    router.refresh();
-  });
+  const nav = (url: string) => startTransition(() => router.push(url));
 
   function urlParams(overrides: Record<string, string | undefined>): string {
     const sp = new URLSearchParams();
@@ -379,9 +373,18 @@ export function ReviewsContent({
 
       {/* GLOBAL KPIs — all ratings (ASC-matching) */}
       <div>
-        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-          Ratings totales (star-taps con y sin texto) · snapshot {ratingsSummary.snapshot_date}
-        </h2>
+        <div className="flex flex-wrap items-center gap-2 mb-2">
+          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+            Ratings totales (star-taps con y sin texto) · snapshot {ratingsSummary.snapshot_date}
+          </h2>
+          <span
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200"
+            title="Apple solo reporta el contador acumulado de la app, no ratings por fecha. Este bloque es independiente del rango de fechas seleccionado arriba."
+          >
+            <Info className="h-3 w-3" />
+            Acumulado · no filtrado por fecha
+          </span>
+        </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <MetricCard
             label="Total Ratings (Global)"
@@ -420,7 +423,16 @@ export function ReviewsContent({
       {/* Per-country rating totals table */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Ratings Totales por País</CardTitle>
+          <div className="flex flex-wrap items-center gap-2">
+            <CardTitle className="text-lg">Ratings Totales por País</CardTitle>
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200"
+              title="Snapshot acumulado de Apple, independiente del filtro de fecha"
+            >
+              <Info className="h-3 w-3" />
+              Acumulado · no filtrado por fecha
+            </span>
+          </div>
           <p className="text-xs text-muted-foreground">
             Volumen y promedio reales de App Store (todos los tap-ratings, no solo reseñas escritas).
             Fuente: iTunes Lookup API · snapshot {ratingsSummary.snapshot_date}
