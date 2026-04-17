@@ -18,10 +18,26 @@ export async function middleware(request: NextRequest) {
     return response;
   }
 
-  // Allow embed routes when a valid embed_token is provided (used by investors.html iframes)
-  if (pathname.startsWith('/embed')) {
-    const embedToken = process.env.EMBED_TOKEN;
-    if (embedToken && searchParams.get('embed_token') === embedToken) {
+  // Allow embed routes (and APIs they call) when a valid embed_token is provided.
+  // The token can come from the URL (initial /embed/* page load) or from a cookie
+  // we set after that load — this lets client-side fetches like /api/nps-data work
+  // from inside the iframe without modifying shared data hooks.
+  const embedToken = process.env.EMBED_TOKEN;
+  if (embedToken) {
+    const cookieToken = request.cookies.get('mrr_embed_token')?.value;
+
+    if (pathname.startsWith('/embed') && searchParams.get('embed_token') === embedToken) {
+      response.cookies.set('mrr_embed_token', embedToken, {
+        httpOnly: true,
+        secure: true,
+        sameSite: 'none',
+        path: '/',
+        maxAge: 60 * 60 * 24, // 1 day
+      });
+      return response;
+    }
+
+    if (cookieToken === embedToken) {
       return response;
     }
   }
