@@ -2,14 +2,13 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { BarChart3, LogOut, LayoutDashboard, PieChart, TrendingUp, UserMinus, RotateCcw, MessageSquare, MessageSquareWarning, Smile } from 'lucide-react';
+import { BarChart3, LogOut, LayoutDashboard, PieChart, UserMinus, RotateCcw, MessageSquare, MessageSquareWarning, Smile } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 const navItems = [
-  { label: 'Overview', href: '/dashboard', icon: LayoutDashboard },
-  { label: 'Breakdown', href: '/dashboard/breakdown', icon: PieChart },
-  { label: 'Trends', href: '/dashboard/trends', icon: TrendingUp },
+  { label: 'MRR Revenue', href: '/dashboard', icon: LayoutDashboard },
+  { label: 'MRR Breakdown', href: '/dashboard/breakdown', icon: PieChart },
   { label: 'Churn', href: '/dashboard/churn', icon: UserMinus },
   { label: 'Refunds', href: '/dashboard/refunds', icon: RotateCcw },
   { label: 'Reviews', href: '/dashboard/reviews', icon: MessageSquare },
