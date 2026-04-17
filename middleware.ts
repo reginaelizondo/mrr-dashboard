@@ -24,9 +24,15 @@ export async function middleware(request: NextRequest) {
   // from inside the iframe without modifying shared data hooks.
   const embedToken = process.env.EMBED_TOKEN;
   if (embedToken) {
+    const queryToken  = searchParams.get('embed_token');
     const cookieToken = request.cookies.get('mrr_embed_token')?.value;
 
-    if (pathname.startsWith('/embed') && searchParams.get('embed_token') === embedToken) {
+    // Cross-origin metadata API consumed by investors.html (no cookie available)
+    if (pathname.startsWith('/api/embed/') && queryToken === embedToken) {
+      return response;
+    }
+
+    if (pathname.startsWith('/embed') && queryToken === embedToken) {
       response.cookies.set('mrr_embed_token', embedToken, {
         httpOnly: true,
         secure: true,
