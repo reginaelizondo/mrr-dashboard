@@ -57,13 +57,60 @@ export const NEGATIVE_TOPICS: TopicDef[] = [
     ),
   },
   {
-    key: 'ux_negative',
-    label: 'Hard to use',
+    key: 'content_quality',
+    label: 'Activities & content quality',
     patterns: words(
-      'confusing', 'difficult', 'complicated',
-      'hard to use', 'hard to find', 'hard to navigate',
-      'confuso', 'confusa', 'difícil de usar', 'navegar', 'complicado', 'complicada',
-      'navegação complicada',
+      // English — repetitive / boring / low variety
+      'repetitive', 'repetitives', 'repeated', 'boring', 'bored', 'tedious',
+      'not engaging', 'same activities', 'same exercises', 'same content',
+      'same thing', 'same stuff', 'not enough variety', 'limited variety',
+      // English — too simple / too hard / bad instructions
+      'too simple', 'too basic', 'too easy', 'too complicated', 'too difficult',
+      'too hard', 'weird supplies', 'big mess', 'too much setup',
+      'not really an activity', 'just a statement', 'waste of time',
+      // English — age / relevance
+      'not age appropriate', 'wrong age', 'not for my baby', 'outdated',
+      // Spanish — repetitive / boring
+      'repetitivo', 'repetitiva', 'repetidas', 'repetidos',
+      'aburrido', 'aburrida', 'aburridas', 'aburridos',
+      'tedioso', 'tediosa', 'monótono', 'monótona',
+      // Spanish — too simple / too hard / bad
+      'muy simple', 'muy simples', 'muy básico', 'muy básica',
+      'muy básicas', 'muy básicos',
+      'demasiado simple', 'demasiado fácil', 'demasiado difícil',
+      'demasiado básico', 'demasiado básica',
+      // Spanish — sameness / variety
+      'siempre lo mismo', 'siempre igual', 'siempre iguales',
+      'siempre las mismas', 'siempre los mismos',
+      'misma actividad', 'mismas actividades', 'mismos ejercicios',
+      'poca variedad', 'sin variedad', 'falta variedad',
+      'actividades aburridas', 'actividades repetitivas',
+      'actividades básicas', 'actividades simples',
+      'ejercicios aburridos', 'ejercicios repetitivos',
+      // Spanish — age / relevance
+      'no va con la edad', 'no coincide con la edad',
+      'no es para la edad', 'no son adecuadas',
+      // Portuguese
+      'chato', 'chata', 'entediante', 'repetitivas',
+      'muito simples', 'muito básico', 'muito básica',
+      'sempre iguais', 'sempre o mesmo', 'mesmas atividades',
+    ),
+  },
+  {
+    key: 'ux_negative',
+    label: 'Hard to use (app UX)',
+    patterns: words(
+      // Keep this scoped to APP navigation / interface issues, not content.
+      // Ambiguous words like "complicated" / "difficult" were removed because
+      // they also match complaints about activity complexity, which belongs
+      // in `content_quality`.
+      'confusing', 'intuitive', 'layout', 'user interface',
+      'hard to use', 'hard to find', 'hard to navigate', 'difficult to navigate',
+      'app is confusing', 'app is hard',
+      'confuso', 'confusa', 'difícil de usar', 'difícil de navegar',
+      'navegar', 'navegación', 'diseño', 'interfaz',
+      'aplicación complicada', 'app complicada', 'app confusa',
+      'navegação', 'navegação complicada',
     ),
   },
   {
