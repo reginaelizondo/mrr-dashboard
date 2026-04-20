@@ -42,7 +42,7 @@ export default async function DashboardPage({
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0E3687]">Overview</h1>
+          <h1 className="text-2xl font-bold text-[#0E3687]">MRR Revenue</h1>
           <p className="text-sm text-muted-foreground mt-0.5">Revenue analytics across all sources</p>
         </div>
         <SyncStatus lastSync={lastSync} />

@@ -110,8 +110,10 @@ function CustomTooltip({ active, payload, label }: { active?: boolean; payload?:
 export function NetNewMrrChart({ data }: NetNewMrrChartProps) {
   const chartData = computeNetNew(data);
 
-  // Show last 6 months
-  const displayData = chartData.slice(-6);
+  // Respect the filter range (e.g. Last 12 Months shows 12 bars,
+  // not a hard-coded window). computeNetNew yields data.length - 1 entries
+  // because the first month has no prior-month baseline.
+  const displayData = chartData;
   const hasProjections = displayData.some((d) => d.projectedExtra > 0);
 
   const exportData = chartData.map((d) => ({

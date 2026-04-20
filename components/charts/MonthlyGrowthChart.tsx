@@ -108,8 +108,9 @@ function CustomTooltip({ active, payload, label }: { active?: boolean; payload?:
 export function MonthlyGrowthChart({ data }: MonthlyGrowthChartProps) {
   const chartData = computeGrowth(data);
 
-  // Show max last 6 months for cleaner view
-  const displayData = chartData.slice(-6);
+  // Respect the filter range. computeGrowth yields data.length - 1 entries
+  // because MoM growth needs a prior-month baseline.
+  const displayData = chartData;
   const hasProjections = displayData.some((d) => d.projectedExtra > 0);
 
   const exportData = chartData.map((d) => ({
