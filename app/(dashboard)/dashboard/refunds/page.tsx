@@ -1,4 +1,7 @@
 export const dynamic = 'force-dynamic';
+// Give this route extra headroom: the Apple breakdown RPCs can take 2-3s
+// each over 6-month windows and up to ~8s over 12-month windows.
+export const maxDuration = 30;
 
 import { Suspense } from 'react';
 import {
@@ -29,7 +32,10 @@ function resolveDateRange(params: PageParams): {
   endMonth: string;
   preset: Preset;
 } {
-  const preset = (params.preset as Preset) || '12m';
+  // Default window is 6 months: keeps the Apple breakdown RPCs well under
+  // the pooler's statement_timeout (local p95 ~800ms for 6m vs ~3s for 12m).
+  // Power users can still pick '12m' or 'all' from the FilterBar explicitly.
+  const preset = (params.preset as Preset) || '6m';
 
   // End = today (or user-supplied end) by default
   const today = new Date();
@@ -84,6 +90,23 @@ export default async function RefundsPage({
     ? params.countries.split(',').map((c) => c.trim().toUpperCase()).filter(Boolean)
     : undefined;
 
+  // Hard-limit the slowest query so a Postgres statement_timeout can't drag
+  // the whole page past the Vercel function budget. Everything else is
+  // already quick (<1s). If breakdowns blow past 7s we ship the page without
+  // them and the iOS Refund Segmentation section shows an empty state.
+  const breakdownsWithTimeout = Promise.race([
+    getAppleRefundBreakdowns(range.startDate, range.endDate),
+    new Promise<null>((resolve) =>
+      setTimeout(() => {
+        console.warn('[refunds] apple breakdowns exceeded 7s budget — skipping');
+        resolve(null);
+      }, 7000),
+    ),
+  ]).catch((err) => {
+    console.error('[refunds] apple breakdowns failed:', err);
+    return null;
+  });
+
   const [apple, google, stripe, appleWeekly, appleBreakdowns, lastSync] = await Promise.all([
     getRefundsByMonth('apple', range.startMonth, range.endMonth, countries),
     getRefundsByMonth('google', range.startMonth, range.endMonth),
@@ -91,10 +114,7 @@ export default async function RefundsPage({
     granularity === 'weekly'
       ? getAppleRefundsByWeek(range.startDate, range.endDate, countries)
       : Promise.resolve([]),
-    getAppleRefundBreakdowns(range.startDate, range.endDate).catch((err) => {
-      console.error('[refunds] apple breakdowns failed:', err);
-      return null;
-    }),
+    breakdownsWithTimeout,
     getLastAppleSalesSync(),
   ]);
 
