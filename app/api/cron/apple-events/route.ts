@@ -36,6 +36,19 @@ export async function GET(request: NextRequest) {
   try {
     const result = await syncAppleEventsRange(start, end);
 
+    // Refresh the refund breakdown materialized views so /dashboard/refunds
+    // reflects fresh data without waiting a full day. Failure here is
+    // non-fatal — the sync itself already succeeded and the MVs just stay on
+    // their previous refresh until the next run.
+    let mvRefresh: 'ok' | 'skipped' | 'error' = 'skipped';
+    const { error: mvErr } = await supabase.rpc('refresh_apple_refund_mvs');
+    if (mvErr) {
+      console.error('[cron/apple-events] MV refresh failed:', mvErr);
+      mvRefresh = 'error';
+    } else {
+      mvRefresh = 'ok';
+    }
+
     if (syncLog) {
       await supabase
         .from('sync_log')
@@ -43,12 +56,12 @@ export async function GET(request: NextRequest) {
           status: 'success',
           completed_at: new Date().toISOString(),
           records_synced: result.totalRows,
-          details: { ...result, source: 'apple-events' },
+          details: { ...result, source: 'apple-events', mvRefresh },
         })
         .eq('id', syncLog.id);
     }
 
-    return NextResponse.json({ success: true, ...result });
+    return NextResponse.json({ success: true, ...result, mvRefresh });
   } catch (err) {
     if (syncLog) {
       await supabase
