@@ -83,16 +83,29 @@ function TopicPanel({ title, description, icon: Icon, iconBg, accent, buckets, e
         ) : (
           <div className="space-y-1.5">
             {buckets.map((b) => (
-              <div key={b.key} className="border border-border rounded-md bg-white">
+              <div
+                key={b.key}
+                className={cn(
+                  'border rounded-md bg-white',
+                  b.isOther ? 'border-dashed border-border/80' : 'border-border',
+                )}
+              >
                 <button
                   onClick={() => setExpanded(expanded === b.key ? null : b.key)}
                   className="w-full flex items-center justify-between p-3 hover:bg-muted/40 transition-colors"
                 >
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-[#0E3687]">{b.label}</span>
+                    <span className={cn(
+                      'text-sm font-medium',
+                      b.isOther ? 'text-muted-foreground italic' : 'text-[#0E3687]',
+                    )}>
+                      {b.label}
+                    </span>
                     <span className={cn(
                       'inline-flex items-center justify-center min-w-[24px] h-5 px-1.5 rounded-full text-[11px] font-bold text-white',
-                      tone === 'negative' ? 'bg-[#DA4D7A]' : 'bg-[#45C94E]'
+                      b.isOther
+                        ? 'bg-muted-foreground/70'
+                        : tone === 'negative' ? 'bg-[#DA4D7A]' : 'bg-[#45C94E]',
                     )}>
                       {b.count}
                     </span>
