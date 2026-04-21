@@ -385,18 +385,36 @@ export async function getAppleRefundBreakdowns(
   }
 
   const cpp = toRows(cppRes.data as RpcRow[] | null);
-  if (cpp.length === 0) return empty;
+  const days = toDaysRows(daysRes.data as DaysRpcRow[] | null);
+  const plan = toRows(planRes.data as RpcRow[] | null);
+  const offer = toRows(offerRes.data as RpcRow[] | null);
+  const country = toRows(countryRes.data as RpcRow[] | null);
+  const sku = toRows(skuRes.data as RpcRow[] | null);
 
-  const totalRefunds = cpp.reduce((a, r) => a + r.refunds, 0);
-  const totalPaid = cpp.reduce((a, r) => a + r.paid_events, 0);
+  // All 6 breakdowns are different groupings of the same underlying refund
+  // events, so totals can be derived from any non-empty one. Previously we
+  // short-circuited to an empty payload whenever `cpp` was empty — that
+  // silently hid the whole Apple segmentation UI even when 5 of 6 RPCs had
+  // succeeded (common when the `cpp` RPC hits Supabase's statement_timeout
+  // on larger ranges).
+  const primary = cpp.length > 0 ? cpp
+    : plan.length > 0 ? plan
+    : offer.length > 0 ? offer
+    : country.length > 0 ? country
+    : sku.length > 0 ? sku
+    : [];
+  if (primary.length === 0) return empty;
+
+  const totalRefunds = primary.reduce((a, r) => a + r.refunds, 0);
+  const totalPaid = primary.reduce((a, r) => a + r.paid_events, 0);
 
   return {
     byConsecutivePaidPeriod: cpp,
-    byDaysBeforeCanceling: toDaysRows(daysRes.data as DaysRpcRow[] | null),
-    byPlanDuration: toRows(planRes.data as RpcRow[] | null),
-    byOfferType: toRows(offerRes.data as RpcRow[] | null),
-    byCountry: toRows(countryRes.data as RpcRow[] | null),
-    bySku: toRows(skuRes.data as RpcRow[] | null),
+    byDaysBeforeCanceling: days,
+    byPlanDuration: plan,
+    byOfferType: offer,
+    byCountry: country,
+    bySku: sku,
     totalRefunds,
     totalPaid,
     overallRate: totalPaid > totalRefunds ? totalRefunds / (totalPaid - totalRefunds) : 0,
