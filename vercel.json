@@ -15,6 +15,10 @@
     {
       "path": "/api/cron/apple-reviews",
       "schedule": "0 10 * * *"
+    },
+    {
+      "path": "/api/cron/weekly-kpi-report",
+      "schedule": "0 15 * * 1"
     }
   ]
 }
