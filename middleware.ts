@@ -12,6 +12,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/api/auth') ||
     pathname.startsWith('/api/cron') ||
     pathname.startsWith('/api/sync') ||
+    pathname.startsWith('/api/slack-bot') ||
     pathname.startsWith('/_next') ||
     pathname === '/favicon.ico'
   ) {

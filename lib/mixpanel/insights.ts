@@ -1,0 +1,259 @@
+import { getMixpanelCreds, type MixpanelQueryParams } from './client';
+import { USER_PROPERTIES } from './properties-catalog';
+
+/**
+ * Create / manage Mixpanel Insights bookmarks via the undocumented app API.
+ *
+ * This is Mixpanel's internal frontend API — not officially documented but
+ * stable enough to depend on. It requires the Service Account to have the
+ * `analyst` role (Consumer is read-only and will 403 here).
+ *
+ * Bookmarks are stored in a dedicated dashboard (MIXPANEL_BOT_DASHBOARD_ID)
+ * so they don't pollute the team's real dashboards. Orphaning old ones
+ * (PATCH dashboard_id to null) acts as our "purge" — true DELETE returns 500
+ * for service-account-owned bookmarks.
+ */
+
+const APP_API_BASE = 'https://mixpanel.com/api/app';
+const REQUEST_TIMEOUT_MS = 20_000;
+
+interface MpAppCreds {
+  username: string;
+  secret: string;
+  projectId: string;
+  workspaceId: string;
+  botDashboardId: string;
+}
+
+function getAppCreds(): MpAppCreds {
+  const { username, secret, projectId } = getMixpanelCreds();
+  const workspaceId = process.env.MIXPANEL_WORKSPACE_ID;
+  const botDashboardId = process.env.MIXPANEL_BOT_DASHBOARD_ID;
+  if (!workspaceId || !botDashboardId) {
+    throw new Error('MIXPANEL_WORKSPACE_ID or MIXPANEL_BOT_DASHBOARD_ID not configured.');
+  }
+  return { username, secret, projectId, workspaceId, botDashboardId };
+}
+
+function authHeader(c: MpAppCreds): string {
+  return 'Basic ' + Buffer.from(`${c.username}:${c.secret}`).toString('base64');
+}
+
+async function appApi<T>(path: string, method: 'GET' | 'POST' | 'PATCH', body?: unknown, c?: MpAppCreds): Promise<T> {
+  const creds = c ?? getAppCreds();
+  const url = `${APP_API_BASE}${path}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: {
+        Authorization: authHeader(creds),
+        Accept: 'application/json',
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      throw new Error(`Mixpanel app API ${method} ${path} → HTTP ${res.status}: ${txt.slice(0, 300)}`);
+    }
+    return (await res.json()) as T;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ---------------- Report creation ----------------
+
+function buildInsightsParams(q: MixpanelQueryParams): Record<string, unknown> {
+  const measureLabel = q.measure === 'unique' ? 'Uniques' : 'Total';
+  const showItem = {
+    name: `${measureLabel} of ${q.event}`,
+    behavior: {
+      type: 'simple',
+      resourceType: 'events',
+      dataGroupId: null,
+      filters: [],
+      filtersDeterminer: 'all',
+      behaviors: [
+        { type: 'event', name: q.event, filters: [], filtersDeterminer: 'all' },
+      ],
+      hasUnsavedChanges: false,
+    },
+    display: {},
+    measurement: {
+      math: q.measure === 'unique' ? 'unique' : 'total',
+      perUserAggregation: null,
+      rolling: null,
+      cumulative: false,
+      property: null,
+    },
+    type: 'metric',
+  };
+
+  // Only include `group` when a breakdown is requested. User-only props go
+  // via resourceType=people to match UI behavior; everything else via events.
+  const group = q.breakdown
+    ? [{
+        dataset: '$mixpanel',
+        value: q.breakdown,
+        resourceType: (USER_PROPERTIES as readonly string[]).includes(q.breakdown) ? 'people' : 'events',
+        profileType: null,
+        search: '',
+        dataGroupId: null,
+        propertyType: 'string',
+        typeCast: null,
+        unit: null,
+      }]
+    : [];
+
+  return {
+    sections: {
+      cohorts: [],
+      filter: [],
+      formula: [],
+      group,
+      show: [showItem],
+      time: [{ dateRangeType: 'between', from: q.fromDate, to: q.toDate, unit: q.unit }],
+      metricLevelDataGroups: true,
+    },
+    displayOptions: {
+      chartType: q.breakdown ? 'bar' : 'line',
+      plotStyle: 'standard',
+      analysis: 'linear',
+      value: 'absolute',
+    },
+  };
+}
+
+interface CreateBookmarkResponse {
+  status: string;
+  results: { id: number; dashboard_id: number | null };
+}
+
+export interface BotBookmark {
+  bookmarkId: number;
+  url: string;
+}
+
+/**
+ * Create a bookmarked Insights report from a Mixpanel query we just ran.
+ * Returns the bookmark id + a URL users can click in Slack to open the same
+ * report interactively in Mixpanel.
+ */
+export async function createBotBookmark(args: {
+  query: MixpanelQueryParams;
+  title: string;
+  question: string;
+}): Promise<BotBookmark> {
+  const c = getAppCreds();
+  const name = `[bot ${new Date().toISOString().slice(0, 10)}] ${args.title}`.slice(0, 140);
+  const body = {
+    name,
+    type: 'insights',
+    dashboard_id: Number(c.botDashboardId),
+    description: `Auto-generated by the Slack KPI bot. Original question: ${args.question.slice(0, 280)}`,
+    params: JSON.stringify(buildInsightsParams(args.query)),
+  };
+  const res = await appApi<CreateBookmarkResponse>(
+    `/projects/${c.projectId}/bookmarks/?workspace_id=${c.workspaceId}`,
+    'POST',
+    body,
+    c
+  );
+  const sourceBookmarkId = res.results.id;
+
+  // Attach the bookmark to the dashboard as a visible card. Mixpanel's app
+  // API uses the `content.action=create` PATCH on the dashboard, which clones
+  // the source bookmark onto the board and appends it to layout.rows in one
+  // atomic call. Direct layout PATCH is rejected — only this path works.
+  // The clone gets a new id, which is what the Slack URL has to reference.
+  const attached = await appApi<{
+    results: { layout: { rows: Record<string, { cells: Array<{ content_id: number }> }> } };
+  }>(
+    `/projects/${c.projectId}/dashboards/${c.botDashboardId}/?workspace_id=${c.workspaceId}`,
+    'PATCH',
+    {
+      content: {
+        action: 'create',
+        content_type: 'report',
+        content_params: { source_bookmark_id: sourceBookmarkId },
+      },
+    },
+    c
+  );
+
+  // Find the freshest row — the one just appended. Mixpanel appends to the
+  // end of layout.order, but we don't get order back here; instead find the
+  // content_id that isn't the source bookmark. If ambiguous, fall back to
+  // source id (UI will still open the right report, even if not as a card).
+  const rows = attached.results.layout?.rows ?? {};
+  const allContentIds = Object.values(rows)
+    .flatMap((row) => row.cells.map((cell) => cell.content_id))
+    .filter((id) => id !== sourceBookmarkId);
+  const bookmarkId = allContentIds.length > 0 ? allContentIds[allContentIds.length - 1] : sourceBookmarkId;
+
+  // Deep-link to the specific card's detail view on the board. Requires the
+  // card to be in layout.rows — that's what the PATCH above guarantees.
+  const url = `https://mixpanel.com/project/${c.projectId}/view/${c.workspaceId}/app/boards#id=${c.botDashboardId}&editor-card-id=%22report-${bookmarkId}%22`;
+  return { bookmarkId, url };
+}
+
+// ---------------- Autopurge (orphan old bot bookmarks) ----------------
+
+interface ListBookmark {
+  id: number;
+  dashboard_id: number | null;
+  type: string;
+  name: string;
+  created: string;
+  user_id: number;
+}
+
+interface ListBookmarksResponse {
+  status: string;
+  results: ListBookmark[];
+}
+
+/**
+ * PATCH old bot bookmarks to `dashboard_id: null` so they fall off the bot's
+ * dashboard. We cannot truly DELETE — the service-account DELETE returns 500.
+ * Returns count of bookmarks orphaned.
+ */
+export async function purgeOldBotBookmarks(olderThanDays: number = 30): Promise<{ orphaned: number; scanned: number }> {
+  const c = getAppCreds();
+  const botDashId = Number(c.botDashboardId);
+  const cutoff = Date.now() - olderThanDays * 24 * 60 * 60 * 1000;
+
+  const list = await appApi<ListBookmarksResponse>(
+    `/projects/${c.projectId}/bookmarks/?workspace_id=${c.workspaceId}`,
+    'GET',
+    undefined,
+    c
+  );
+
+  const candidates = list.results.filter(
+    (b) =>
+      b.dashboard_id === botDashId &&
+      b.name.startsWith('[bot ') &&
+      new Date(b.created).getTime() < cutoff
+  );
+
+  let orphaned = 0;
+  for (const b of candidates) {
+    try {
+      await appApi(
+        `/projects/${c.projectId}/bookmarks/${b.id}/`,
+        'PATCH',
+        { dashboard_id: null },
+        c
+      );
+      orphaned += 1;
+    } catch (err) {
+      console.error(`[mixpanel purge] failed to orphan bookmark ${b.id}:`, err);
+    }
+  }
+  return { orphaned, scanned: candidates.length };
+}
