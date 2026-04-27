@@ -397,13 +397,20 @@ export async function nlToSql(question: string): Promise<NlQueryResult> {
     if (input.breakdown && !isKnownProperty(input.breakdown)) {
       throw new NlToSqlError(`Claude picked an unknown Mixpanel property: "${input.breakdown}". Try rephrasing without a breakdown.`);
     }
+    // Override the LLM's `unit` choice with one that matches the date range
+    // span. With unit=month over a 30-day window, Mixpanel returns calendar-
+    // month buckets keyed by month-start; any month-start before fromDate gets
+    // dropped from the response, silently losing partial-month data (e.g.
+    // Mar 28-31 disappears for a Mar 28 → Apr 26 query). Picking unit by span
+    // avoids that whole class of bug.
+    const enforcedUnit = pickUnitForRange(input.fromDate, input.toDate);
     return {
       source: 'mixpanel',
       event: input.event,
       measure: input.measure,
       fromDate: input.fromDate,
       toDate: input.toDate,
-      unit: input.unit,
+      unit: enforcedUnit,
       breakdown: input.breakdown,
       title: input.title,
       explanation: input.explanation,
@@ -411,4 +418,24 @@ export async function nlToSql(question: string): Promise<NlQueryResult> {
   }
 
   throw new NlToSqlError(`Claude returned an unexpected tool: ${toolUse.name}.`);
+}
+
+/**
+ * Pick the Mixpanel time-bucket `unit` that fits the date range without losing
+ * data to partial-bucket truncation:
+ *   span >= 60 days → month   (≥2 full month buckets fit cleanly)
+ *   span 14-60 days → week    (calendar-week buckets, partial weeks are fine)
+ *   span < 14 days  → day     (no bucketing concerns)
+ *
+ * The LLM is told the same rule in the system prompt but doesn't always
+ * follow it — enforcing here prevents silent data loss.
+ */
+function pickUnitForRange(fromDate: string, toDate: string): MixpanelUnit {
+  const from = Date.parse(fromDate);
+  const to = Date.parse(toDate);
+  if (Number.isNaN(from) || Number.isNaN(to) || to < from) return 'day';
+  const days = Math.round((to - from) / 86_400_000) + 1; // inclusive
+  if (days >= 60) return 'month';
+  if (days >= 14) return 'week';
+  return 'day';
 }
