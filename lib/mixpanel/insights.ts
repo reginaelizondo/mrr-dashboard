@@ -116,7 +116,11 @@ function buildInsightsParams(q: MixpanelQueryParams): Record<string, unknown> {
       formula: [],
       group,
       show: [showItem],
-      time: [{ dateRangeType: 'between', from: q.fromDate, to: q.toDate, unit: q.unit }],
+      time: [{
+        dateRangeType: 'between',
+        unit: 'day',
+        value: [`${q.fromDate}T00:00:00`, `${q.toDate}T00:00:00`],
+      }],
       metricLevelDataGroups: true,
     },
     displayOptions: {
