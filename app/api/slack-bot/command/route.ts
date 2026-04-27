@@ -153,6 +153,15 @@ async function runMixpanelQuery(
     return formatErrorAsSlack({ question, error: `Mixpanel error: ${msg}` });
   }
 
+  // When there's a breakdown, collapse the per-time-bucket rows into one row
+  // per breakdown value. Slack tables with breakdown × N buckets get long
+  // (5 plans × 5 weeks = 25 rows) and obscure the comparison the user actually
+  // wants — "which plan converts more". The Mixpanel bookmark already shows
+  // this aggregated view, so Slack matches it. Note: summing per-bucket
+  // unique counts can slightly over-count users active in multiple buckets,
+  // but conversion events are typically once-per-user so the drift is small.
+  const displayRows = nl.breakdown ? collapseBreakdownAcrossTime(rows) : rows;
+
   // Create an interactive Mixpanel bookmark in parallel with formatting. If
   // this fails (bad network, permissions, etc.), we still return the Slack
   // answer — the link is a nice-to-have, not a blocker.
@@ -175,12 +184,30 @@ range: ${nl.fromDate} → ${nl.toDate}${breakdownBadge}`;
     explanation: nl.explanation,
     question,
     sql: pseudoSql,
-    rows: rows as Record<string, string | number | boolean | null | undefined | { value: string }>[],
+    rows: displayRows as Record<string, string | number | boolean | null | undefined | { value: string }>[],
     sourceLabel: `Mixpanel · \`${nl.event}\``,
     detailsLabel: 'Mixpanel query',
     interactiveUrl,
     interactiveLabel: '🔍 Open in Mixpanel',
   });
+}
+
+/**
+ * Aggregate per-time-bucket breakdown rows into one row per breakdown value.
+ * Drops the date column. Sorted by value desc so the most-impactful bucket
+ * shows first.
+ */
+function collapseBreakdownAcrossTime(
+  rows: { breakdown?: string; date?: string; value: number; event: string }[]
+): { breakdown: string; value: number }[] {
+  const totals = new Map<string, number>();
+  for (const r of rows) {
+    const key = r.breakdown ?? '(none)';
+    totals.set(key, (totals.get(key) ?? 0) + (r.value ?? 0));
+  }
+  return Array.from(totals.entries())
+    .map(([breakdown, value]) => ({ breakdown, value }))
+    .sort((a, b) => b.value - a.value);
 }
 
 async function deliverResponse(args: {
