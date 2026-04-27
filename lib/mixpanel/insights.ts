@@ -1,5 +1,5 @@
 import { getMixpanelCreds, type MixpanelQueryParams } from './client';
-import { USER_PROPERTIES } from './properties-catalog';
+import { USER_PROPERTIES, PROPERTY_HAS_USER_FALLBACK } from './properties-catalog';
 
 /**
  * Create / manage Mixpanel Insights bookmarks via the undocumented app API.
@@ -93,13 +93,20 @@ function buildInsightsParams(q: MixpanelQueryParams): Record<string, unknown> {
     type: 'metric',
   };
 
-  // Only include `group` when a breakdown is requested. User-only props go
-  // via resourceType=people to match UI behavior; everything else via events.
+  // Only include `group` when a breakdown is requested. Use resourceType=people
+  // for true user-only props AND for super-properties that fall back to user
+  // level (e.g. planType, kineduCountry, sku) — without this, breakdowns on
+  // events that don't carry the super-prop (like FreeTrialConverted+planType)
+  // render as a single "undefined" bucket. queryMixpanel applies the same
+  // fallback for the data side; this keeps the bookmark UI consistent.
+  const isUserLevel =
+    (USER_PROPERTIES as readonly string[]).includes(q.breakdown ?? '') ||
+    PROPERTY_HAS_USER_FALLBACK.has(q.breakdown ?? '');
   const group = q.breakdown
     ? [{
         dataset: '$mixpanel',
         value: q.breakdown,
-        resourceType: (USER_PROPERTIES as readonly string[]).includes(q.breakdown) ? 'people' : 'events',
+        resourceType: isUserLevel ? 'people' : 'events',
         profileType: null,
         search: '',
         dataGroupId: null,
