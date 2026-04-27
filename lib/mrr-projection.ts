@@ -20,7 +20,7 @@ import type { MrrDailySnapshot } from '@/types';
  * Reported as a separate "projected" value so the user always sees both.
  */
 
-const MATURE_BUFFER_DAYS = 20;       // a month is "settled" 20 wall-clock days after month end
+const MATURE_BUFFER_DAYS = 7;        // a month is "settled" 7 wall-clock days after month end (Apr 30 → mature May 7). Was 20; lowered 2026-04-27 because the Kinedu DB sync now backfills late Apple/Google reports much faster than the old assumption.
 const TREND_WINDOW_MONTHS = 3;       // compute avg MoM growth over last N mature months
 
 export interface ProjectedMonth {

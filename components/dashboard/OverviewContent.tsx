@@ -7,6 +7,7 @@ import { GoalProgressCard } from '@/components/dashboard/GoalProgressCard';
 import { SourceBreakdownChart } from '@/components/charts/SourceBreakdownChart';
 import { ActiveSubsBySourceChart } from '@/components/charts/ActiveSubsBySourceChart';
 import { RevenueCostsChart } from '@/components/charts/RevenueCostsChart';
+import { NetRevenueCostsChart } from '@/components/charts/NetRevenueCostsChart';
 import { MonthlyGrowthChart } from '@/components/charts/MonthlyGrowthChart';
 import { NetNewMrrChart } from '@/components/charts/NetNewMrrChart';
 import { ExportButton } from '@/components/dashboard/ExportButton';
@@ -129,6 +130,8 @@ export function OverviewContent({ snapshots }: { snapshots: MrrDailySnapshot[] }
       </div>
 
       <RevenueCostsChart data={filtered} />
+
+      <NetRevenueCostsChart data={filtered} />
 
       {/* Growth charts side by side */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

@@ -218,8 +218,13 @@ export async function computeMonthlySnapshot(date: string): Promise<void> {
 
   const snapshotDateStr = monthStartStr;
 
-  const snapshot: Omit<MrrDailySnapshot, 'id' | 'computed_at'> = {
+  // Include computed_at on every upsert. Postgres' default `now()` only fires
+  // on INSERT, so without this the field reflects the original creation date
+  // and never moves on subsequent recomputes — making fresh snapshots look
+  // months old in the dashboard's audit fields.
+  const snapshot: Omit<MrrDailySnapshot, 'id'> = {
     snapshot_date: snapshotDateStr,
+    computed_at: new Date().toISOString(),
     mrr_gross: mrrGross,
     mrr_net: mrrNet,
     total_commissions: totalCommissions,
