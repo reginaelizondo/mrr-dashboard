@@ -28,7 +28,6 @@ export function OverviewContent({ snapshots }: { snapshots: MrrDailySnapshot[] }
 
   // ARR, growth, and goal always use ALL snapshots (unfiltered) for accuracy
   const allSorted = [...snapshots].sort((a, b) => a.snapshot_date.localeCompare(b.snapshot_date));
-  const latestMrr = allSorted.length > 0 ? Number(allSorted[allSorted.length - 1].mrr_net) : 0;
 
   // ARR = Trailing Twelve Months (sum of last 12 months of gross revenue)
   const last12 = allSorted.slice(-12);
@@ -51,22 +50,24 @@ export function OverviewContent({ snapshots }: { snapshots: MrrDailySnapshot[] }
       })
     : '';
 
-  // MoM growth (always from latest 2 months, unfiltered)
+  // MoM growth — last COMPLETE month vs the one before it (exclude the partial
+  // current month, which would otherwise show a fake drop).
   let momGrowth = 0;
-  if (allSorted.length >= 2) {
-    const prev = Number(allSorted[allSorted.length - 2].mrr_net);
-    const curr = Number(allSorted[allSorted.length - 1].mrr_net);
+  if (completedMonths.length >= 2) {
+    const prev = Number(completedMonths[completedMonths.length - 2].mrr_net);
+    const curr = Number(completedMonths[completedMonths.length - 1].mrr_net);
     if (prev > 0) momGrowth = ((curr - prev) / prev) * 100;
   }
 
-  // 6-month growth multiplier (always from unfiltered data)
+  // 6-month growth multiplier — also ending on the last COMPLETE month.
   let sixMonthMultiplier = 0;
-  if (allSorted.length >= 7) {
-    const sixAgo = Number(allSorted[allSorted.length - 7].mrr_net);
-    if (sixAgo > 0) sixMonthMultiplier = latestMrr / sixAgo;
-  } else if (allSorted.length >= 2) {
-    const first = Number(allSorted[0].mrr_net);
-    if (first > 0) sixMonthMultiplier = latestMrr / first;
+  const lastCompleteNet = lastComplete ? Number(lastComplete.mrr_net) : 0;
+  if (completedMonths.length >= 7) {
+    const sixAgo = Number(completedMonths[completedMonths.length - 7].mrr_net);
+    if (sixAgo > 0) sixMonthMultiplier = lastCompleteNet / sixAgo;
+  } else if (completedMonths.length >= 2) {
+    const first = Number(completedMonths[0].mrr_net);
+    if (first > 0) sixMonthMultiplier = lastCompleteNet / first;
   }
 
   return (
@@ -128,7 +129,7 @@ export function OverviewContent({ snapshots }: { snapshots: MrrDailySnapshot[] }
           format="percent"
           icon={Zap}
           accentColor={momGrowth >= 0 ? 'green' : 'red'}
-          subtitle="Net MRR vs prior month"
+          subtitle={`Net MRR · ${runRateMonth} vs prior full month`}
         />
         <MetricCard
           label="6-Month Growth"
@@ -136,7 +137,7 @@ export function OverviewContent({ snapshots }: { snapshots: MrrDailySnapshot[] }
           format="multiplier"
           icon={Activity}
           accentColor="teal"
-          subtitle="MRR growth over 6 months"
+          subtitle={`Net MRR · 6 full months ending ${runRateMonth}`}
         />
         <GoalProgressCard
           label="Road to $6M ARR"
