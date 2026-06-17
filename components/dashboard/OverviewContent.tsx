@@ -34,6 +34,23 @@ export function OverviewContent({ snapshots }: { snapshots: MrrDailySnapshot[] }
   const last12 = allSorted.slice(-12);
   const arr = last12.reduce((sum, s) => sum + Number(s.mrr_gross), 0);
 
+  // Annualized RUN-RATE (net & gross) = LAST COMPLETE month × 12. The current
+  // calendar month is still in progress, so we exclude it — otherwise a partial
+  // month would understate the run-rate.
+  const nowYM = new Date().toISOString().slice(0, 7);
+  const completedMonths = allSorted.filter((s) => s.snapshot_date.slice(0, 7) < nowYM);
+  const lastComplete =
+    completedMonths.length > 0 ? completedMonths[completedMonths.length - 1] : allSorted[allSorted.length - 1];
+  const netRunRate = lastComplete ? Number(lastComplete.mrr_net) * 12 : 0;
+  const grossRunRate = lastComplete ? Number(lastComplete.mrr_gross) * 12 : 0;
+  const runRateMonth = lastComplete
+    ? new Date(lastComplete.snapshot_date + 'T00:00:00Z').toLocaleDateString('en-US', {
+        month: 'short',
+        year: 'numeric',
+        timeZone: 'UTC',
+      })
+    : '';
+
   // MoM growth (always from latest 2 months, unfiltered)
   let momGrowth = 0;
   if (allSorted.length >= 2) {
@@ -69,17 +86,17 @@ export function OverviewContent({ snapshots }: { snapshots: MrrDailySnapshot[] }
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard
           label="MRR (Net Revenue)"
-          value={totals.net}
+          value={netRunRate}
           icon={TrendingUp}
           accentColor="teal"
-          subtitle="After store commissions"
+          subtitle={`Net run-rate · last full month (${runRateMonth}) × 12`}
         />
         <MetricCard
           label="Gross Revenue"
-          value={totals.gross}
+          value={grossRunRate}
           icon={DollarSign}
           accentColor="green"
-          subtitle="Before commissions"
+          subtitle={`Gross run-rate · last full month (${runRateMonth}) × 12`}
         />
         <MetricCard
           label="Commissions"
