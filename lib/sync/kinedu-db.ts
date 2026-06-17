@@ -1,18 +1,16 @@
 /**
  * Kinedu DB → Supabase Sync Module
  *
- * Connects to Kinedu's read-only DB replica (dbslave) via SSH tunnel,
- * fetches sales data, and upserts it into Supabase's `transactions` table.
+ * Two fetch modes, toggled by USE_BIGQUERY_SYNC env var:
+ *   false (default): SSH tunnel → MySQL dbslave (original path)
+ *   true:            BigQuery aws_kinedu_app_import.sales (aligned with tech)
  *
- * Uses SSH port forwarding (ssh2 forwardOut) + mysql2 for the DB connection,
- * instead of shelling out to the mysql CLI (which isn't installed on the server).
- *
- * This replaces the Apple/Google API sync with the same source of truth
- * that Tableau uses (the `sales` table), ensuring MRR numbers match.
+ * Transform + upsert logic is identical for both paths.
  */
 
 import { Client as SSHClient } from 'ssh2';
 import mysql from 'mysql2/promise';
+import { getBigQueryClient } from '@/lib/bigquery/client';
 import { createServerClient } from '@/lib/supabase/server';
 import type { PlanType, Region } from '@/types';
 import type { Socket } from 'net';
@@ -182,43 +180,91 @@ function createTunnelConnection(ssh: SSHClient): Promise<mysql.Connection> {
   });
 }
 
-// ─── Main Sync Function ────────────────────────────────────────────────────
+// ─── BigQuery fetch (mirrors the MySQL query exactly) ───────────────────────
 
-export async function syncKineduDB(fromDate: string, toDate: string): Promise<SyncResult> {
-  console.log(`[kinedu-db] Syncing sales from ${fromDate} to ${toDate}...`);
-
-  // 1. Connect via SSH and create tunnel to MySQL
-  const ssh = await connectSSH();
-  const mysqlConn = await createTunnelConnection(ssh);
-
-  try {
-    // 2. Run MySQL query through the tunnel
-    const query = `
+async function fetchFromBigQuery(fromDate: string, toDate: string): Promise<KineduSaleRow[]> {
+  const bq = getBigQueryClient();
+  const [bqRows] = await bq.query({
+    query: `
       SELECT
         s.id, s.store, s.sku, s.amount, s.currency_code, s.usd_amount,
         s.created_at, s.renewed_automatically,
         sub.email, sub.name
-      FROM sales s
-      LEFT JOIN subscriptions sub ON s.user_id = sub.user_id
-      WHERE s.created_at >= ?
-        AND s.created_at < ?
+      FROM \`celtic-music-240111.aws_kinedu_app_import.sales\` s
+      LEFT JOIN \`celtic-music-240111.aws_kinedu_app_import.subscriptions\` sub
+        ON s.user_id = sub.user_id
+      WHERE s.created_at >= @fromDate
+        AND s.created_at < @toDate
         AND s.payment_status = 'paid'
         AND s.fraud = 0
         AND s.livemode = 1
         AND (sub.email IS NULL OR sub.email NOT LIKE '%@test.com%')
         AND (sub.name IS NULL OR sub.name NOT LIKE '%click here%')
       ORDER BY s.created_at ASC
-    `;
+    `,
+    params: { fromDate, toDate },
+  });
 
-    const [rawRows] = await mysqlConn.execute(query, [fromDate, toDate]);
-    const rows = rawRows as KineduSaleRow[];
+  // BigQuery returns dates as { value: string } objects — normalize to Date
+  return (bqRows as Record<string, unknown>[]).map((r) => ({
+    id: Number(r.id),
+    store: r.store as string | null,
+    sku: r.sku as string | null,
+    amount: Number(r.amount),
+    currency_code: r.currency_code as string | null,
+    usd_amount: Number(r.usd_amount),
+    created_at: new Date((r.created_at as { value: string }).value),
+    renewed_automatically: Number(r.renewed_automatically),
+    email: r.email as string | null,
+    name: r.name as string | null,
+  }));
+}
 
-    console.log(`[kinedu-db] Fetched ${rows.length} sales from Kinedu DB`);
+// ─── Main Sync Function ────────────────────────────────────────────────────
 
-    if (rows.length === 0) {
-      return { synced: 0, fetched: 0 };
+export async function syncKineduDB(fromDate: string, toDate: string): Promise<SyncResult> {
+  const useBigQuery = process.env.USE_BIGQUERY_SYNC === 'true';
+  console.log(`[kinedu-db] Syncing ${fromDate}→${toDate} via ${useBigQuery ? 'BigQuery' : 'MySQL'}`);
+
+  let rows: KineduSaleRow[];
+
+  if (useBigQuery) {
+    // ── BigQuery path (no SSH, no MySQL credentials needed) ──────────────
+    rows = await fetchFromBigQuery(fromDate, toDate);
+    console.log(`[kinedu-db] Fetched ${rows.length} sales from BigQuery`);
+  } else {
+    // ── Legacy MySQL path via SSH tunnel ──────────────────────────────────
+    const ssh = await connectSSH();
+    const mysqlConn = await createTunnelConnection(ssh);
+    try {
+      const query = `
+        SELECT
+          s.id, s.store, s.sku, s.amount, s.currency_code, s.usd_amount,
+          s.created_at, s.renewed_automatically,
+          sub.email, sub.name
+        FROM sales s
+        LEFT JOIN subscriptions sub ON s.user_id = sub.user_id
+        WHERE s.created_at >= ?
+          AND s.created_at < ?
+          AND s.payment_status = 'paid'
+          AND s.fraud = 0
+          AND s.livemode = 1
+          AND (sub.email IS NULL OR sub.email NOT LIKE '%@test.com%')
+          AND (sub.name IS NULL OR sub.name NOT LIKE '%click here%')
+        ORDER BY s.created_at ASC
+      `;
+      const [rawRows] = await mysqlConn.execute(query, [fromDate, toDate]);
+      rows = rawRows as KineduSaleRow[];
+      console.log(`[kinedu-db] Fetched ${rows.length} sales from MySQL`);
+    } finally {
+      try { await mysqlConn.end(); } catch { /* ignore */ }
+      ssh.end();
     }
+  }
 
+  if (rows.length === 0) return { synced: 0, fetched: 0 };
+
+  {
     // 3. Transform sales → transactions format
     const transactions = rows.map((row) => {
       const source = mapStore(row.store);
@@ -332,15 +378,5 @@ export async function syncKineduDB(fromDate: string, toDate: string): Promise<Sy
 
     console.log(`[kinedu-db] Sync complete: ${totalSynced}/${rows.length} transactions synced`);
     return { synced: totalSynced, fetched: rows.length };
-  } finally {
-    // Always close MySQL connection and SSH tunnel
-    try {
-      await mysqlConn.end();
-      console.log('[kinedu-db] MySQL connection closed');
-    } catch {
-      // Ignore close errors
-    }
-    ssh.end();
-    console.log('[kinedu-db] SSH closed');
   }
 }

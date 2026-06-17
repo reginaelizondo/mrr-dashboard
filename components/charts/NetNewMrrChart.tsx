@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import {
   BarChart,
   Bar,
@@ -31,7 +32,7 @@ interface NetNewData {
 }
 
 function computeNetNew(data: MrrDailySnapshot[]): NetNewData[] {
-  const bundle = buildProjectionBundle(data);
+  const bundle = useMemo(() => buildProjectionBundle(data), [data]);
   const result: NetNewData[] = [];
 
   for (let i = 1; i < data.length; i++) {

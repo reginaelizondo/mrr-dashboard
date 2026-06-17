@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import {
   BarChart,
   Bar,
@@ -43,7 +44,7 @@ function CustomTooltip({ active, payload, label }: { active?: boolean; payload?:
 }
 
 export function ActiveSubsBySourceChart({ data }: ActiveSubsBySourceChartProps) {
-  const bundle = buildProjectionBundle(data);
+  const bundle = useMemo(() => buildProjectionBundle(data), [data]);
 
   // Use `active_subscriptions` (the real live-subscriber count for the
   // month) — NOT new_subscriptions + renewals, which is just monthly

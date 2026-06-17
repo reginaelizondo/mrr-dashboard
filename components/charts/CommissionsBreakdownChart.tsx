@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import {
   ComposedChart,
   Bar,
@@ -42,7 +43,7 @@ function CustomTooltip({ active, payload, label }: { active?: boolean; payload?:
 }
 
 export function CommissionsBreakdownChart({ data }: CommissionsBreakdownChartProps) {
-  const bundle = buildProjectionBundle(data);
+  const bundle = useMemo(() => buildProjectionBundle(data), [data]);
 
   // Commission per source = gross - net for each source. For stale months
   // we use projected gross/net to estimate the commission that would land.

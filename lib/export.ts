@@ -1,11 +1,13 @@
-import * as XLSX from 'xlsx';
 import type { MrrDailySnapshot } from '@/types';
 import { formatCurrency } from '@/lib/constants';
 
 /**
  * Export filtered snapshot data to Excel with multiple sheets.
+ *
+ * xlsx (~100KB+) is imported dynamically so it only loads when the user
+ * actually clicks Export, instead of being bundled into every dashboard load.
  */
-export function exportToExcel(
+export async function exportToExcel(
   snapshots: MrrDailySnapshot[],
   totals: {
     gross: number;
@@ -20,6 +22,7 @@ export function exportToExcel(
   },
   filename?: string
 ) {
+  const XLSX = await import('xlsx');
   const wb = XLSX.utils.book_new();
 
   // ─── Sheet 1: Summary ───────────────────────────────────────

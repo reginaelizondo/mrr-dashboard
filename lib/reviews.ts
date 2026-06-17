@@ -451,17 +451,22 @@ export async function getLastAppleReviewsSync(): Promise<{
 }> {
   const supabase = createServerClient();
 
-  // 1) sync_log — filter by source=apple and details.source=apple-reviews
+  // 1) sync_log — check both the consolidated daily cron (source='all')
+  //    and the legacy individual cron (source='apple').
   const { data: logs } = await supabase
     .from('sync_log')
     .select('completed_at, records_synced, status, details')
-    .eq('source', 'apple')
+    .in('source', ['apple', 'all'])
     .order('started_at', { ascending: false })
     .limit(20);
 
-  const review = (logs || []).find(
-    (r) => (r.details as { source?: string } | null)?.source === 'apple-reviews'
-  );
+  const review = (logs || []).find((r) => {
+    const d = r.details as Record<string, unknown> | null;
+    // consolidated daily cron stores results under details.appleReviews
+    if (d?.appleReviews) return true;
+    // legacy individual cron stored source=apple-reviews in details
+    return (d as { source?: string } | null)?.source === 'apple-reviews';
+  });
 
   // 2) Fallback: latest synced_at + created_at on apple_reviews
   const { data: latestSync } = await supabase
@@ -486,10 +491,16 @@ export async function getLastAppleReviewsSync(): Promise<{
     .limit(1)
     .maybeSingle();
 
+  // When matched via the consolidated daily cron, sub-task details live in
+  // details.appleReviews; fall back to row-level fields for the legacy cron.
+  const reviewSubTask = (review?.details as Record<string, unknown> | null)?.appleReviews as
+    | { status?: string; reviews?: { synced?: number } }
+    | undefined;
+
   return {
     completedAt: review?.completed_at || latestSync?.synced_at || null,
-    records: review ? Number(review.records_synced || 0) : 0,
-    status: review?.status || (latestSync ? 'success' : null),
+    records: reviewSubTask?.reviews?.synced ?? Number(review?.records_synced || 0),
+    status: reviewSubTask?.status || review?.status || (latestSync ? 'success' : null),
     latestReviewDate: latestReview?.created_at || null,
     latestRatingsSnapshot: latestRatings?.snapshot_date || null,
   };

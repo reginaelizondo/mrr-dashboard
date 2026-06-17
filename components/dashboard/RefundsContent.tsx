@@ -28,6 +28,7 @@ import {
   CheckCircle2,
   Calendar,
   Clock,
+  RefreshCw,
 } from 'lucide-react';
 import { formatCurrency } from '@/lib/constants';
 import type { RefundMonthlyRow, AppleRefundBreakdowns, BreakdownRow } from '@/lib/refunds';
@@ -128,6 +129,28 @@ export function RefundsContent({
   const router = useRouter();
   const pathname = usePathname();
   const [isPending, startTransition] = useTransition();
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  async function handleSyncNow() {
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const res = await fetch('/api/sync/apple-sales', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ daysBack: 5 }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || 'Sync failed');
+      setSyncResult({ ok: true, msg: `✓ ${json.rows} filas · ${json.days} días` });
+      router.refresh();
+    } catch (err) {
+      setSyncResult({ ok: false, msg: (err as Error).message });
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   const nav = (url: string) => {
     startTransition(() => router.push(url));
@@ -337,6 +360,19 @@ export function RefundsContent({
                 <span className="ml-2 text-red-600 font-medium">⚠️ last sync errored</span>
               )}
             </span>
+            <button
+              onClick={handleSyncNow}
+              disabled={syncing}
+              className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border transition-colors bg-white border-border text-muted-foreground hover:bg-[#F0F4FF] hover:text-[#0E3687] disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <RefreshCw className={`h-3 w-3 ${syncing ? 'animate-spin' : ''}`} />
+              {syncing ? 'Syncing…' : 'Sync Now'}
+            </button>
+            {syncResult && (
+              <span className={`text-xs font-medium ${syncResult.ok ? 'text-[#45C94E]' : 'text-red-600'}`}>
+                {syncResult.msg}
+              </span>
+            )}
           </div>
         </CardContent>
       </Card>

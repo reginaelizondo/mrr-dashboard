@@ -241,17 +241,22 @@ export async function getLastAppleSalesSync(): Promise<{
 }> {
   const supabase = createServerClient();
 
-  // 1) Try sync_log
+  // 1) Try sync_log — check both the consolidated daily cron (source='all')
+  //    and the legacy individual cron (source='apple').
   const { data: logs } = await supabase
     .from('sync_log')
     .select('completed_at, records_synced, status, details')
-    .eq('source', 'apple')
+    .in('source', ['apple', 'all'])
     .order('started_at', { ascending: false })
     .limit(20);
 
-  const sale = (logs || []).find(
-    (r) => (r.details as { source?: string } | null)?.source === 'apple-sales'
-  );
+  const sale = (logs || []).find((r) => {
+    const d = r.details as Record<string, unknown> | null;
+    // consolidated daily cron stores results under details.appleSales
+    if (d?.appleSales) return true;
+    // legacy individual cron stored source=apple-sales in details
+    return (d as { source?: string } | null)?.source === 'apple-sales';
+  });
 
   // 2) Fallback: latest synced_at on apple_sales_daily, plus the latest
   //    begin_date so the user can see how recent the actual data is.
@@ -269,10 +274,16 @@ export async function getLastAppleSalesSync(): Promise<{
     .limit(1)
     .single();
 
+  // When matched via the consolidated daily cron, sub-task details live in
+  // details.appleSales; fall back to the row-level fields for the legacy cron.
+  const saleSubTask = (sale?.details as Record<string, unknown> | null)?.appleSales as
+    | { status?: string; synced?: number }
+    | undefined;
+
   return {
     completedAt: sale?.completed_at || latestSync?.synced_at || null,
-    records: sale ? Number(sale.records_synced || 0) : 0,
-    status: sale?.status || (latestSync ? 'success' : null),
+    records: saleSubTask?.synced ?? Number(sale?.records_synced || 0),
+    status: saleSubTask?.status || sale?.status || (latestSync ? 'success' : null),
     latestDataDate: latestData?.begin_date || null,
   };
 }

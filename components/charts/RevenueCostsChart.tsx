@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import {
   BarChart,
   Bar,
@@ -89,7 +90,7 @@ function CustomTooltip({ active, payload, label }: { active?: boolean; payload?:
 
 export function RevenueCostsChart({ data }: RevenueCostsChartProps) {
   // Compute MRR projections for stale months.
-  const projection = projectMrr(data);
+  const projection = useMemo(() => projectMrr(data), [data]);
   const projByDate = new Map(projection.months.map((p) => [p.snapshot_date, p]));
 
   const chartData: ChartRow[] = data.map((s) => {

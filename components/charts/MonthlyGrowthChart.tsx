@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import {
   BarChart,
   Bar,
@@ -30,7 +31,7 @@ interface GrowthData {
 }
 
 function computeGrowth(data: MrrDailySnapshot[]): GrowthData[] {
-  const bundle = buildProjectionBundle(data);
+  const bundle = useMemo(() => buildProjectionBundle(data), [data]);
   const result: GrowthData[] = [];
 
   for (let i = 1; i < data.length; i++) {

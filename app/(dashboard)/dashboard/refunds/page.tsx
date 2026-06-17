@@ -11,6 +11,7 @@ import {
   getLastAppleSalesSync,
 } from '@/lib/refunds';
 import { RefundsContent } from '@/components/dashboard/RefundsContent';
+import { ManualSyncButton } from '@/components/dashboard/ManualSyncButton';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { Source } from '@/types';
 
@@ -132,11 +133,14 @@ export default async function RefundsPage({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-[#0E3687]">Refunds</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          Refund rate monitoring — required for App Review Guideline 5.6.4 compliance
-        </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-[#0E3687]">Refunds</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Refund rate monitoring — required for App Review Guideline 5.6.4 compliance
+          </p>
+        </div>
+        <ManualSyncButton />
       </div>
 
       <Suspense fallback={<Skeleton className="h-96 w-full" />}>

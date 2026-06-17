@@ -5,6 +5,7 @@ import { getSnapshots } from '@/lib/dashboard';
 import { getPresetDates } from '@/lib/filters';
 import { FilterBar } from '@/components/dashboard/FilterBar';
 import { ChurnContent } from '@/components/dashboard/ChurnContent';
+import { ManualSyncButton } from '@/components/dashboard/ManualSyncButton';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { DatePreset } from '@/types';
 
@@ -36,9 +37,12 @@ export default async function ChurnPage({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-[#0E3687]">Churn & Subscriptions</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">Subscription activity, refunds, and retention metrics</p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-[#0E3687]">Churn & Subscriptions</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">Subscription activity, refunds, and retention metrics</p>
+        </div>
+        <ManualSyncButton />
       </div>
 
       <Suspense fallback={<Skeleton className="h-8 w-full" />}>

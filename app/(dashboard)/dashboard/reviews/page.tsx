@@ -15,6 +15,7 @@ import {
 } from '@/lib/reviews';
 import { generateInsights } from '@/lib/review-insights';
 import { ReviewsContent } from '@/components/dashboard/ReviewsContent';
+import { ManualSyncButton } from '@/components/dashboard/ManualSyncButton';
 import { Skeleton } from '@/components/ui/skeleton';
 
 type Preset = '3m' | '6m' | '12m' | 'ytd' | 'since2025' | 'all' | 'custom';
@@ -152,12 +153,15 @@ export default async function ReviewsPage({
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-3xl font-bold text-[#0E3687]">Reviews iOS</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Dos capas: <strong>ratings totales</strong> (panel ASC, ~30K star-taps) y <strong>reviews escritas</strong>
-          {' '}(reseñas con texto, categorizadas para entender las quejas).
-        </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-[#0E3687]">Reviews iOS</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Dos capas: <strong>ratings totales</strong> (panel ASC, ~30K star-taps) y <strong>reviews escritas</strong>
+            {' '}(reseñas con texto, categorizadas para entender las quejas).
+          </p>
+        </div>
+        <ManualSyncButton />
       </div>
 
       <Suspense fallback={<ReviewsSkeleton />}>

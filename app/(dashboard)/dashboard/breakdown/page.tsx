@@ -5,6 +5,7 @@ import { getSnapshots } from '@/lib/dashboard';
 import { getPresetDates } from '@/lib/filters';
 import { FilterBar } from '@/components/dashboard/FilterBar';
 import { BreakdownContent } from '@/components/dashboard/BreakdownContent';
+import { ManualSyncButton } from '@/components/dashboard/ManualSyncButton';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { DatePreset } from '@/types';
 
@@ -38,9 +39,12 @@ export default async function BreakdownPage({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-[#0E3687]">MRR Breakdown</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">Revenue segmented by source, region, and plan type</p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-[#0E3687]">MRR Breakdown</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">Revenue segmented by source, region, and plan type</p>
+        </div>
+        <ManualSyncButton />
       </div>
 
       <Suspense fallback={<Skeleton className="h-8 w-full" />}>

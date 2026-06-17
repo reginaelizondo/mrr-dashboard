@@ -11,10 +11,10 @@ interface ExportButtonProps {
 }
 
 export function ExportButton({ snapshots }: ExportButtonProps) {
-  function handleExport() {
+  async function handleExport() {
     if (snapshots.length === 0) return;
     const totals = computeTotals(snapshots);
-    exportToExcel(snapshots, totals);
+    await exportToExcel(snapshots, totals);
   }
 
   return (

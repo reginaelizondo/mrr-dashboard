@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import {
   AreaChart,
   Area,
@@ -39,7 +40,7 @@ function CustomTooltip({ active, payload, label }: { active?: boolean; payload?:
 }
 
 export function RegionBreakdownChart({ data }: RegionBreakdownChartProps) {
-  const bundle = buildProjectionBundle(data);
+  const bundle = useMemo(() => buildProjectionBundle(data), [data]);
 
   const enrichedData = data.map((s) => {
     const row = bundle.rows.get(s.snapshot_date);

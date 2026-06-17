@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
   BarChart,
   Bar,
@@ -69,7 +69,7 @@ export function SourceBreakdownChart({ data }: SourceBreakdownChartProps) {
   const visibleSources = sources.filter(s => activeSources.has(s.key));
 
   // Enrich each row with projected extras for the currently-visible sources
-  const bundle = buildProjectionBundle(data);
+  const bundle = useMemo(() => buildProjectionBundle(data), [data]);
   const enrichedData = data.map((s) => {
     const row = bundle.rows.get(s.snapshot_date);
     const is_stale = row?.is_stale || false;

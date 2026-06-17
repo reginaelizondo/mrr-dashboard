@@ -5,6 +5,7 @@ import { getSnapshots, getLastSync } from '@/lib/dashboard';
 import { getPresetDates } from '@/lib/filters';
 import { FilterBar } from '@/components/dashboard/FilterBar';
 import { SyncStatus } from '@/components/dashboard/SyncStatus';
+import { ManualSyncButton } from '@/components/dashboard/ManualSyncButton';
 import { OverviewContent } from '@/components/dashboard/OverviewContent';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { DatePreset } from '@/types';
@@ -45,7 +46,10 @@ export default async function DashboardPage({
           <h1 className="text-2xl font-bold text-[#0E3687]">MRR Revenue</h1>
           <p className="text-sm text-muted-foreground mt-0.5">Revenue analytics across all sources</p>
         </div>
-        <SyncStatus lastSync={lastSync} />
+        <div className="flex items-center gap-2">
+          <SyncStatus lastSync={lastSync} />
+          <ManualSyncButton />
+        </div>
       </div>
 
       <Suspense fallback={<Skeleton className="h-8 w-full" />}>

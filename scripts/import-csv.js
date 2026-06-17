@@ -358,6 +358,25 @@ async function main() {
   }
   console.log('');
 
+  // 5. Register sync in sync_log so the dashboard shows "Last sync" correctly
+  console.log('\n📝 Registering sync in sync_log...');
+  const { error: logError } = await supabase
+    .from('sync_log')
+    .insert({
+      source: 'all',
+      sync_type: 'manual',
+      status: totalSynced > 0 ? 'success' : 'error',
+      started_at: new Date().toISOString(),
+      completed_at: new Date().toISOString(),
+      records_synced: totalSynced,
+      date_range_start: fromDate,
+      date_range_end: toDate,
+      details: { method: 'csv_import', file: path.basename(fullPath), errors },
+    });
+
+  if (logError) console.warn('  ⚠️  Could not write sync_log:', logError.message);
+  else console.log('  ✅ sync_log updated — dashboard will show current date');
+
   console.log('\n═══════════════════════════════════════════════');
   console.log(`  ✅ Import complete!`);
   console.log(`  📊 ${totalSynced} transactions synced`);

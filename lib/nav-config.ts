@@ -13,6 +13,7 @@ export type NavItem = {
 export const navItems: NavItem[] = [
   { label: 'MRR Revenue',     href: '/dashboard',                iconName: 'LayoutDashboard',       embedSlug: 'overview',  investorTab: true },
   { label: 'MRR Breakdown',   href: '/dashboard/breakdown',      iconName: 'PieChart',              embedSlug: 'breakdown', investorTab: true },
+  { label: 'Breakdown SKU',   href: '/dashboard/sku-breakdown',  iconName: 'Boxes' },
   { label: 'Churn',           href: '/dashboard/churn',          iconName: 'UserMinus',             embedSlug: 'churn',     investorTab: true },
   { label: 'Refunds',         href: '/dashboard/refunds',        iconName: 'RotateCcw' },
   { label: 'Reviews',         href: '/dashboard/reviews',        iconName: 'MessageSquare' },
