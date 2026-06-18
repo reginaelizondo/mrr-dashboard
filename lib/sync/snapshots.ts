@@ -40,21 +40,32 @@ export async function computeMonthlySnapshot(date: string): Promise<void> {
   const lookbackDate = new Date(Date.UTC(snapshotYear - 5, snapshotMonth, 1));
   const lookbackStr = lookbackDate.toISOString().split('T')[0];
 
-  // Fetch ALL charges from lookback to snapshot month end (pagination)
+  // Fetch ALL charges from lookback to snapshot month end.
+  // KEYSET pagination on the unique `id` column (NOT .range/offset): offset
+  // pagination over a non-unique sort (transaction_date) is both undefined-
+  // ordered (can skip/duplicate rows at page boundaries as the table grows) and
+  // O(n²) — each later page re-scans+discards all prior rows, which made the
+  // 5yr-lookback fetch (~370K rows) take ~100s/month and time out the cron.
+  // Keyset is an index seek per page (O(n) total) and is row-stable.
   const charges: Transaction[] = [];
   const PAGE_SIZE = 1000;
-  let offset = 0;
+  let lastId = 0;
   let hasMore = true;
 
   while (hasMore) {
     const { data: page, error: chargeError } = await supabase
       .from('transactions')
-      .select('*')
+      // Only the columns the snapshot math needs — NOT '*'. Excluding the large
+      // raw_data JSONB (the original store-report row, ~1-3KB/row, unused here)
+      // shrinks the ~370K-row payload ~10x and is what keeps the cron under
+      // maxDuration. Keep this list in sync with the fields read below.
+      .select('id,transaction_type,transaction_date,plan_type,plan_name,source,region,amount_gross,amount_net,commission_amount,is_new_subscription,is_renewal,is_trial_conversion')
       .eq('transaction_type', 'charge')
       .gte('transaction_date', lookbackStr)
       .lt('transaction_date', monthEndStr)
-      .order('transaction_date', { ascending: true })
-      .range(offset, offset + PAGE_SIZE - 1);
+      .gt('id', lastId)
+      .order('id', { ascending: true })
+      .limit(PAGE_SIZE);
 
     if (chargeError) {
       throw new Error(`Snapshot charge query error: ${chargeError.message}`);
@@ -64,7 +75,7 @@ export async function computeMonthlySnapshot(date: string): Promise<void> {
       for (const p of page) {
         charges.push(p as Transaction);
       }
-      offset += page.length;
+      lastId = Number((page[page.length - 1] as Transaction).id);
       hasMore = page.length === PAGE_SIZE;
     } else {
       hasMore = false;
