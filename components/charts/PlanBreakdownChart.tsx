@@ -103,7 +103,7 @@ export function PlanBreakdownChart({ data }: PlanBreakdownChartProps) {
                 stroke="#94A3B8"
                 tickFormatter={(val) => {
                   const d = new Date(val + 'T00:00:00Z');
-                  const months = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+                  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
                   return `${months[d.getUTCMonth()]} ${d.getUTCFullYear().toString().slice(2)}`;
                 }}
               />
@@ -125,7 +125,7 @@ export function PlanBreakdownChart({ data }: PlanBreakdownChartProps) {
               ))}
               <Bar
                 dataKey="_projected_extra"
-                name="Proyectado (stale)"
+                name="Projected (stale)"
                 stackId="plan"
                 fill="url(#plan-hatch)"
                 stroke="#0086D8"
@@ -138,7 +138,7 @@ export function PlanBreakdownChart({ data }: PlanBreakdownChartProps) {
         </div>
         {hasProjections && (
           <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed border-t border-border/40 pt-2">
-            Área rayada = proyección de los meses stale, suma de extras por plan.
+            Hatched area = projection for stale months, sum of per-plan extras.
           </p>
         )}
       </CardContent>

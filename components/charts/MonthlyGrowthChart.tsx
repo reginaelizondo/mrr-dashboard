@@ -54,7 +54,7 @@ function computeGrowth(data: MrrDailySnapshot[]): GrowthData[] {
     const projectedExtra = is_stale ? Math.max(0, projectedGrowth - actualGrowth) : 0;
 
     const d = new Date(curr.snapshot_date + 'T00:00:00Z');
-    const months = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const monthLabel = `${months[d.getUTCMonth()]} ${d.getUTCFullYear().toString().slice(2)}`;
 
     result.push({
@@ -94,10 +94,10 @@ function CustomTooltip({ active, payload, label }: { active?: boolean; payload?:
       {row.is_stale && row.projectedExtra > 0 && (
         <>
           <div className="text-xs text-[#0086D8] mt-1">
-            + {row.projectedExtra.toFixed(1)}pp proyectado
+            + {row.projectedExtra.toFixed(1)}pp projected
           </div>
           <div className="text-sm font-semibold text-[#0E3687] border-t border-border/40 mt-1 pt-1">
-            Proyectado total: {row.projectedTotal >= 0 ? '+' : ''}{row.projectedTotal}%
+            Projected total: {row.projectedTotal >= 0 ? '+' : ''}{row.projectedTotal}%
           </div>
         </>
       )}
@@ -185,7 +185,7 @@ export function MonthlyGrowthChart({ data }: MonthlyGrowthChartProps) {
         </div>
         {hasProjections && (
           <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed border-t border-border/40 pt-2">
-            Área rayada = puntos porcentuales adicionales proyectados para meses stale. Se calcula como growth MoM usando valores proyectados menos growth MoM usando valores actuales.
+            Hatched area = additional projected percentage points for stale months. Calculated as MoM growth using projected values minus MoM growth using actual values.
           </p>
         )}
       </CardContent>

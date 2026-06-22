@@ -23,9 +23,9 @@ export default async function SkuBreakdownPage({
     <div className="space-y-6">
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0E3687]">Breakdown por SKU</h1>
+          <h1 className="text-2xl font-bold text-[#0E3687]">SKU Breakdown</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Ventas nuevas vs recurrentes y volumen por SKU — base devengada (cuadra con el MRR)
+            New vs recurring sales and volume by SKU — accrual basis (matches MRR)
           </p>
         </div>
         <ManualSyncButton />

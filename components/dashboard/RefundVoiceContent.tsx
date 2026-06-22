@@ -49,7 +49,7 @@ const PRESETS: { key: Preset; label: string }[] = [
   { key: 'ytd', label: 'YTD' },
 ];
 
-const MONTHS_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+const MONTHS_ES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function formatMonth(ym: string): string {
   const [y, m] = ym.split('-').map(Number);
@@ -185,7 +185,7 @@ export function RefundVoiceContent({
                 granularity === g ? 'bg-[#0E3687] hover:bg-[#0A2A6B]' : ''
               }
             >
-              {g === 'monthly' ? 'Mensual' : 'Semanal'}
+              {g === 'monthly' ? 'Monthly' : 'Weekly'}
             </Button>
           ))}
         </div>
@@ -199,7 +199,7 @@ export function RefundVoiceContent({
         />
 
         <div className="ml-auto text-xs text-muted-foreground">
-          Baseline refund rate (ventana):{' '}
+          Baseline refund rate (window):{' '}
           <strong className="text-foreground">
             {fmtPct(data.baselineRefundRate)}
           </strong>
@@ -209,8 +209,8 @@ export function RefundVoiceContent({
       {!data.hasData && (
         <Card>
           <CardContent className="pt-6 text-center text-muted-foreground">
-            No hay datos suficientes en este rango. Prueba ampliar el período
-            o quitar filtros de territorio.
+            Not enough data in this range. Try widening the period or removing
+            territory filters.
           </CardContent>
         </Card>
       )}
@@ -225,24 +225,24 @@ export function RefundVoiceContent({
                   <Lightbulb className="h-5 w-5 text-amber-600 mt-0.5 shrink-0" />
                   <div>
                     <div className="text-sm font-semibold text-foreground">
-                      Señal más fuerte:{' '}
+                      Strongest signal:{' '}
                       <span className="text-amber-800">
                         {topInsight.label}
                       </span>
                     </div>
                     <p className="text-sm text-muted-foreground mt-1">
-                      Las reviews negativas que mencionan{' '}
+                      Negative reviews mentioning{' '}
                       <strong>{topInsight.label.toLowerCase()}</strong>{' '}
-                      coinciden con un refund rate de{' '}
+                      coincide with a refund rate of{' '}
                       <strong>
                         {fmtPct(topInsight.weighted_refund_rate)}
                       </strong>{' '}
-                      en el mismo mes×país — {topInsight.lift_vs_baseline >= 1
-                        ? `${((topInsight.lift_vs_baseline - 1) * 100).toFixed(0)}% por encima`
-                        : `${((1 - topInsight.lift_vs_baseline) * 100).toFixed(0)}% por debajo`}{' '}
-                      del baseline ({fmtPct(data.baselineRefundRate)}).
-                      Basado en {topInsight.review_count} reviews negativas
-                      del período.
+                      in the same month×country — {topInsight.lift_vs_baseline >= 1
+                        ? `${((topInsight.lift_vs_baseline - 1) * 100).toFixed(0)}% above`
+                        : `${((1 - topInsight.lift_vs_baseline) * 100).toFixed(0)}% below`}{' '}
+                      the baseline ({fmtPct(data.baselineRefundRate)}).
+                      Based on {topInsight.review_count} negative reviews
+                      from the period.
                     </p>
                   </div>
                 </div>
@@ -255,11 +255,11 @@ export function RefundVoiceContent({
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <TrendingUp className="h-5 w-5 text-[#0E3687]" />
-                Refund rate vs. reviews negativas por mes
+                Refund rate vs. negative reviews by month
               </CardTitle>
               <p className="text-xs text-muted-foreground">
-                Barras = refund rate (%). Línea = # reviews con rating ≤ 2.
-                Haz clic en un mes para ver las quejas y verbatims de ese mes.
+                Bars = refund rate (%). Line = # reviews with rating ≤ 2.
+                Click a month to see that month&apos;s complaints and verbatims.
               </p>
             </CardHeader>
             <CardContent>
@@ -331,7 +331,7 @@ export function RefundVoiceContent({
                       yAxisId="right"
                       type="monotone"
                       dataKey="negative_reviews"
-                      name="Reviews negativas"
+                      name="Negative reviews"
                       stroke="#0E3687"
                       strokeWidth={2}
                       dot={{ r: 3 }}
@@ -348,12 +348,12 @@ export function RefundVoiceContent({
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <MessageSquareWarning className="h-5 w-5 text-[#0E3687]" />
-                  Refund rate por tipo de queja
+                  Refund rate by complaint type
                 </CardTitle>
                 <p className="text-xs text-muted-foreground">
-                  Para cada topic, el refund rate del mismo mes×país donde
-                  apareció la queja (ponderado por volumen de reviews). Línea
-                  punteada = baseline del período.
+                  For each topic, the refund rate of the same month×country
+                  where the complaint appeared (weighted by review volume).
+                  Dotted line = period baseline.
                 </p>
               </CardHeader>
               <CardContent>
@@ -414,7 +414,7 @@ export function RefundVoiceContent({
           <Card>
             <CardHeader>
               <CardTitle>
-                Detalle{granularity === 'weekly' ? ' semanal' : ' mensual'}{' '}
+                {granularity === 'weekly' ? 'Weekly' : 'Monthly'} detail{' '}
                 {selectedMonth && (
                   <span className="text-muted-foreground font-normal">
                     — {formatPeriod(selectedMonth.month, granularity, selectedMonth.week_end)}
@@ -422,8 +422,8 @@ export function RefundVoiceContent({
                 )}
               </CardTitle>
               <p className="text-xs text-muted-foreground">
-                Selecciona un {granularity === 'weekly' ? 'período' : 'mes'} en la gráfica superior para enfocar el
-                detalle.
+                Select a {granularity === 'weekly' ? 'period' : 'month'} in the chart above to focus the
+                detail.
               </p>
             </CardHeader>
             <CardContent>
@@ -431,7 +431,7 @@ export function RefundVoiceContent({
                 <MonthDetail row={selectedMonth} />
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  Sin datos para mostrar.
+                  No data to display.
                 </p>
               )}
             </CardContent>
@@ -440,20 +440,20 @@ export function RefundVoiceContent({
           {/* Full table */}
           <Card>
             <CardHeader>
-              <CardTitle>Tabla mensual</CardTitle>
+              <CardTitle>Monthly table</CardTitle>
             </CardHeader>
             <CardContent className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b text-left text-xs uppercase text-muted-foreground">
-                    <th className="py-2 pr-4">{granularity === 'weekly' ? 'Semana' : 'Mes'}</th>
+                    <th className="py-2 pr-4">{granularity === 'weekly' ? 'Week' : 'Month'}</th>
                     <th className="py-2 pr-4 text-right">Refunds</th>
                     <th className="py-2 pr-4 text-right">Charges</th>
                     <th className="py-2 pr-4 text-right">Refund rate</th>
                     <th className="py-2 pr-4 text-right">Total reviews</th>
-                    <th className="py-2 pr-4 text-right">Negativas</th>
-                    <th className="py-2 pr-4 text-right">★ prom</th>
-                    <th className="py-2">Top 3 quejas</th>
+                    <th className="py-2 pr-4 text-right">Negative</th>
+                    <th className="py-2 pr-4 text-right">★ avg</th>
+                    <th className="py-2">Top 3 complaints</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -517,7 +517,7 @@ function MonthDetail({ row }: { row: RefundVoiceMonthRow }) {
   if (row.negative_reviews === 0 && row.refund_units === 0) {
     return (
       <p className="text-sm text-muted-foreground">
-        Sin reviews negativas ni refunds en este mes.
+        No negative reviews or refunds in this month.
       </p>
     );
   }
@@ -525,11 +525,11 @@ function MonthDetail({ row }: { row: RefundVoiceMonthRow }) {
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <div>
         <h4 className="text-xs uppercase text-muted-foreground font-semibold mb-3">
-          Top quejas en reviews ≤2★
+          Top complaints in reviews ≤2★
         </h4>
         {row.top_topics.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No hubo reviews negativas este mes.
+            No negative reviews this month.
           </p>
         ) : (
           <ul className="space-y-2">
@@ -550,10 +550,10 @@ function MonthDetail({ row }: { row: RefundVoiceMonthRow }) {
 
       <div>
         <h4 className="text-xs uppercase text-muted-foreground font-semibold mb-3">
-          Verbatims recientes
+          Recent verbatims
         </h4>
         {row.samples.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Sin verbatims.</p>
+          <p className="text-sm text-muted-foreground">No verbatims.</p>
         ) : (
           <ul className="space-y-3">
             {row.samples.map((s) => (

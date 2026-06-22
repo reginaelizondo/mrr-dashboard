@@ -66,12 +66,12 @@ function CustomTooltip({ active, payload, label }: { active?: boolean; payload?:
             <div className="flex items-center justify-between gap-3 text-sm">
               <div className="flex items-center gap-2">
                 <span className="h-2.5 w-2.5 rounded-full flex-shrink-0 border border-[#0086D8] bg-[#0086D8]/30" />
-                <span className="text-muted-foreground">Proyectado extra:</span>
+                <span className="text-muted-foreground">Projected extra:</span>
               </div>
               <span className="font-semibold text-[#0086D8] tabular-nums">+{formatCurrency(extra)}</span>
             </div>
             <div className="flex items-center justify-between gap-3 text-sm border-t border-border/40 pt-1 mt-1">
-              <span className="font-medium text-muted-foreground">Proyectado total:</span>
+              <span className="font-medium text-muted-foreground">Projected total:</span>
               <span className="font-bold text-[#0E3687] tabular-nums">{formatCurrency(row.projected_total)}</span>
             </div>
           </>
@@ -132,7 +132,7 @@ export function RevenueCostsChart({ data }: RevenueCostsChartProps) {
             Gross Revenue vs Commissions
             {hasProjections && (
               <span className="ml-2 text-xs font-normal text-muted-foreground">
-                (con proyección para meses stale)
+                (with projection for stale months)
               </span>
             )}
           </CardTitle>
@@ -156,7 +156,7 @@ export function RevenueCostsChart({ data }: RevenueCostsChartProps) {
                 stroke="#94A3B8"
                 tickFormatter={(val) => {
                   const d = new Date(val + 'T00:00:00Z');
-                  const months = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+                  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
                   return `${months[d.getUTCMonth()]} ${d.getUTCFullYear().toString().slice(2)}`;
                 }}
               />
@@ -176,12 +176,12 @@ export function RevenueCostsChart({ data }: RevenueCostsChartProps) {
         </div>
         {hasProjections && projection.sampleSize > 0 && (
           <p className="text-[11px] text-muted-foreground mt-2 leading-relaxed border-t border-border/40 pt-2">
-            <strong>Cómo se calcula la proyección:</strong> los snapshots mensuales se computan una vez
-            y no se recalculan cuando transacciones de Apple/Google/Stripe llegan tarde. Para cada mes marcado
-            como <em>stale</em> (cuando el calendario aún no llega a {`month_end + 7 días`}), se proyecta el final aplicando
-            el crecimiento MoM promedio de los últimos {projection.sampleSize} meses maduros
-            ({projPctMoM}%) desde el último mes maduro ({projection.latestMatureMonth || '—'}).
-            El área rayada en azul claro representa el delta proyectado sobre la barra sólida (dato actual).
+            <strong>How the projection is calculated:</strong> the monthly snapshots are computed once
+            and are not recalculated when Apple/Google/Stripe transactions arrive late. For each month marked
+            as <em>stale</em> (when the calendar has not yet reached {`month_end + 7 days`}), the final value is projected by applying
+            the average MoM growth of the last {projection.sampleSize} mature months
+            ({projPctMoM}%) from the latest mature month ({projection.latestMatureMonth || '—'}).
+            The light blue hatched area represents the projected delta on top of the solid bar (actual data).
           </p>
         )}
       </CardContent>

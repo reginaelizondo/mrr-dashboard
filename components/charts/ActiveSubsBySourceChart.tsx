@@ -114,7 +114,7 @@ export function ActiveSubsBySourceChart({ data }: ActiveSubsBySourceChartProps) 
                 stroke="#94A3B8"
                 tickFormatter={(val) => {
                   const d = new Date(val + 'T00:00:00Z');
-                  const months = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+                  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
                   return `${months[d.getUTCMonth()]} ${d.getUTCFullYear().toString().slice(2)}`;
                 }}
               />
@@ -130,7 +130,7 @@ export function ActiveSubsBySourceChart({ data }: ActiveSubsBySourceChartProps) 
               <Bar dataKey="Web (Stripe)" stackId="source" fill={SOURCE_COLORS.stripe} />
               <Bar
                 dataKey="_projected_extra"
-                name="Proyectado (stale)"
+                name="Projected (stale)"
                 stackId="source"
                 fill="url(#subs-hatch)"
                 stroke="#0086D8"
@@ -143,8 +143,8 @@ export function ActiveSubsBySourceChart({ data }: ActiveSubsBySourceChartProps) 
         </div>
         {hasProjections && (
           <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed border-t border-border/40 pt-2">
-            Conteo real de suscripciones activas (campo <code>active_subscriptions</code>) con split estimado por fuente
-            vía proporción de MRR. Área rayada = proyección de suscriptores adicionales para meses stale.
+            Actual active subscription count (field <code>active_subscriptions</code>) with an estimated per-source split
+            via MRR proportion. Hatched area = projection of additional subscribers for stale months.
           </p>
         )}
       </CardContent>

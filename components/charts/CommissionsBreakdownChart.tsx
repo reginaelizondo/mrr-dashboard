@@ -127,7 +127,7 @@ export function CommissionsBreakdownChart({ data }: CommissionsBreakdownChartPro
                 stroke="#94A3B8"
                 tickFormatter={(val) => {
                   const d = new Date(val + 'T00:00:00Z');
-                  const months = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+                  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
                   return `${months[d.getUTCMonth()]} ${d.getUTCFullYear().toString().slice(2)}`;
                 }}
               />
@@ -168,7 +168,7 @@ export function CommissionsBreakdownChart({ data }: CommissionsBreakdownChartPro
               <Bar
                 yAxisId="left"
                 dataKey="_projected_extra"
-                name="Proyectado (stale)"
+                name="Projected (stale)"
                 stackId="comm"
                 fill="url(#comm-hatch)"
                 stroke="#0086D8"
@@ -191,7 +191,7 @@ export function CommissionsBreakdownChart({ data }: CommissionsBreakdownChartPro
         </div>
         {hasProjections && (
           <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed border-t border-border/40 pt-2">
-            Área rayada = commission adicional proyectada para los meses stale (calculada con gross/net proyectados por fuente).
+            Hatched area = additional projected commission for stale months (calculated with projected gross/net per source).
           </p>
         )}
       </CardContent>

@@ -155,10 +155,10 @@ export default async function ReviewsPage({
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-[#0E3687]">Reviews iOS</h1>
+          <h1 className="text-3xl font-bold text-[#0E3687]">iOS Reviews</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Dos capas: <strong>ratings totales</strong> (panel ASC, ~30K star-taps) y <strong>reviews escritas</strong>
-            {' '}(reseñas con texto, categorizadas para entender las quejas).
+            Two layers: <strong>total ratings</strong> (ASC panel, ~30K star-taps) and <strong>written reviews</strong>
+            {' '}(reviews with text, categorized to understand complaints).
           </p>
         </div>
         <ManualSyncButton />

@@ -143,7 +143,7 @@ export function RefundsContent({
       });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || 'Sync failed');
-      setSyncResult({ ok: true, msg: `✓ ${json.rows} filas · ${json.days} días` });
+      setSyncResult({ ok: true, msg: `✓ ${json.rows} rows · ${json.days} days` });
       router.refresh();
     } catch (err) {
       setSyncResult({ ok: false, msg: (err as Error).message });
@@ -383,18 +383,18 @@ export function RefundsContent({
           <CardContent className="py-3">
             <div className="flex flex-wrap items-center gap-3">
               <MultiSelect
-                label="País"
+                label="Country"
                 options={availableCountries.map((c) => ({
                   value: c,
                   label: c,
                 }))}
                 selected={selectedCountries}
                 onChange={setCountries}
-                allLabel="Todos los países"
+                allLabel="All countries"
               />
               {selectedCountries.length > 0 && (
                 <span className="text-[11px] text-muted-foreground">
-                  ⚠ Filtro aplicado al chart/KPIs principales. Los breakdowns (CPP, duración, SKU) siguen mostrando el total.
+                  ⚠ Filter applied to the main chart/KPIs. The breakdowns (CPP, duration, SKU) still show the total.
                 </span>
               )}
             </div>
@@ -413,7 +413,7 @@ export function RefundsContent({
                   Apple Guideline 5.6.4 — Refund Rate Monitoring
                 </p>
                 <p className="text-amber-800">
-                  Rate matches App Store Connect → Trends → Ventas (refunds /
+                  Rate matches App Store Connect → Trends → Sales (refunds /
                   (charges − refunds), calendar months, USD-converted via ECB
                   rates). Industry threshold for action is ~5%.
                 </p>

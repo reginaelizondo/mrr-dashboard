@@ -15,7 +15,7 @@ import { formatCurrency } from '@/lib/constants';
 import { ChartExportButton } from '@/components/charts/ChartExportButton';
 import type { SkuBreakdown } from '@/lib/sku-breakdown';
 
-const MONTHS_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+const MONTHS_ES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const fmtMonth = (val: string) => {
   const d = new Date(val + 'T00:00:00Z');
   return `${MONTHS_ES[d.getUTCMonth()]} ${d.getUTCFullYear().toString().slice(2)}`;
@@ -30,9 +30,9 @@ const FAMILY_BASE: Record<Family, string> = {
   other: '#64748B', // slate gray
 };
 const FAMILY_LABEL: Record<Family, string> = {
-  yearly: 'Yearly (anuales)',
-  monthly: 'Monthly (mensuales)',
-  other: 'Otros planes',
+  yearly: 'Yearly',
+  monthly: 'Monthly',
+  other: 'Other plans',
 };
 const OTHERS_COLOR = '#CBD5E1';
 const OTHERS_KEY = '__otros__';
@@ -136,16 +136,16 @@ export function SkuBreakdownContent({ data }: { data: SkuBreakdown }) {
       {/* Reconciliation banner */}
       <div className="rounded-xl border border-[#45C94E]/40 bg-[#45C94E]/5 px-4 py-3 text-sm">
         <span className="font-semibold text-[#0E3687]">
-          MRR total ({fmtMonth(months[lastIdx])}): {formatCurrency(lastTotal)}
+          Total MRR ({fmtMonth(months[lastIdx])}): {formatCurrency(lastTotal)}
         </span>
         <span className="text-muted-foreground">
-          {' '}· {lastVol.toLocaleString()} subs activas · suma de los {skus.length} SKUs ={' '}
-          <span className="text-[#45C94E] font-medium">cuadra con la pestaña MRR ✓</span>
+          {' '}· {lastVol.toLocaleString()} active subs · sum of all {skus.length} SKUs ={' '}
+          <span className="text-[#45C94E] font-medium">matches the MRR tab ✓</span>
         </span>
         <p className="text-xs text-muted-foreground mt-1">
           {completeTo100
-            ? `Cada barra suma el MRR completo: los ${orderedSelected.length} SKUs elegidos van desglosados y el resto se agrupa en "Otros".`
-            : `Mostrando ${orderedSelected.length} de ${skus.length} SKUs = ${selectedRevShare.toFixed(0)}% del MRR. Pulsa "Todos" o activa "Completar al 100%" para ver el MRR entero.`}
+            ? `Each bar's full height is the complete MRR. ${orderedSelected.length} SKUs broken out (${selectedRevShare.toFixed(0)}% of MRR); the rest is grouped into "Others".`
+            : `Showing ${orderedSelected.length} of ${skus.length} SKUs = ${selectedRevShare.toFixed(0)}% of MRR. Click "All" or enable "Fill to 100%" to see the full MRR.`}
         </p>
       </div>
 
@@ -153,18 +153,18 @@ export function SkuBreakdownContent({ data }: { data: SkuBreakdown }) {
       <Card>
         <CardHeader className="pb-3">
           <div className="flex flex-wrap items-center gap-2">
-            <CardTitle className="text-base font-semibold text-[#0E3687] mr-1">Filtrar SKUs</CardTitle>
+            <CardTitle className="text-base font-semibold text-[#0E3687] mr-1">Filter SKUs</CardTitle>
             <button onClick={() => onlyTop(15)} className={`${chipBtn} bg-[#0E3687] text-white`}>Top 15</button>
-            <button onClick={selectAll} className={`${chipBtn} border border-border bg-white hover:bg-muted/50`}>Todos</button>
+            <button onClick={selectAll} className={`${chipBtn} border border-border bg-white hover:bg-muted/50`}>All</button>
             <span className="mx-1 h-4 w-px bg-border" />
-            <button onClick={() => onlyFamily('yearly')} className={`${chipBtn} text-white`} style={{ backgroundColor: FAMILY_BASE.yearly }}>Solo Yearly</button>
-            <button onClick={() => onlyFamily('monthly')} className={`${chipBtn} text-white`} style={{ backgroundColor: FAMILY_BASE.monthly }}>Solo Monthly</button>
-            <button onClick={() => onlyFamily('other')} className={`${chipBtn} text-white`} style={{ backgroundColor: FAMILY_BASE.other }}>Solo Otros</button>
+            <button onClick={() => onlyFamily('yearly')} className={`${chipBtn} text-white`} style={{ backgroundColor: FAMILY_BASE.yearly }}>Yearly only</button>
+            <button onClick={() => onlyFamily('monthly')} className={`${chipBtn} text-white`} style={{ backgroundColor: FAMILY_BASE.monthly }}>Monthly only</button>
+            <button onClick={() => onlyFamily('other')} className={`${chipBtn} text-white`} style={{ backgroundColor: FAMILY_BASE.other }}>Others only</button>
             <span className="mx-1 h-4 w-px bg-border" />
-            <button onClick={clearAll} className={`${chipBtn} border border-border bg-white hover:bg-muted/50 text-muted-foreground`}>Limpiar</button>
+            <button onClick={clearAll} className={`${chipBtn} border border-border bg-white hover:bg-muted/50 text-muted-foreground`}>Clear</button>
             <label className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
               <input type="checkbox" checked={completeTo100} onChange={(e) => setCompleteTo100(e.target.checked)} />
-              Completar al 100% (resto en &quot;Otros&quot;)
+              Fill to 100% (rest in &quot;Others&quot;)
             </label>
           </div>
         </CardHeader>
@@ -212,11 +212,11 @@ export function SkuBreakdownContent({ data }: { data: SkuBreakdown }) {
       </Card>
 
       {/* Charts */}
-      <SkuStackChart title="Ventas por SKU — Revenue total (nuevas + recurrentes)" metric="total" isCurrency {...{ months, series, orderedSelected, completeTo100, totals, colorBySku }} />
-      <SkuStackChart title="Volumen por SKU — suscripciones activas" metric="vol" isCurrency={false} {...{ months, series, orderedSelected, completeTo100, totals, colorBySku }} />
+      <SkuStackChart title="Sales by SKU — Total revenue (new + recurring)" metric="total" isCurrency {...{ months, series, orderedSelected, completeTo100, totals, colorBySku }} />
+      <SkuStackChart title="Volume by SKU — active subscriptions" metric="vol" isCurrency={false} {...{ months, series, orderedSelected, completeTo100, totals, colorBySku }} />
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        <SkuStackChart title="Solo ventas NUEVAS por SKU (revenue)" metric="new" isCurrency {...{ months, series, orderedSelected, completeTo100, totals, colorBySku }} />
-        <SkuStackChart title="Solo ventas RECURRENTES por SKU (revenue)" metric="rec" isCurrency {...{ months, series, orderedSelected, completeTo100, totals, colorBySku }} />
+        <SkuStackChart title="New sales only by SKU (revenue)" metric="new" isCurrency {...{ months, series, orderedSelected, completeTo100, totals, colorBySku }} />
+        <SkuStackChart title="Recurring sales only by SKU (revenue)" metric="rec" isCurrency {...{ months, series, orderedSelected, completeTo100, totals, colorBySku }} />
       </div>
     </div>
   );
@@ -279,7 +279,7 @@ function SkuStackChart({
   const exportRows = rows.map((r) => {
     const o: Record<string, unknown> = { Period: r.month };
     for (const k of selectedKeys) o[k] = r[k];
-    if (completeTo100) o['Otros'] = r[OTHERS_KEY];
+    if (completeTo100) o['Others'] = r[OTHERS_KEY];
     return o;
   });
 
@@ -297,7 +297,7 @@ function SkuStackChart({
       <CardContent>
         {empty ? (
           <div className="h-[340px] flex items-center justify-center text-sm text-muted-foreground">
-            Selecciona al menos un SKU (o pulsa &quot;Todos&quot;) para ver la gráfica.
+            Select at least one SKU (or click &quot;All&quot;) to see the chart.
           </div>
         ) : (
           <div className="h-[340px]">
@@ -313,7 +313,7 @@ function SkuStackChart({
                 {orderedSelected.map((o) => (
                   <Bar key={o.sku} dataKey={o.sku} name={o.sku} stackId="sku" fill={o.color} />
                 ))}
-                {completeTo100 && <Bar dataKey={OTHERS_KEY} name="Otros" stackId="sku" fill={OTHERS_COLOR} radius={[3, 3, 0, 0]} />}
+                {completeTo100 && <Bar dataKey={OTHERS_KEY} name="Others" stackId="sku" fill={OTHERS_COLOR} radius={[3, 3, 0, 0]} />}
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -349,7 +349,7 @@ function SkuTooltip({
           <span className="font-semibold text-[#0E3687] tabular-nums">{fmtVal(e.value)}</span>
         </div>
       ))}
-      {restCount > 0 && <p className="text-[10px] text-muted-foreground mt-1">+{restCount} SKUs más…</p>}
+      {restCount > 0 && <p className="text-[10px] text-muted-foreground mt-1">+{restCount} more SKUs…</p>}
       <div className="mt-1.5 pt-1.5 border-t border-border/30 text-sm font-semibold text-[#0E3687]">Total: {fmtVal(total)}</div>
     </div>
   );

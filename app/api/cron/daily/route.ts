@@ -126,13 +126,13 @@ export async function GET(request: NextRequest) {
   if (hasError && process.env.SLACK_WEBHOOK_URL) {
     const failed = Object.entries(results as Record<string, { status: string; error?: string }>)
       .filter(([, v]) => v.status === 'error')
-      .map(([k, v]) => `• *${k}*: ${v.error || 'error desconocido'}`)
+      .map(([k, v]) => `• *${k}*: ${v.error || 'unknown error'}`)
       .join('\n');
     await fetch(process.env.SLACK_WEBHOOK_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        text: `⚠️ *MRR Dashboard — sync diario con errores* (${new Date().toISOString().slice(0, 10)})\n${failed}\nUsa el botón *Sync manual* en el dashboard si los datos se ven desactualizados.`,
+        text: `⚠️ *MRR Dashboard — daily sync had errors* (${new Date().toISOString().slice(0, 10)})\n${failed}\nUse the *Manual Sync* button in the dashboard if the data looks stale.`,
       }),
     }).catch(() => {});
   }

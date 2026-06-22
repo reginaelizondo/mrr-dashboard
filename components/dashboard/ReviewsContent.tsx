@@ -96,11 +96,11 @@ const PRESETS: { key: Preset; label: string }[] = [
   { key: '6m', label: '6M' },
   { key: '12m', label: '12M' },
   { key: 'ytd', label: 'YTD' },
-  { key: 'since2025', label: 'Desde Ene 2025' },
-  { key: 'all', label: 'Todo' },
+  { key: 'since2025', label: 'Since Jan 2025' },
+  { key: 'all', label: 'All' },
 ];
 
-const MONTHS_ES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+const MONTHS_ES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function formatMonth(ym: string): string {
   const [y, m] = ym.split('-').map(Number);
@@ -255,7 +255,7 @@ export function ReviewsContent({
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs uppercase tracking-wider text-muted-foreground mr-1">
-                Período
+                Period
               </span>
               {PRESETS.map((p) => (
                 <button
@@ -294,7 +294,7 @@ export function ReviewsContent({
           {availableTerritories.length > 0 && (
             <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-border/40">
               <MultiSelect
-                label="País"
+                label="Country"
                 options={availableTerritories.map((iso3) => ({
                   value: iso3,
                   label: iso3,
@@ -302,7 +302,7 @@ export function ReviewsContent({
                 }))}
                 selected={selectedTerritories}
                 onChange={setTerritories}
-                allLabel="Todos los países"
+                allLabel="All countries"
               />
             </div>
           )}
@@ -354,17 +354,17 @@ export function ReviewsContent({
             <Info className="h-5 w-5 text-[#0086D8] flex-shrink-0 mt-0.5" />
             <div className="text-sm space-y-1">
               <p className="font-semibold text-[#0E3687]">
-                Importante: Apple expone dos datasets distintos
+                Important: Apple exposes two distinct datasets
               </p>
               <p className="text-muted-foreground leading-relaxed">
-                <strong>1. Ratings totales</strong> ({ratingsSummary.total_ratings.toLocaleString()} con avg {ratingsSummary.weighted_avg.toFixed(2)}⭐):
-                usuarios que tocaron 1-5 estrellas, con o sin escribir. Coincide con el panel ASC "Valoraciones y reseñas".
-                Solo contamos el <em>total</em> y <em>promedio</em> — Apple no da acceso al contenido ni ratings individuales.
+                <strong>1. Total ratings</strong> ({ratingsSummary.total_ratings.toLocaleString()} with avg {ratingsSummary.weighted_avg.toFixed(2)}⭐):
+                users who tapped 1-5 stars, with or without writing. Matches the ASC "Ratings and Reviews" panel.
+                We only count the <em>total</em> and <em>average</em> — Apple does not provide access to the content or individual ratings.
               </p>
               <p className="text-muted-foreground leading-relaxed">
-                <strong>2. Reviews escritas</strong> ({summary.total.toLocaleString()} con avg {summary.avg_rating.toFixed(2)}⭐):
-                subconjunto donde el usuario escribió título+texto. Solo esta capa permite análisis de contenido, categorización de quejas y tendencias de temas.
-                Este grupo tiene un sesgo fuerte: los usuarios solo escriben cuando están muy enojados (1⭐) o muy contentos (5⭐), por eso el promedio se ve mucho más bajo.
+                <strong>2. Written reviews</strong> ({summary.total.toLocaleString()} with avg {summary.avg_rating.toFixed(2)}⭐):
+                subset where the user wrote a title+text. Only this layer allows content analysis, complaint categorization, and topic trends.
+                This group has a strong bias: users only write when they are very angry (1⭐) or very happy (5⭐), which is why the average looks much lower.
               </p>
             </div>
           </div>
@@ -375,14 +375,14 @@ export function ReviewsContent({
       <div>
         <div className="flex flex-wrap items-center gap-2 mb-2">
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-            Ratings totales (star-taps con y sin texto) · snapshot {ratingsSummary.snapshot_date}
+            Total ratings (star-taps with and without text) · snapshot {ratingsSummary.snapshot_date}
           </h2>
           <span
             className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200"
-            title="Apple solo reporta el contador acumulado de la app, no ratings por fecha. Este bloque es independiente del rango de fechas seleccionado arriba."
+            title="Apple only reports the app's cumulative counter, not ratings by date. This block is independent of the date range selected above."
           >
             <Info className="h-3 w-3" />
-            Acumulado · no filtrado por fecha
+            Cumulative · not filtered by date
           </span>
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -392,25 +392,25 @@ export function ReviewsContent({
             format="number"
             icon={Users}
             accentColor="navy"
-            subtitle="incluye tappers sin texto"
+            subtitle="includes tappers without text"
           />
           <MetricCard
-            label="Rating Promedio Global"
+            label="Global Average Rating"
             value={Number(ratingsSummary.weighted_avg.toFixed(2))}
             format="number"
             icon={Star}
             accentColor="green"
-            subtitle="ponderado por país"
+            subtitle="weighted by country"
           />
           <MetricCard
-            label="Países con Ratings"
+            label="Countries with Ratings"
             value={ratingsSummary.countries}
             format="number"
             icon={Globe}
             accentColor="teal"
           />
           <MetricCard
-            label="Top País"
+            label="Top Country"
             value={ratingsSummary.by_country[0]?.rating_count || 0}
             format="number"
             icon={Globe}
@@ -424,18 +424,18 @@ export function ReviewsContent({
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-center gap-2">
-            <CardTitle className="text-lg">Ratings Totales por País</CardTitle>
+            <CardTitle className="text-lg">Total Ratings by Country</CardTitle>
             <span
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-amber-50 text-amber-700 border border-amber-200"
-              title="Snapshot acumulado de Apple, independiente del filtro de fecha"
+              title="Apple cumulative snapshot, independent of the date filter"
             >
               <Info className="h-3 w-3" />
-              Acumulado · no filtrado por fecha
+              Cumulative · not filtered by date
             </span>
           </div>
           <p className="text-xs text-muted-foreground">
-            Volumen y promedio reales de App Store (todos los tap-ratings, no solo reseñas escritas).
-            Fuente: iTunes Lookup API · snapshot {ratingsSummary.snapshot_date}
+            Real App Store volume and average (all tap-ratings, not just written reviews).
+            Source: iTunes Lookup API · snapshot {ratingsSummary.snapshot_date}
           </p>
         </CardHeader>
         <CardContent>
@@ -443,9 +443,9 @@ export function ReviewsContent({
             <table className="w-full text-sm">
               <thead className="border-b">
                 <tr className="text-left text-muted-foreground text-xs uppercase">
-                  <th className="py-2 px-2">País</th>
+                  <th className="py-2 px-2">Country</th>
                   <th className="py-2 px-2 text-right">Ratings</th>
-                  <th className="py-2 px-2 text-right">% del total</th>
+                  <th className="py-2 px-2 text-right">% of total</th>
                   <th className="py-2 px-2 text-right">Avg ⭐</th>
                   <th className="py-2 px-2 text-right">vs Global ({ratingsSummary.weighted_avg.toFixed(2)})</th>
                 </tr>
@@ -492,53 +492,53 @@ export function ReviewsContent({
       {/* Separator to visually group the "written reviews" section */}
       <div>
         <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-          Análisis de Reviews Escritas (las que tienen título + texto)
+          Written Reviews Analysis (those with title + text)
         </h2>
         <p className="text-xs text-muted-foreground mb-4">
-          Desde aquí hacia abajo solo se analizan reviews con texto. Esta es la única capa donde podemos entender
-          <em> qué </em> están diciendo los usuarios. Recuerda que tiene sesgo hacia extremos.
+          From here down, only reviews with text are analyzed. This is the only layer where we can understand
+          <em> what </em> users are saying. Remember it is biased toward extremes.
         </p>
       </div>
 
       {/* KPI Cards — WRITTEN REVIEWS ONLY */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         <MetricCard
-          label="Reviews Escritas"
+          label="Written Reviews"
           value={summary.total}
           format="number"
           icon={MessageSquare}
           accentColor="navy"
-          subtitle="en el período seleccionado"
+          subtitle="in the selected period"
         />
         <MetricCard
-          label="Avg Rating (escritas)"
+          label="Avg Rating (written)"
           value={Number(summary.avg_rating.toFixed(2))}
           format="number"
-          subtitle="solo reviews con texto"
+          subtitle="reviews with text only"
           icon={Star}
           accentColor="teal"
         />
         <MetricCard
-          label="Reviews Negativas (≤2⭐)"
+          label="Negative Reviews (≤2⭐)"
           value={summary.negative}
           format="number"
-          subtitle={`${(summary.negative_rate * 100).toFixed(1)}% del total`}
+          subtitle={`${(summary.negative_rate * 100).toFixed(1)}% of total`}
           icon={TrendingDown}
           accentColor="red"
         />
         <MetricCard
-          label="Reviews Positivas (≥4⭐)"
+          label="Positive Reviews (≥4⭐)"
           value={summary.positive}
           format="number"
-          subtitle={`${(summary.positive_rate * 100).toFixed(1)}% del total`}
+          subtitle={`${(summary.positive_rate * 100).toFixed(1)}% of total`}
           icon={Star}
           accentColor="green"
         />
         <MetricCard
-          label="Países"
+          label="Countries"
           value={summary.territories}
           format="number"
-          subtitle="con reviews"
+          subtitle="with reviews"
           icon={Globe}
           accentColor="rose"
         />
@@ -550,10 +550,10 @@ export function ReviewsContent({
           <div className="flex items-center justify-between">
             <div>
               <CardTitle className="text-lg">
-                Distribución de Ratings por {timeGranularity === 'weekly' ? 'Semana' : 'Mes'}
+                Rating Distribution by {timeGranularity === 'weekly' ? 'Week' : 'Month'}
               </CardTitle>
               <p className="text-xs text-muted-foreground">
-                Barras apiladas = cantidad por estrellas. Línea = rating promedio.
+                Stacked bars = count by stars. Line = average rating.
               </p>
             </div>
             <div className="flex items-center gap-1 bg-white border border-border/50 rounded-md p-0.5 shadow-sm">
@@ -565,7 +565,7 @@ export function ReviewsContent({
                     : 'text-muted-foreground hover:bg-[#F0F4FF]'
                 }`}
               >
-                Mensual
+                Monthly
               </button>
               <button
                 onClick={() => setTimeGranularity('weekly')}
@@ -575,7 +575,7 @@ export function ReviewsContent({
                     : 'text-muted-foreground hover:bg-[#F0F4FF]'
                 }`}
               >
-                Semanal
+                Weekly
               </button>
             </div>
           </div>
@@ -619,10 +619,10 @@ export function ReviewsContent({
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
               <AlertTriangle className="h-5 w-5 text-red-500" />
-              Quejas Principales
+              Top Complaints
             </CardTitle>
             <p className="text-xs text-muted-foreground">
-              Categorización automática sobre reviews de 1-2 ⭐ · % = del total de reviews negativas
+              Automatic categorization of 1-2 ⭐ reviews · % = of total negative reviews
             </p>
           </CardHeader>
           <CardContent>
@@ -656,7 +656,7 @@ export function ReviewsContent({
               ))}
               {topics.length === 0 && (
                 <div className="text-sm text-muted-foreground text-center py-8">
-                  No hay reviews negativas en este período
+                  No negative reviews in this period
                 </div>
               )}
             </div>
@@ -666,7 +666,7 @@ export function ReviewsContent({
                   onClick={() => setTopic(undefined)}
                   className="text-[#0086D8] hover:underline"
                 >
-                  ← limpiar filtro
+                  ← clear filter
                 </button>
               </div>
             )}
@@ -675,9 +675,9 @@ export function ReviewsContent({
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Tendencia de Quejas (Top 8)</CardTitle>
+            <CardTitle className="text-lg">Complaint Trend (Top 8)</CardTitle>
             <p className="text-xs text-muted-foreground">
-              Reviews negativas (≤2⭐) por tipo de queja y mes
+              Negative reviews (≤2⭐) by complaint type and month
             </p>
           </CardHeader>
           <CardContent>
@@ -705,9 +705,9 @@ export function ReviewsContent({
       {/* Territories table */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Países con Más Quejas</CardTitle>
+          <CardTitle className="text-lg">Countries with Most Complaints</CardTitle>
           <p className="text-xs text-muted-foreground">
-            Ordenado por tasa de reviews negativas (mín. 5 reviews)
+            Sorted by negative review rate (min. 5 reviews)
           </p>
         </CardHeader>
         <CardContent>
@@ -715,11 +715,11 @@ export function ReviewsContent({
             <table className="w-full text-sm">
               <thead className="border-b">
                 <tr className="text-left text-muted-foreground text-xs uppercase">
-                  <th className="py-2 px-2">País</th>
+                  <th className="py-2 px-2">Country</th>
                   <th className="py-2 px-2 text-right">Reviews</th>
-                  <th className="py-2 px-2 text-right">Rating Prom.</th>
-                  <th className="py-2 px-2 text-right">Negativas</th>
-                  <th className="py-2 px-2 text-right">% Negativas</th>
+                  <th className="py-2 px-2 text-right">Avg Rating</th>
+                  <th className="py-2 px-2 text-right">Negative</th>
+                  <th className="py-2 px-2 text-right">% Negative</th>
                 </tr>
               </thead>
               <tbody>
@@ -760,15 +760,15 @@ export function ReviewsContent({
         <CardHeader>
           <CardTitle className="text-lg flex items-center gap-2">
             <Filter className="h-5 w-5" />
-            Reviews Negativas Recientes
+            Recent Negative Reviews
             {selectedTopic && (
               <span className="text-sm font-normal text-muted-foreground">
-                · filtro: {TOPIC_LABELS[selectedTopic as ReviewTopic] || selectedTopic}
+                · filter: {TOPIC_LABELS[selectedTopic as ReviewTopic] || selectedTopic}
               </span>
             )}
           </CardTitle>
           <p className="text-xs text-muted-foreground">
-            {negativeReviewsCount} reviews. Click en una queja arriba para filtrar. Click en una review para expandir.
+            {negativeReviewsCount} reviews. Click a complaint above to filter. Click a review to expand.
           </p>
         </CardHeader>
         <CardContent>
@@ -791,7 +791,7 @@ export function ReviewsContent({
                         {'★'.repeat(r.rating)}
                         <span className="text-gray-300">{'★'.repeat(5 - r.rating)}</span>
                       </span>
-                      <span className="text-sm font-medium">{r.title || '(sin título)'}</span>
+                      <span className="text-sm font-medium">{r.title || '(no title)'}</span>
                     </div>
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       <span>{territoryFlag(r.territory)} {r.territory}</span>
@@ -819,7 +819,7 @@ export function ReviewsContent({
             })}
             {recent.length === 0 && (
               <div className="text-sm text-muted-foreground text-center py-8">
-                No hay reviews negativas para este filtro
+                No negative reviews for this filter
               </div>
             )}
           </div>
@@ -835,19 +835,19 @@ const SEVERITY_STYLES: Record<InsightSeverity, { border: string; bg: string; ico
     border: 'border-l-red-600',
     bg: 'bg-red-50',
     icon: <AlertCircle className="h-5 w-5 text-red-600" />,
-    label: 'CRÍTICO',
+    label: 'CRITICAL',
   },
   high: {
     border: 'border-l-amber-500',
     bg: 'bg-amber-50',
     icon: <AlertCircle className="h-5 w-5 text-amber-600" />,
-    label: 'ALTO',
+    label: 'HIGH',
   },
   medium: {
     border: 'border-l-[#0086D8]',
     bg: 'bg-[#0086D8]/[0.05]',
     icon: <Lightbulb className="h-5 w-5 text-[#0086D8]" />,
-    label: 'MEDIO',
+    label: 'MEDIUM',
   },
   info: {
     border: 'border-l-[#45C94E]',
@@ -864,11 +864,11 @@ function InsightsSection({ insights }: { insights: Insight[] }) {
       <CardHeader>
         <CardTitle className="text-lg flex items-center gap-2">
           <Lightbulb className="h-5 w-5 text-amber-500" />
-          Insights & Recomendaciones
+          Insights & Recommendations
         </CardTitle>
         <p className="text-xs text-muted-foreground">
-          Hallazgos automáticos derivados del análisis de este período. Ordenados por severidad.
-          Cada uno incluye el dato soportante y un próximo paso concreto.
+          Automatic findings derived from this period's analysis. Sorted by severity.
+          Each one includes the supporting data and a concrete next step.
         </p>
       </CardHeader>
       <CardContent>
@@ -896,7 +896,7 @@ function InsightsSection({ insights }: { insights: Insight[] }) {
                     <h4 className="text-sm font-semibold text-[#0E3687] mb-1">{ins.title}</h4>
                     <p className="text-xs text-gray-700 mb-2 leading-relaxed">{ins.description}</p>
                     <div className="flex items-start gap-1.5 text-xs">
-                      <span className="font-semibold text-gray-600 flex-shrink-0">→ Próximo paso:</span>
+                      <span className="font-semibold text-gray-600 flex-shrink-0">→ Next step:</span>
                       <span className="text-gray-700 leading-relaxed">{ins.recommendation}</span>
                     </div>
                   </div>

@@ -31,9 +31,9 @@ export function MultiSelect({
   options,
   selected,
   onChange,
-  placeholder = 'Todos',
+  placeholder = 'All',
   label,
-  allLabel = 'Todos',
+  allLabel = 'All',
   maxWidth = '320px',
   disabled = false,
 }: MultiSelectProps) {
@@ -148,7 +148,7 @@ export function MultiSelect({
                 onClick={clearAll}
                 className="rounded px-2 py-0.5 text-muted-foreground hover:bg-gray-50"
               >
-                Limpiar
+                Clear
               </button>
             </div>
 

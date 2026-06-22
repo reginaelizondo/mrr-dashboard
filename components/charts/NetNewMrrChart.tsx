@@ -56,7 +56,7 @@ function computeNetNew(data: MrrDailySnapshot[]): NetNewData[] {
       : 0;
 
     const d = new Date(curr.snapshot_date + 'T00:00:00Z');
-    const months = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const monthLabel = `${months[d.getUTCMonth()]} ${d.getUTCFullYear().toString().slice(2)}`;
 
     result.push({
@@ -96,10 +96,10 @@ function CustomTooltip({ active, payload, label }: { active?: boolean; payload?:
       {row.is_stale && row.projectedExtra > 0 && (
         <>
           <div className="text-xs text-[#0086D8] mt-1">
-            + {formatCurrency(row.projectedExtra)} proyectado extra
+            + {formatCurrency(row.projectedExtra)} projected extra
           </div>
           <div className="text-sm font-semibold text-[#0E3687] border-t border-border/40 mt-1 pt-1">
-            Proyectado total: {formatCurrency(row.projectedTotal)}
+            Projected total: {formatCurrency(row.projectedTotal)}
           </div>
         </>
       )}
@@ -180,7 +180,7 @@ export function NetNewMrrChart({ data }: NetNewMrrChartProps) {
         </div>
         {hasProjections && (
           <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed border-t border-border/40 pt-2">
-            Área rayada = proyección para meses stale. Se calcula como la diferencia entre el net new con valores proyectados vs actuales.
+            Hatched area = projection for stale months. Calculated as the difference between net new with projected values vs actual values.
           </p>
         )}
       </CardContent>

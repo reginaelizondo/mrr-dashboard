@@ -19,22 +19,22 @@ export type ReviewTopic =
   | 'praise';
 
 export const TOPIC_LABELS: Record<ReviewTopic, string> = {
-  free_trial: 'Free Trial (cobro sorpresa)',
-  refund: 'Reembolsos',
-  subscription_mgmt: 'Cancelación / Renovación',
-  pricing: 'Precio (caro)',
-  paywall: 'Paywall (todo de pago)',
+  free_trial: 'Free Trial (surprise charge)',
+  refund: 'Refunds',
+  subscription_mgmt: 'Cancellation / Renewal',
+  pricing: 'Pricing (too expensive)',
+  paywall: 'Paywall (everything paid)',
   bugs_crashes: 'Bugs / Crashes',
-  performance: 'Lentitud / Performance',
-  account_login: 'Login / Cuenta',
-  content_repetitive: 'Contenido repetitivo',
-  content_age_fit: 'Edad no adecuada',
-  content_quality: 'Calidad del contenido',
-  ads: 'Anuncios',
-  ux_ui: 'UX / Interfaz',
-  support: 'Soporte al cliente',
-  language_localization: 'Idioma / Traducción',
-  praise: 'Elogios',
+  performance: 'Slowness / Performance',
+  account_login: 'Login / Account',
+  content_repetitive: 'Repetitive content',
+  content_age_fit: 'Wrong age fit',
+  content_quality: 'Content quality',
+  ads: 'Ads',
+  ux_ui: 'UX / Interface',
+  support: 'Customer support',
+  language_localization: 'Language / Localization',
+  praise: 'Praise',
 };
 
 // Topics considered "complaints" (used for complaint-only aggregations).

@@ -155,7 +155,7 @@ export function SourceBreakdownChart({ data }: SourceBreakdownChartProps) {
                 stroke="#94A3B8"
                 tickFormatter={(val) => {
                   const d = new Date(val + 'T00:00:00Z');
-                  const months = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+                  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
                   return `${months[d.getUTCMonth()]} ${d.getUTCFullYear().toString().slice(2)}`;
                 }}
               />
@@ -177,7 +177,7 @@ export function SourceBreakdownChart({ data }: SourceBreakdownChartProps) {
               ))}
               <Bar
                 dataKey="_projected_extra"
-                name="Proyectado (stale)"
+                name="Projected (stale)"
                 stackId="source"
                 fill="url(#source-hatch)"
                 stroke="#0086D8"
@@ -190,7 +190,7 @@ export function SourceBreakdownChart({ data }: SourceBreakdownChartProps) {
         </div>
         {hasProjections && (
           <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed border-t border-border/40 pt-2">
-            Área rayada = proyección de los meses stale, suma de los extras por fuente visible. Cada fuente se proyecta con su propia tasa MoM.
+            Hatched area = projection for stale months, sum of per-source extras across visible sources. Each source is projected with its own MoM rate.
           </p>
         )}
       </CardContent>

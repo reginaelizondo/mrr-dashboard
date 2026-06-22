@@ -156,7 +156,7 @@ export function RegionBreakdownChart({ data }: RegionBreakdownChartProps) {
               <Area
                 type="monotone"
                 dataKey="_projected_extra"
-                name="Proyectado (stale)"
+                name="Projected (stale)"
                 stackId="region"
                 fill="url(#region-hatch)"
                 stroke="#0086D8"
@@ -168,7 +168,7 @@ export function RegionBreakdownChart({ data }: RegionBreakdownChartProps) {
         </div>
         {hasProjections && (
           <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed border-t border-border/40 pt-2">
-            Banda rayada superior = proyección de los meses stale (suma de extras por región).
+            Top hatched band = projection for stale months (sum of per-region extras).
           </p>
         )}
       </CardContent>

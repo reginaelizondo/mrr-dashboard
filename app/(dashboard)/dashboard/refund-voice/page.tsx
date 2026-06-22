@@ -111,11 +111,11 @@ export default async function RefundVoicePage({
       <div>
         <h1 className="text-3xl font-bold text-[#0E3687]">Voice of Refund</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Correlación entre <strong>reviews negativas</strong> y{' '}
-          <strong>refunds</strong> a nivel mes × país. Apple no expone un
-          identificador común entre reviews y refunds, así que esta vista
-          agrega la señal estadística: ¿qué quejas coinciden con los picos de
-          refund?
+          Correlation between <strong>negative reviews</strong> and{' '}
+          <strong>refunds</strong> at the month × country level. Apple does not
+          expose a common identifier between reviews and refunds, so this view
+          aggregates the statistical signal: which complaints coincide with
+          refund spikes?
         </p>
       </div>
 

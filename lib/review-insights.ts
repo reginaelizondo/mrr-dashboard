@@ -40,40 +40,40 @@ const SEVERITY_ORDER: Record<InsightSeverity, number> = {
 };
 
 /**
- * Recommended actions per complaint topic. Written in Spanish to match
- * the audience. Keep these short — the UI shows them as "próximo paso".
+ * Recommended actions per complaint topic. Written in English to match
+ * the audience. Keep these short — the UI shows them as "next step".
  */
 const TOPIC_RECOMMENDATIONS: Partial<Record<ReviewTopic, string>> = {
   free_trial:
-    'Revisar el flujo de inicio de Free Trial: hacer más visible la fecha exacta de cobro en el paywall, enviar email de aviso 48h antes del charge, y verificar que el texto de ASC sobre la duración sea claro en todos los idiomas.',
+    'Review the Free Trial start flow: make the exact charge date more visible on the paywall, send a reminder email 48h before the charge, and verify that the ASC copy about the duration is clear in all languages.',
   refund:
-    'Monitorear refund rate en paralelo y considerar un touchpoint proactivo (email) para usuarios que cancelan en los primeros 3 días pidiendo feedback antes de que escalen a review pública.',
+    'Monitor the refund rate in parallel and consider a proactive touchpoint (email) for users who cancel within the first 3 days, asking for feedback before they escalate to a public review.',
   subscription_mgmt:
-    'Agregar link directo "Gestionar suscripción" dentro de la app con deeplink a Settings → Subscriptions de iOS. Muchos usuarios no saben dónde cancelar y lo vuelcan en la review.',
+    'Add a direct "Manage subscription" link inside the app with a deeplink to iOS Settings → Subscriptions. Many users don\'t know where to cancel and end up venting in the review.',
   pricing:
-    'Revisar los tiers por país (App Store Price Tiers). Si LATAM ya tiene precios localizados pero Europa no, es una quick-win. Evaluar si un plan mensual más accesible reduce quejas sin canibalizar el anual.',
+    'Review the tiers by country (App Store Price Tiers). If LATAM already has localized pricing but Europe doesn\'t, it\'s a quick win. Evaluate whether a more affordable monthly plan reduces complaints without cannibalizing the annual one.',
   paywall:
-    'Considerar ampliar el contenido free (ej. 7-14 días de actividades sin paywall) para reducir la percepción de "todo es de pago". El sesgo en reviews es muy fuerte con este tema.',
+    'Consider expanding the free content (e.g. 7-14 days of activities without a paywall) to reduce the perception that "everything is paid". The bias in reviews is very strong on this topic.',
   bugs_crashes:
-    'Priorizar con el equipo de QA/eng los crashes reportados, cruzando con Crashlytics. Cada review de 1⭐ por bug suele representar 10-50 usuarios silenciosos afectados.',
+    'Prioritize the reported crashes with the QA/eng team, cross-referencing with Crashlytics. Each 1⭐ review for a bug typically represents 10-50 silent affected users.',
   performance:
-    'Revisar tiempos de carga iniciales y del contenido de actividades. Considerar lazy-loading y caching más agresivo. Medir con RUM en producción.',
+    'Review initial load times and activity content load times. Consider lazy-loading and more aggressive caching. Measure with RUM in production.',
   account_login:
-    'Auditar el flujo de login/registro. Muchas quejas aquí indican problemas de recuperación de contraseña o bloqueo por 2FA. Revisar logs de auth errors.',
+    'Audit the login/signup flow. Many complaints here indicate password recovery issues or lockout from 2FA. Review auth error logs.',
   content_repetitive:
-    'Feedback directo al equipo de contenido: los usuarios perciben que las actividades se repiten. Considerar cadencia de nuevo contenido y personalización por edad exacta del bebé.',
+    'Direct feedback to the content team: users perceive that the activities repeat. Consider the cadence of new content and personalization by the baby\'s exact age.',
   content_age_fit:
-    'Mejorar el mecanismo de transición de rangos etarios. Cuando un bebé cumple X meses, notificar el cambio de etapa y mostrar contenido nuevo para evitar la sensación de "se quedó sin contenido".',
+    'Improve the age-range transition mechanism. When a baby reaches X months, notify the stage change and show new content to avoid the feeling of "running out of content".',
   content_quality:
-    'Recolectar ejemplos específicos de las reviews y compartir con el equipo de producto/contenido para benchmarks cualitativos.',
+    'Collect specific examples from the reviews and share them with the product/content team for qualitative benchmarks.',
   ads:
-    'Si hay ads en versión free, evaluar frecuencia y tipo. Es un tema sensible en apps para niños (COPPA/GDPR-K).',
+    'If there are ads in the free version, evaluate frequency and type. It\'s a sensitive topic in apps for kids (COPPA/GDPR-K).',
   ux_ui:
-    'Revisar las pantallas más mencionadas en las reviews con un UX review dedicado. Considerar un test de usabilidad con 5-8 usuarios para detectar fricciones.',
+    'Review the most-mentioned screens in the reviews with a dedicated UX review. Consider a usability test with 5-8 users to detect friction points.',
   support:
-    'Los usuarios se quejan de falta de respuesta del soporte. Medir SLA actual de tickets, y considerar auto-responder con FAQ mientras responde un agente real.',
+    'Users complain about a lack of response from support. Measure the current ticket SLA, and consider an auto-responder with FAQs while a real agent replies.',
   language_localization:
-    'Verificar cobertura de traducciones en los idiomas donde hay más quejas. Un audit de strings no traducidas suele resolver buena parte.',
+    'Verify translation coverage in the languages with the most complaints. An audit of untranslated strings usually resolves a good chunk of it.',
 };
 
 export function generateInsights(data: InsightInput): Insight[] {
@@ -86,11 +86,11 @@ export function generateInsights(data: InsightInput): Insight[] {
     insights.push({
       id: 'top-complaint',
       severity: top.pct_of_negative >= 0.3 ? 'critical' : 'high',
-      title: `"${top.label}" es la queja #1 (${top.count} reviews, ${(top.pct_of_negative * 100).toFixed(0)}% del total negativo)`,
+      title: `"${top.label}" is the #1 complaint (${top.count} reviews, ${(top.pct_of_negative * 100).toFixed(0)}% of total negative)`,
       description:
-        `${top.count} de las ${summary.negative} reviews negativas (≤2⭐) del período mencionan este tema. Es el patrón dominante y probablemente el mayor driver de reputación negativa en escritura.`,
+        `${top.count} of the ${summary.negative} negative reviews (≤2⭐) in the period mention this topic. It's the dominant pattern and probably the biggest driver of negative written reputation.`,
       recommendation: TOPIC_RECOMMENDATIONS[top.topic as ReviewTopic] ||
-        'Investigar la causa raíz con un sampling cualitativo de 20-30 reviews.',
+        'Investigate the root cause with a qualitative sampling of 20-30 reviews.',
       metric: `${top.count} menciones · ${(top.pct_of_negative * 100).toFixed(0)}%`,
     });
   }
@@ -123,11 +123,11 @@ export function generateInsights(data: InsightInput): Insight[] {
       insights.push({
         id: 'rising-topic',
         severity: 'high',
-        title: `⚠ Tendencia al alza: "${TOPIC_LABELS[worstTrend.topic as ReviewTopic] || worstTrend.topic}" creció ${worstTrend.prior > 0 ? `${(((worstTrend.recent - worstTrend.prior) / worstTrend.prior) * 100).toFixed(0)}%` : `de ${worstTrend.prior} a ${worstTrend.recent}`} en los últimos 2 meses`,
+        title: `⚠ Rising trend: "${TOPIC_LABELS[worstTrend.topic as ReviewTopic] || worstTrend.topic}" grew ${worstTrend.prior > 0 ? `${(((worstTrend.recent - worstTrend.prior) / worstTrend.prior) * 100).toFixed(0)}%` : `from ${worstTrend.prior} to ${worstTrend.recent}`} over the last 2 months`,
         description:
-          `Los últimos 2 meses acumulan ${worstTrend.recent} menciones de esta queja vs ${worstTrend.prior} en los 2 meses previos. Esto suele indicar un cambio reciente (release, precio nuevo, cambio de contenido) que disparó el tema.`,
+          `The last 2 months total ${worstTrend.recent} mentions of this complaint vs ${worstTrend.prior} in the prior 2 months. This usually indicates a recent change (release, new pricing, content change) that triggered the topic.`,
         recommendation: TOPIC_RECOMMENDATIONS[worstTrend.topic as ReviewTopic] ||
-          'Investigar qué cambió en las últimas 8 semanas (releases, precios, cambios de copy). Cruzar con el timeline de cambios de producto.',
+          'Investigate what changed in the last 8 weeks (releases, pricing, copy changes). Cross-reference with the product change timeline.',
         metric: `${worstTrend.prior} → ${worstTrend.recent}`,
       });
     }
@@ -142,12 +142,12 @@ export function generateInsights(data: InsightInput): Insight[] {
       insights.push({
         id: 'rating-trend',
         severity: delta < -0.5 ? 'critical' : delta < 0 ? 'high' : 'info',
-        title: `Rating promedio ${delta >= 0 ? 'subió' : 'cayó'} ${Math.abs(delta).toFixed(2)}⭐ vs mes anterior`,
+        title: `Average rating ${delta >= 0 ? 'rose' : 'fell'} ${Math.abs(delta).toFixed(2)}⭐ vs prior month`,
         description:
-          `${prior.month}: ${prior.avg_rating.toFixed(2)}⭐ (${prior.total} reviews) → ${latest.month}: ${latest.avg_rating.toFixed(2)}⭐ (${latest.total} reviews). ${delta < 0 ? 'La caída sugiere que algo empeoró en el último mes.' : 'El rebote es buena señal pero conviene validar que se sostenga.'}`,
+          `${prior.month}: ${prior.avg_rating.toFixed(2)}⭐ (${prior.total} reviews) → ${latest.month}: ${latest.avg_rating.toFixed(2)}⭐ (${latest.total} reviews). ${delta < 0 ? 'The drop suggests something got worse in the last month.' : 'The rebound is a good sign, but it\'s worth validating that it holds.'}`,
         recommendation: delta < 0
-          ? 'Hacer deep-dive en las reviews de este mes vs el anterior. Comparar distribución de topics y buscar el nuevo problema.'
-          : 'Documentar qué cambió para reforzar y sostener. Si fue release, tag release notes en el tracker de reviews.',
+          ? 'Do a deep-dive into this month\'s reviews vs the prior month. Compare the topic distribution and look for the new problem.'
+          : 'Document what changed to reinforce and sustain it. If it was a release, tag the release notes in the reviews tracker.',
       });
     }
   }
@@ -161,11 +161,11 @@ export function generateInsights(data: InsightInput): Insight[] {
       insights.push({
         id: 'country-outlier-neg',
         severity: worst.negative_rate >= 0.75 ? 'critical' : 'high',
-        title: `${worst.territory} tiene ${(worst.negative_rate * 100).toFixed(0)}% de reviews negativas (${worst.negative}/${worst.total})`,
+        title: `${worst.territory} has ${(worst.negative_rate * 100).toFixed(0)}% negative reviews (${worst.negative}/${worst.total})`,
         description:
-          `Las reviews escritas desde ${worst.territory} están dominadas por quejas. Probablemente hay un problema específico de ese mercado (precio, idioma, contenido cultural, método de pago).`,
+          `The written reviews from ${worst.territory} are dominated by complaints. There's probably a market-specific issue (pricing, language, cultural content, payment method).`,
         recommendation:
-          `Filtrar las reviews por ${worst.territory} (usar el filtro de país que está arriba) y leer los primeros 20 para detectar el patrón local. Si es sistémico, coordinar con el growth manager del mercado.`,
+          `Filter the reviews by ${worst.territory} (use the country filter above) and read the first 20 to detect the local pattern. If it's systemic, coordinate with the market's growth manager.`,
         metric: `${worst.negative}/${worst.total} neg`,
       });
     }
@@ -182,11 +182,11 @@ export function generateInsights(data: InsightInput): Insight[] {
       insights.push({
         id: 'global-rating-outlier',
         severity: 'medium',
-        title: `${worst.country_code}: ${worst.avg_rating.toFixed(2)}⭐ global (${(ratingsSummary.weighted_avg - worst.avg_rating).toFixed(2)}⭐ por debajo del promedio)`,
+        title: `${worst.country_code}: ${worst.avg_rating.toFixed(2)}⭐ global (${(ratingsSummary.weighted_avg - worst.avg_rating).toFixed(2)}⭐ below the average)`,
         description:
-          `Entre todos los ${worst.rating_count.toLocaleString()} ratings de ${worst.country_code} (con y sin texto), el promedio está significativamente por debajo del global de ${ratingsSummary.weighted_avg.toFixed(2)}⭐. Esto es más estadísticamente confiable que las reviews escritas porque el volumen es mucho mayor.`,
+          `Across all ${worst.rating_count.toLocaleString()} ratings from ${worst.country_code} (with and without text), the average is significantly below the global of ${ratingsSummary.weighted_avg.toFixed(2)}⭐. This is more statistically reliable than written reviews because the volume is much larger.`,
         recommendation:
-          `${worst.country_code} necesita un análisis de mercado dedicado. Si no tienes reviews escritas desde ahí, conviene hacer user research cualitativo (5-10 calls) para entender qué hace bajar el rating.`,
+          `${worst.country_code} needs a dedicated market analysis. If you don't have written reviews from there, it's worth doing qualitative user research (5-10 calls) to understand what's dragging the rating down.`,
         metric: `${worst.avg_rating.toFixed(2)} vs ${ratingsSummary.weighted_avg.toFixed(2)}`,
       });
     }
@@ -201,11 +201,11 @@ export function generateInsights(data: InsightInput): Insight[] {
       insights.push({
         id: 'selection-bias',
         severity: 'info',
-        title: `Gap entre reviews escritas (${writtenAvg.toFixed(2)}⭐) y ratings totales (${globalAvg.toFixed(2)}⭐): ${gap.toFixed(2)}⭐`,
+        title: `Gap between written reviews (${writtenAvg.toFixed(2)}⭐) and total ratings (${globalAvg.toFixed(2)}⭐): ${gap.toFixed(2)}⭐`,
         description:
-          `Los usuarios silenciosos (tappers) están significativamente más contentos que los que escriben reviews. Esto es normal pero la magnitud (${gap.toFixed(2)}⭐) confirma un sesgo fuerte de selección. Cuida no proyectar este análisis a "todos tus usuarios" — refleja solo a la minoría que escribe.`,
+          `Silent users (tappers) are significantly happier than those who write reviews. This is normal, but the magnitude (${gap.toFixed(2)}⭐) confirms a strong selection bias. Be careful not to project this analysis to "all your users" — it reflects only the minority who write.`,
         recommendation:
-          'Al comunicar estos hallazgos internamente, siempre mencionar ambos números. Usar reviews escritas para diagnóstico cualitativo, ratings totales para métricas de producto.',
+          'When communicating these findings internally, always mention both numbers. Use written reviews for qualitative diagnosis, total ratings for product metrics.',
       });
     }
   }
@@ -218,11 +218,11 @@ export function generateInsights(data: InsightInput): Insight[] {
       insights.push({
         id: 'positive-signal',
         severity: 'info',
-        title: `${latest.month}: ${((latest.positive / latest.total) * 100).toFixed(0)}% positivas (≥4⭐)`,
+        title: `${latest.month}: ${((latest.positive / latest.total) * 100).toFixed(0)}% positive (≥4⭐)`,
         description:
-          'Más del 40% de las reviews escritas del último mes son positivas. Aunque la mayoría que escribe es crítica, hay una cohorte engaged que defiende el producto.',
+          'More than 40% of the written reviews from the last month are positive. Although most who write are critical, there is an engaged cohort that advocates for the product.',
         recommendation:
-          'Identificar qué menciona la gente que nos da 5⭐. Esos son tus "jobs to be done" validados — amplificarlos en marketing, ASO, y onboarding.',
+          'Identify what people who give us 5⭐ mention. Those are your validated "jobs to be done" — amplify them in marketing, ASO, and onboarding.',
       });
     }
   }
