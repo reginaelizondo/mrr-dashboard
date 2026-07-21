@@ -27,6 +27,10 @@ export default async function SkuBreakdownPage({
           <p className="text-sm text-muted-foreground mt-0.5">
             New vs recurring sales and volume by SKU — accrual basis (matches MRR)
           </p>
+          <p className="text-xs text-amber-600 mt-1">
+            Note: on intro-priced SKUs (ht_c, mt_c, ht_d) &quot;recurring&quot; includes intro→full-price
+            conversions (~1 month after the $3.99 entry) — not only true renewals.
+          </p>
         </div>
         <ManualSyncButton />
       </div>
