@@ -755,10 +755,10 @@ function MonthlyDetailTable({
               <tr className="border-b border-border/60 bg-[#F8F9FB]">
                 {header(granularity === 'weekly' ? 'Week' : 'Month', 'month', 'left')}
                 {header('Charges', 'charge_units', 'right')}
-                {header('Refunds', 'refund_units', 'right')}
+                {header('Charged $', 'charge_gross', 'right')}
+                {header('Refunded', 'refund_units', 'right')}
+                {header('Refunded $', 'refund_gross', 'right')}
                 {header('Rate (units)', 'refund_rate_units', 'right')}
-                {header('Charge $', 'charge_gross', 'right')}
-                {header('Refund $', 'refund_gross', 'right')}
                 {header('Rate ($)', 'refund_rate_amount', 'right')}
               </tr>
             </thead>
@@ -776,16 +776,16 @@ function MonthlyDetailTable({
                       {r.charge_units.toLocaleString()}
                     </td>
                     <td className="text-right py-2 px-3 tabular-nums">
-                      {r.refund_units.toLocaleString()}
-                    </td>
-                    <td className="text-right py-2 px-3 tabular-nums font-semibold" style={heatStyle(rateU, heat.uMin, heat.uMax)}>
-                      {rateU.toFixed(2)}%
-                    </td>
-                    <td className="text-right py-2 px-3 tabular-nums">
                       {formatCurrency(r.charge_gross)}
                     </td>
                     <td className="text-right py-2 px-3 tabular-nums">
+                      {r.refund_units.toLocaleString()}
+                    </td>
+                    <td className="text-right py-2 px-3 tabular-nums">
                       {formatCurrency(r.refund_gross)}
+                    </td>
+                    <td className="text-right py-2 px-3 tabular-nums font-semibold" style={heatStyle(rateU, heat.uMin, heat.uMax)}>
+                      {rateU.toFixed(2)}%
                     </td>
                     <td className="text-right py-2 px-3 tabular-nums font-semibold" style={heatStyle(rateA, heat.aMin, heat.aMax)}>
                       {rateA.toFixed(2)}%
@@ -807,35 +807,23 @@ function MonthlyDetailTable({
                   <td className="py-2.5 px-3 text-[#0E3687]">
                     Total ({rows.length} {granularity === 'weekly' ? 'wk' : 'mo'})
                   </td>
-                  <td className="text-right py-2.5 px-3 tabular-nums text-[#0086D8]">
+                  <td className="text-right py-2.5 px-3 tabular-nums">
                     {totalCharges.toLocaleString()}
                   </td>
-                  <td className="text-right py-2.5 px-3 tabular-nums text-[#E53E3E]">
+                  <td className="text-right py-2.5 px-3 tabular-nums">
+                    {formatCurrency(totalChargeGross)}
+                  </td>
+                  <td className="text-right py-2.5 px-3 tabular-nums">
                     {totalRefunds.toLocaleString()}
                   </td>
                   <td className="text-right py-2.5 px-3 tabular-nums">
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-xs font-medium ${rateColor(
-                        totalRateUnits
-                      )}`}
-                    >
-                      {totalRateUnits.toFixed(2)}%
-                    </span>
-                  </td>
-                  <td className="text-right py-2.5 px-3 tabular-nums text-[#0E3687]">
-                    {formatCurrency(totalChargeGross)}
-                  </td>
-                  <td className="text-right py-2.5 px-3 tabular-nums text-[#E53E3E]">
                     {formatCurrency(totalRefundGross)}
                   </td>
-                  <td className="text-right py-2.5 px-3 tabular-nums">
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-xs font-medium ${rateColor(
-                        totalRateAmount
-                      )}`}
-                    >
-                      {totalRateAmount.toFixed(2)}%
-                    </span>
+                  <td className="text-right py-2.5 px-3 tabular-nums text-[#7A1F1F]">
+                    {totalRateUnits.toFixed(2)}%
+                  </td>
+                  <td className="text-right py-2.5 px-3 tabular-nums text-[#7A1F1F]">
+                    {totalRateAmount.toFixed(2)}%
                   </td>
                 </tr>
               </tfoot>
