@@ -97,6 +97,26 @@ function formatPeriod(row: RefundMonthlyRow, granularity: Granularity): string {
     : formatMonth(row.month);
 }
 
+/**
+ * Heat-map cell styling for refund-rate cells: red intensity scaled between the
+ * min and max rate currently on screen, so the highest/lowest periods pop out.
+ * Exported so the cohort section renders its rates identically.
+ */
+export function heatStyle(
+  pct: number,
+  min: number,
+  max: number
+): { backgroundColor: string; color: string } {
+  const span = max - min;
+  // Degenerate range (single row, or all equal) → neutral tint
+  const t = span > 0.0001 ? Math.min(1, Math.max(0, (pct - min) / span)) : 0.35;
+  const alpha = 0.06 + t * 0.82;
+  return {
+    backgroundColor: `rgba(225, 85, 84, ${alpha.toFixed(3)})`,
+    color: alpha > 0.55 ? '#FFFFFF' : '#7A1F1F',
+  };
+}
+
 function rateColor(ratePct: number): string {
   if (ratePct >= 15) return 'bg-red-100 text-red-700';
   if (ratePct >= 5) return 'bg-amber-100 text-amber-700';
@@ -693,6 +713,18 @@ function MonthlyDetailTable({
     );
   }
 
+  // Heat-map bounds over the rows on screen (both rate columns scale independently)
+  const heat = useMemo(() => {
+    const u = rows.map((r) => r.refund_rate_units * 100);
+    const a = rows.map((r) => r.refund_rate_amount * 100);
+    return {
+      uMin: u.length ? Math.min(...u) : 0,
+      uMax: u.length ? Math.max(...u) : 0,
+      aMin: a.length ? Math.min(...a) : 0,
+      aMax: a.length ? Math.max(...a) : 0,
+    };
+  }, [rows]);
+
   const totalCharges = rows.reduce((a, r) => a + r.charge_units, 0);
   const totalRefunds = rows.reduce((a, r) => a + r.refund_units, 0);
   const totalChargeGross = rows.reduce((a, r) => a + r.charge_gross, 0);
@@ -711,12 +743,16 @@ function MonthlyDetailTable({
         <CardTitle className="text-base font-semibold text-[#0E3687]">
           {granularity === 'weekly' ? 'Weekly' : 'Monthly'} Detail
         </CardTitle>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Rate cells are heat-mapped: the darker the red, the higher that period&apos;s rate
+          relative to the rest on screen. Click any column header to sort.
+        </p>
       </CardHeader>
       <CardContent>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-border/50 bg-[#F8F9FB]">
+              <tr className="border-b border-border/60 bg-[#F8F9FB]">
                 {header(granularity === 'weekly' ? 'Week' : 'Month', 'month', 'left')}
                 {header('Charges', 'charge_units', 'right')}
                 {header('Refunds', 'refund_units', 'right')}
@@ -727,42 +763,32 @@ function MonthlyDetailTable({
               </tr>
             </thead>
             <tbody>
-              {sorted.map((r, i) => {
+              {sorted.map((r) => {
                 const rateU = r.refund_rate_units * 100;
                 const rateA = r.refund_rate_amount * 100;
                 return (
                   <tr
                     key={r.month}
-                    className={`border-b border-border/30 last:border-0 hover:bg-[#F0F4FF]/50 transition-colors ${
-                      i % 2 === 0 ? '' : 'bg-[#F8F9FB]/50'
-                    }`}
+                    className="border-b border-border/30 last:border-0 hover:bg-[#F0F4FF]/50 transition-colors"
                   >
-                    <td className="py-2.5 px-3 font-medium">{formatPeriod(r, granularity)}</td>
-                    <td className="text-right py-2.5 px-3 tabular-nums text-[#0086D8]">
+                    <td className="py-2 px-3 font-medium">{formatPeriod(r, granularity)}</td>
+                    <td className="text-right py-2 px-3 tabular-nums">
                       {r.charge_units.toLocaleString()}
                     </td>
-                    <td className="text-right py-2.5 px-3 tabular-nums text-[#E53E3E] font-medium">
+                    <td className="text-right py-2 px-3 tabular-nums">
                       {r.refund_units.toLocaleString()}
                     </td>
-                    <td className="text-right py-2.5 px-3 tabular-nums">
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-xs font-medium ${rateColor(rateU)}`}
-                      >
-                        {rateU.toFixed(2)}%
-                      </span>
+                    <td className="text-right py-2 px-3 tabular-nums font-semibold" style={heatStyle(rateU, heat.uMin, heat.uMax)}>
+                      {rateU.toFixed(2)}%
                     </td>
-                    <td className="text-right py-2.5 px-3 tabular-nums text-[#0E3687]">
+                    <td className="text-right py-2 px-3 tabular-nums">
                       {formatCurrency(r.charge_gross)}
                     </td>
-                    <td className="text-right py-2.5 px-3 tabular-nums text-[#E53E3E]">
+                    <td className="text-right py-2 px-3 tabular-nums">
                       {formatCurrency(r.refund_gross)}
                     </td>
-                    <td className="text-right py-2.5 px-3 tabular-nums">
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-xs font-medium ${rateColor(rateA)}`}
-                      >
-                        {rateA.toFixed(2)}%
-                      </span>
+                    <td className="text-right py-2 px-3 tabular-nums font-semibold" style={heatStyle(rateA, heat.aMin, heat.aMax)}>
+                      {rateA.toFixed(2)}%
                     </td>
                   </tr>
                 );
@@ -1017,7 +1043,7 @@ export function BreakdownTable({
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-border/50 bg-[#F8F9FB]">
+              <tr className="border-b border-border/60 bg-[#F8F9FB]">
                 {header('Bucket', 'bucket', 'left')}
                 {header('Refunds', 'refunds', 'right')}
                 {header(rateAsShare ? 'Total' : 'Paid', 'paid_events', 'right')}

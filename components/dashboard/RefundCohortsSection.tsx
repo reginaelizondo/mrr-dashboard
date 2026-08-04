@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ComposedChart,
   Bar,
@@ -13,12 +13,23 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { formatCurrency } from '@/lib/constants';
 import type { RefundCohortRow, RefundCohortBreakdowns } from '@/lib/refunds';
-import { BreakdownTable } from '@/components/dashboard/RefundsContent';
+import { BreakdownTable, heatStyle } from '@/components/dashboard/RefundsContent';
 import type { Source } from '@/types';
 
 type CohortSource = 'all' | Source;
+
+type SortKey =
+  | 'cohort_month'
+  | 'charge_units'
+  | 'charge_gross'
+  | 'refunded_units'
+  | 'refunded_gross'
+  | 'cohort_rate_units'
+  | 'cohort_rate_amount'
+  | 'avg_days_to_refund';
 
 interface Props {
   cohorts: Record<CohortSource, RefundCohortRow[]>;
@@ -45,8 +56,62 @@ function fmtMonth(ym: string): string {
 
 export function RefundCohortsSection({ cohorts, breakdowns, granularity, matureThrough }: Props) {
   const [source, setSource] = useState<CohortSource>('all');
-  const rows = cohorts[source] || [];
+  const rows = useMemo(() => cohorts[source] || [], [cohorts, source]);
   const bd = breakdowns[source];
+  const [sortKey, setSortKey] = useState<SortKey>('cohort_month');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  const sorted = useMemo(() => {
+    const copy = [...rows];
+    copy.sort((a, b) => {
+      const av = a[sortKey];
+      const bv = b[sortKey];
+      if (typeof av === 'string' && typeof bv === 'string') {
+        return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+      }
+      return sortDir === 'asc' ? Number(av ?? 0) - Number(bv ?? 0) : Number(bv ?? 0) - Number(av ?? 0);
+    });
+    return copy;
+  }, [rows, sortKey, sortDir]);
+
+  // Heat-map bounds over the rows on screen (each rate column scales on its own)
+  const heat = useMemo(() => {
+    const u = rows.map((r) => r.cohort_rate_units * 100);
+    const a = rows.map((r) => r.cohort_rate_amount * 100);
+    return {
+      uMin: u.length ? Math.min(...u) : 0,
+      uMax: u.length ? Math.max(...u) : 0,
+      aMin: a.length ? Math.min(...a) : 0,
+      aMax: a.length ? Math.max(...a) : 0,
+    };
+  }, [rows]);
+
+  function header(label: string, key: SortKey, align: 'left' | 'right') {
+    const active = sortKey === key;
+    return (
+      <th
+        onClick={() => {
+          if (active) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+          else {
+            setSortKey(key);
+            setSortDir('desc');
+          }
+        }}
+        className={`${
+          align === 'left' ? 'text-left' : 'text-right'
+        } py-3 px-3 font-semibold text-[#0E3687] text-xs uppercase tracking-wider cursor-pointer select-none hover:bg-[#F0F4FF]`}
+      >
+        <span className="inline-flex items-center gap-1">
+          {label}
+          {active ? (
+            sortDir === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />
+          ) : (
+            <ArrowUpDown className="h-3 w-3 opacity-30" />
+          )}
+        </span>
+      </th>
+    );
+  }
 
   const hasData = Object.values(cohorts).some((r) => r.length > 0 && r.some((x) => x.refunded_units > 0));
 
@@ -133,42 +198,49 @@ export function RefundCohortsSection({ cohorts, breakdowns, granularity, matureT
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-semibold text-[#0E3687]">Cohort detail</CardTitle>
+          <Card className="overflow-hidden">
+            <div className="h-1 bg-gradient-to-r from-[#0E3687] to-[#0086D8]" />
+            <CardHeader>
+              <CardTitle className="text-base font-semibold text-[#0E3687]">Cohort Detail</CardTitle>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Rate cells are heat-mapped: the darker the red, the higher that cohort&apos;s rate
+                relative to the rest on screen. Click any column header to sort.
+              </p>
             </CardHeader>
             <CardContent className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b text-left text-xs uppercase tracking-wider text-muted-foreground">
-                    <th className="py-2 pr-3">Cohort (charge {granularity === 'weekly' ? 'week' : 'month'})</th>
-                    <th className="py-2 pr-3 text-right">Charges</th>
-                    <th className="py-2 pr-3 text-right">Charged $</th>
-                    <th className="py-2 pr-3 text-right">Refunded</th>
-                    <th className="py-2 pr-3 text-right">Refunded $</th>
-                    <th className="py-2 pr-3 text-right">Rate (units)</th>
-                    <th className="py-2 pr-3 text-right">Rate ($)</th>
-                    <th className="py-2 text-right">Avg days to refund</th>
+                  <tr className="border-b border-border/60 bg-[#F8F9FB]">
+                    {header(`Cohort (charge ${granularity === 'weekly' ? 'week' : 'month'})`, 'cohort_month', 'left')}
+                    {header('Charges', 'charge_units', 'right')}
+                    {header('Charged $', 'charge_gross', 'right')}
+                    {header('Refunded', 'refunded_units', 'right')}
+                    {header('Refunded $', 'refunded_gross', 'right')}
+                    {header('Rate (units)', 'cohort_rate_units', 'right')}
+                    {header('Rate ($)', 'cohort_rate_amount', 'right')}
+                    {header('Avg days to refund', 'avg_days_to_refund', 'right')}
                   </tr>
                 </thead>
                 <tbody>
-                  {[...rows].reverse().map((r) => {
+                  {sorted.map((r) => {
                     const immature = r.cohort_month > matureThrough;
                     return (
-                      <tr key={r.cohort_month} className={`border-b last:border-0 ${immature ? 'text-muted-foreground' : ''}`}>
-                        <td className="py-1.5 pr-3 font-medium">
+                      <tr key={r.cohort_month} className="border-b border-border/30 last:border-0 hover:bg-[#F0F4FF]/50 transition-colors">
+                        <td className={`py-2 px-3 font-medium ${immature ? 'text-muted-foreground' : ''}`}>
                           {fmtMonth(r.cohort_month)}
                           {immature && <span title="Still accruing refunds"> *</span>}
                         </td>
-                        <td className="py-1.5 pr-3 text-right">{r.charge_units.toLocaleString()}</td>
-                        <td className="py-1.5 pr-3 text-right">{formatCurrency(r.charge_gross)}</td>
-                        <td className="py-1.5 pr-3 text-right">{r.refunded_units.toLocaleString()}</td>
-                        <td className="py-1.5 pr-3 text-right">{formatCurrency(r.refunded_gross)}</td>
-                        <td className="py-1.5 pr-3 text-right">{(r.cohort_rate_units * 100).toFixed(1)}%</td>
-                        <td className="py-1.5 pr-3 text-right font-semibold text-[#E15554]">
+                        <td className="py-2 px-3 text-right tabular-nums">{r.charge_units.toLocaleString()}</td>
+                        <td className="py-2 px-3 text-right tabular-nums">{formatCurrency(r.charge_gross)}</td>
+                        <td className="py-2 px-3 text-right tabular-nums">{r.refunded_units.toLocaleString()}</td>
+                        <td className="py-2 px-3 text-right tabular-nums">{formatCurrency(r.refunded_gross)}</td>
+                        <td className="py-2 px-3 text-right tabular-nums font-semibold" style={heatStyle(r.cohort_rate_units * 100, heat.uMin, heat.uMax)}>
+                          {(r.cohort_rate_units * 100).toFixed(1)}%
+                        </td>
+                        <td className="py-2 px-3 text-right tabular-nums font-semibold" style={heatStyle(r.cohort_rate_amount * 100, heat.aMin, heat.aMax)}>
                           {(r.cohort_rate_amount * 100).toFixed(1)}%
                         </td>
-                        <td className="py-1.5 text-right">
+                        <td className="py-2 px-3 text-right tabular-nums">
                           {r.avg_days_to_refund === null ? '—' : Math.round(r.avg_days_to_refund)}
                         </td>
                       </tr>
