@@ -14,13 +14,15 @@ import {
 } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatCurrency } from '@/lib/constants';
-import type { RefundCohortRow } from '@/lib/refunds';
+import type { RefundCohortRow, RefundCohortBreakdowns } from '@/lib/refunds';
+import { BreakdownTable } from '@/components/dashboard/RefundsContent';
 import type { Source } from '@/types';
 
 type CohortSource = 'all' | Source;
 
 interface Props {
   cohorts: Record<CohortSource, RefundCohortRow[]>;
+  breakdowns: Record<CohortSource, RefundCohortBreakdowns>;
   /** YYYY-MM of the newest month considered mature (refunds fully accrued). */
   matureThrough: string;
 }
@@ -38,9 +40,10 @@ function fmtMonth(ym: string): string {
   return `${MONTHS[m - 1]} ${String(y).slice(2)}`;
 }
 
-export function RefundCohortsSection({ cohorts, matureThrough }: Props) {
+export function RefundCohortsSection({ cohorts, breakdowns, matureThrough }: Props) {
   const [source, setSource] = useState<CohortSource>('all');
   const rows = cohorts[source] || [];
+  const bd = breakdowns[source];
 
   const hasData = Object.values(cohorts).some((r) => r.length > 0 && r.some((x) => x.refunded_units > 0));
 
@@ -178,6 +181,40 @@ export function RefundCohortsSection({ cohorts, matureThrough }: Props) {
               </p>
             </CardContent>
           </Card>
+
+          {bd?.hasData && (
+            <>
+              <div className="pt-1">
+                <h3 className="text-base font-bold text-[#0E3687]">
+                  Cohort Segmentation — {SOURCE_LABEL[source]}
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Same dimensions as the calendar-basis segmentation above, but attributed to the
+                  ORIGINAL CHARGE: of the charges made in the window, % eventually refunded.
+                  Rate = refunded ÷ charged (gross). Country is approximated from the charge
+                  currency. The event-only dimensions (renewal stage, days-to-refund, offer type)
+                  exist only calendar-basis above.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <BreakdownTable
+                  title="By SKU (top 15, cohort basis)"
+                  subtitle="Of charges in window: % eventually refunded"
+                  rows={bd.bySku}
+                />
+                <BreakdownTable
+                  title="By country (top 15, cohort basis)"
+                  subtitle="Country ≈ from charge currency (USD groups several countries)"
+                  rows={bd.byCountry}
+                />
+                <BreakdownTable
+                  title="By plan duration (cohort basis)"
+                  subtitle="Of charges in window: % eventually refunded"
+                  rows={bd.byPlanDuration}
+                />
+              </div>
+            </>
+          )}
         </>
       )}
     </div>

@@ -111,7 +111,7 @@ export default async function RefundsPage({
     return null;
   });
 
-  const [apple, google, stripe, appleWeekly, appleBreakdowns, lastSync, cohortAll, cohortApple, cohortGoogle, cohortStripe, appleCohortBreakdowns] = await Promise.all([
+  const [apple, google, stripe, appleWeekly, appleBreakdowns, lastSync, cohortAll, cohortApple, cohortGoogle, cohortStripe, cbAll, cbApple, cbGoogle, cbStripe] = await Promise.all([
     getRefundsByMonth('apple', range.startMonth, range.endMonth, countries),
     getRefundsByMonth('google', range.startMonth, range.endMonth),
     getRefundsByMonth('stripe', range.startMonth, range.endMonth),
@@ -124,8 +124,11 @@ export default async function RefundsPage({
     getRefundCohorts('apple', range.startMonth, range.endMonth),
     getRefundCohorts('google', range.startMonth, range.endMonth),
     getRefundCohorts('stripe', range.startMonth, range.endMonth),
-    // Cohort-basis dimension breakdowns for the iOS segmentation toggle
+    // Cohort-basis dimension breakdowns (per store) for the cohort section
+    getRefundCohortBreakdowns('all', range.startMonth, range.endMonth),
     getRefundCohortBreakdowns('apple', range.startMonth, range.endMonth),
+    getRefundCohortBreakdowns('google', range.startMonth, range.endMonth),
+    getRefundCohortBreakdowns('stripe', range.startMonth, range.endMonth),
   ]);
 
   // A cohort is "mature" once ~45 days have passed since the END of its month
@@ -170,12 +173,12 @@ export default async function RefundsPage({
           granularity={granularity}
           availableCountries={availableCountries}
           selectedCountries={countries || []}
-          appleCohortBreakdowns={appleCohortBreakdowns}
         />
       </Suspense>
 
       <RefundCohortsSection
         cohorts={{ all: cohortAll, apple: cohortApple, google: cohortGoogle, stripe: cohortStripe }}
+        breakdowns={{ all: cbAll, apple: cbApple, google: cbGoogle, stripe: cbStripe }}
         matureThrough={matureThrough}
       />
     </div>
