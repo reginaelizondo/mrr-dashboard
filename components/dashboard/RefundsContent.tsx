@@ -31,7 +31,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { formatCurrency } from '@/lib/constants';
-import type { RefundMonthlyRow, AppleRefundBreakdowns, BreakdownRow } from '@/lib/refunds';
+import type { RefundMonthlyRow, AppleRefundBreakdowns, BreakdownRow, RefundCohortBreakdowns } from '@/lib/refunds';
 import type { Source } from '@/types';
 
 type Preset = '3m' | '6m' | '12m' | 'ytd' | 'all' | 'custom';
@@ -48,6 +48,7 @@ interface Props {
   data: Record<Source, RefundMonthlyRow[]>;
   appleWeekly: RefundMonthlyRow[];
   appleBreakdowns: AppleRefundBreakdowns | null;
+  appleCohortBreakdowns: RefundCohortBreakdowns | null;
   lastSync: SyncInfo;
   preset: Preset;
   startDate: string;
@@ -117,6 +118,7 @@ export function RefundsContent({
   data,
   appleWeekly,
   appleBreakdowns,
+  appleCohortBreakdowns,
   lastSync,
   preset,
   startDate,
@@ -529,7 +531,7 @@ export function RefundsContent({
       <MonthlyDetailTable rows={rows} granularity={effectiveGranularity} />
 
       {/* Apple-only segmentation from SUBSCRIPTION_EVENT report */}
-      {source === 'apple' && <AppleBreakdownSections breakdowns={appleBreakdowns} />}
+      {source === 'apple' && <AppleBreakdownSections breakdowns={appleBreakdowns} cohort={appleCohortBreakdowns} />}
 
       {/* Findings & takeaways — only meaningful for Apple */}
       {source === 'apple' && appleBreakdowns?.hasData && (
@@ -737,9 +739,17 @@ function MonthlyDetailTable({
 
 function AppleBreakdownSections({
   breakdowns,
+  cohort,
 }: {
   breakdowns: AppleRefundBreakdowns | null;
+  cohort: RefundCohortBreakdowns | null;
 }) {
+  // 'calendar' = Apple event report (refund events IN the window).
+  // 'cohort'   = charge-date attribution (charges IN the window that were
+  //              eventually refunded) — only available for SKU / country / duration.
+  const [basis, setBasis] = useState<'calendar' | 'cohort'>('calendar');
+  const cohortAvailable = !!cohort?.hasData;
+  const useCohort = basis === 'cohort' && cohortAvailable;
   if (!breakdowns || !breakdowns.hasData) {
     return (
       <Card className="border-l-4 border-l-[#0086D8] bg-[#0086D8]/[0.04]">
@@ -758,46 +768,77 @@ function AppleBreakdownSections({
   return (
     <>
       <div className="pt-2 border-t border-border/40">
-        <h2 className="text-lg font-bold text-[#0E3687]">iOS Refund Segmentation</h2>
+        <div className="flex flex-wrap items-center gap-3">
+          <h2 className="text-lg font-bold text-[#0E3687]">iOS Refund Segmentation</h2>
+          <div className="ml-auto flex gap-1.5">
+            {(['calendar', 'cohort'] as const).map((b) => (
+              <button
+                key={b}
+                onClick={() => setBasis(b)}
+                disabled={b === 'cohort' && !cohortAvailable}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                  basis === b
+                    ? 'bg-[#0E3687] text-white'
+                    : 'border border-border bg-white text-muted-foreground hover:bg-muted/50 disabled:opacity-40'
+                }`}
+              >
+                {b === 'calendar' ? 'Calendar basis' : 'Cohort basis'}
+              </button>
+            ))}
+          </div>
+        </div>
         <p className="text-xs text-muted-foreground mt-0.5">
-          From Apple SUBSCRIPTION_EVENT daily reports • {breakdowns.startDate} →{' '}
-          {breakdowns.endDate} • {breakdowns.totalRefunds.toLocaleString()} refunds /{' '}
-          {breakdowns.totalPaid.toLocaleString()} paid events • overall net rate{' '}
-          {(breakdowns.overallRate * 100).toFixed(2)}%
+          {useCohort ? (
+            <>Cohort basis: charges made in the window that were eventually refunded, by their
+            charge attributes (backend sale linkage). Rate = refunded ÷ charged (gross). Only
+            SKU / plan duration / country support cohort attribution — the other three are
+            attributes of Apple&apos;s event report and stay calendar-only.</>
+          ) : (
+            <>From Apple SUBSCRIPTION_EVENT daily reports • {breakdowns.startDate} →{' '}
+            {breakdowns.endDate} • {breakdowns.totalRefunds.toLocaleString()} refunds /{' '}
+            {breakdowns.totalPaid.toLocaleString()} paid events • overall net rate{' '}
+            {(breakdowns.overallRate * 100).toFixed(2)}%</>
+          )}
         </p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className={useCohort ? 'opacity-40 pointer-events-none' : ''}>
         <BreakdownTable
           title="By renewal stage (Consecutive Paid Periods)"
-          subtitle="1 = first paid charge, 2 = first renewal, etc."
+          subtitle={useCohort ? 'Calendar basis only (Apple event attribute)' : '1 = first paid charge, 2 = first renewal, etc.'}
           rows={breakdowns.byConsecutivePaidPeriod}
         />
+        </div>
+        <div className={useCohort ? 'opacity-40 pointer-events-none' : ''}>
         <BreakdownTable
           title="By days from purchase to refund"
-          subtitle="Distribution of refunds across time-from-original-start"
+          subtitle={useCohort ? 'Calendar basis only (Apple event attribute)' : 'Distribution of refunds across time-from-original-start'}
           rows={breakdowns.byDaysBeforeCanceling}
           rateAsShare
         />
+        </div>
         <BreakdownTable
-          title="By plan duration"
-          subtitle="Annual refunds hurt the most financially"
-          rows={breakdowns.byPlanDuration}
+          title={useCohort ? 'By plan duration (cohort)' : 'By plan duration'}
+          subtitle={useCohort ? 'Of charges in window: % eventually refunded' : 'Annual refunds hurt the most financially'}
+          rows={useCohort && cohort ? cohort.byPlanDuration : breakdowns.byPlanDuration}
         />
+        <div className={useCohort ? 'opacity-40 pointer-events-none' : ''}>
         <BreakdownTable
           title="By offer type"
-          subtitle="Free Trial vs Pay Up Front etc."
+          subtitle={useCohort ? 'Calendar basis only (Apple event attribute)' : 'Free Trial vs Pay Up Front etc.'}
           rows={breakdowns.byOfferType}
         />
+        </div>
         <BreakdownTable
-          title="By SKU (top 15)"
-          subtitle="Concentrate fixes on the worst offenders"
-          rows={breakdowns.bySku}
+          title={useCohort ? 'By SKU (top 15, cohort)' : 'By SKU (top 15)'}
+          subtitle={useCohort ? 'Of charges in window: % eventually refunded' : 'Concentrate fixes on the worst offenders'}
+          rows={useCohort && cohort ? cohort.bySku : breakdowns.bySku}
         />
         <BreakdownTable
-          title="By country (top 15)"
-          subtitle="Region-specific issues (payment friction, localization)"
-          rows={breakdowns.byCountry}
+          title={useCohort ? 'By country (top 15, cohort)' : 'By country (top 15)'}
+          subtitle={useCohort ? 'Of charges in window: % eventually refunded. Country ≈ from charge currency' : 'Region-specific issues (payment friction, localization)'}
+          rows={useCohort && cohort ? cohort.byCountry : breakdowns.byCountry}
         />
       </div>
     </>

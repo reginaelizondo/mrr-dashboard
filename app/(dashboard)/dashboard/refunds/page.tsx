@@ -10,6 +10,7 @@ import {
   getAppleRefundBreakdowns,
   getLastAppleSalesSync,
   getRefundCohorts,
+  getRefundCohortBreakdowns,
 } from '@/lib/refunds';
 import { RefundsContent } from '@/components/dashboard/RefundsContent';
 import { RefundCohortsSection } from '@/components/dashboard/RefundCohortsSection';
@@ -110,7 +111,7 @@ export default async function RefundsPage({
     return null;
   });
 
-  const [apple, google, stripe, appleWeekly, appleBreakdowns, lastSync, cohortAll, cohortApple, cohortGoogle, cohortStripe] = await Promise.all([
+  const [apple, google, stripe, appleWeekly, appleBreakdowns, lastSync, cohortAll, cohortApple, cohortGoogle, cohortStripe, appleCohortBreakdowns] = await Promise.all([
     getRefundsByMonth('apple', range.startMonth, range.endMonth, countries),
     getRefundsByMonth('google', range.startMonth, range.endMonth),
     getRefundsByMonth('stripe', range.startMonth, range.endMonth),
@@ -123,6 +124,8 @@ export default async function RefundsPage({
     getRefundCohorts('apple', range.startMonth, range.endMonth),
     getRefundCohorts('google', range.startMonth, range.endMonth),
     getRefundCohorts('stripe', range.startMonth, range.endMonth),
+    // Cohort-basis dimension breakdowns for the iOS segmentation toggle
+    getRefundCohortBreakdowns('apple', range.startMonth, range.endMonth),
   ]);
 
   // A cohort is "mature" once ~45 days have passed since the END of its month
@@ -167,6 +170,7 @@ export default async function RefundsPage({
           granularity={granularity}
           availableCountries={availableCountries}
           selectedCountries={countries || []}
+          appleCohortBreakdowns={appleCohortBreakdowns}
         />
       </Suspense>
 

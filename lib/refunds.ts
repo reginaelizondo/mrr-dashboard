@@ -355,6 +355,78 @@ export async function getRefundCohorts(
 }
 
 // ============================================================================
+// Cohort-basis dimension breakdowns (SKU / country / plan duration)
+// Requires migration 021. Same BreakdownRow shape as the calendar breakdowns
+// so the UI tables can swap data on toggle. refund_rate here = refunded/charged
+// (cohort gross basis), NOT Apple's net calendar basis.
+// ============================================================================
+
+export interface RefundCohortBreakdowns {
+  bySku: BreakdownRow[];
+  byCountry: BreakdownRow[];
+  byPlanDuration: BreakdownRow[];
+  hasData: boolean;
+}
+
+export async function getRefundCohortBreakdowns(
+  source: Source | 'all',
+  startMonth: string,
+  endMonth: string
+): Promise<RefundCohortBreakdowns> {
+  const supabase = createServerClient();
+
+  type Row = {
+    bucket: string;
+    charge_units: number;
+    refunded_units: number;
+    charge_gross: number;
+    refunded_gross: number;
+  };
+
+  const call = (dim: string, topN: number) =>
+    supabase.rpc('refund_cohort_breakdown', {
+      dim,
+      src: source,
+      start_month: startMonth,
+      end_month: endMonth,
+      top_n: topN,
+    });
+
+  const [skuRes, countryRes, durationRes] = await Promise.all([
+    call('sku', 15),
+    call('country', 15),
+    call('duration', 10),
+  ]);
+
+  for (const [name, res] of [['sku', skuRes], ['country', countryRes], ['duration', durationRes]] as const) {
+    if (res.error) console.error(`[refunds] refund_cohort_breakdown ${name} error:`, res.error.message);
+  }
+
+  const toRows = (rows: Row[] | null | undefined): BreakdownRow[] =>
+    (rows || []).map((r) => {
+      const refunds = Number(r.refunded_units || 0);
+      const charges = Number(r.charge_units || 0);
+      return {
+        bucket: r.bucket,
+        refunds,
+        paid_events: charges,
+        refund_rate: charges > 0 ? refunds / charges : 0,
+      };
+    });
+
+  const bySku = toRows(skuRes.data as Row[] | null);
+  const byCountry = toRows(countryRes.data as Row[] | null);
+  const byPlanDuration = toRows(durationRes.data as Row[] | null);
+
+  return {
+    bySku,
+    byCountry,
+    byPlanDuration,
+    hasData: bySku.length > 0 || byCountry.length > 0 || byPlanDuration.length > 0,
+  };
+}
+
+// ============================================================================
 // Apple SUBSCRIPTION_EVENT report-based breakdowns
 // (requires apple_subscription_events table populated by /api/cron/apple-events)
 // ============================================================================

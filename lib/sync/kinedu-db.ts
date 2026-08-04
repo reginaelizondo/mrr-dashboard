@@ -389,6 +389,8 @@ interface KineduRefundRow {
   charge_date: string; // YYYY-MM-DD (sales.created_at)
   usd_amount: number;
   store: string | null;
+  sku: string | null;
+  currency_code: string | null;
 }
 
 /**
@@ -418,14 +420,14 @@ export async function syncKineduRefunds(fromDate: string): Promise<{ synced: num
                MIN(r.refund_date) AS refund_date,
                DATE(s.created_at) AS charge_date,
                CAST(s.usd_amount AS FLOAT64) AS usd_amount,
-               s.store
+               s.store, s.sku, s.currency_code
         FROM \`celtic-music-240111.aws_kinedu_app_import.refunds\` r
         JOIN \`celtic-music-240111.aws_kinedu_app_import.sales\` s ON s.id = r.sale_id
         WHERE r.refund_date >= @fromDate
           AND r.sale_id IS NOT NULL
           AND COALESCE(r.__hevo__marked_deleted, FALSE) = FALSE
           AND s.fraud = 0 AND s.livemode = 1
-        GROUP BY r.sale_id, charge_date, usd_amount, s.store
+        GROUP BY r.sale_id, charge_date, usd_amount, s.store, s.sku, s.currency_code
       `,
       params: { fromDate },
     });
@@ -437,6 +439,8 @@ export async function syncKineduRefunds(fromDate: string): Promise<{ synced: num
       charge_date: asDate(r.charge_date),
       usd_amount: Number(r.usd_amount) || 0,
       store: r.store as string | null,
+      sku: r.sku as string | null,
+      currency_code: r.currency_code as string | null,
     }));
   } else {
     const ssh = await connectSSH();
@@ -446,12 +450,12 @@ export async function syncKineduRefunds(fromDate: string): Promise<{ synced: num
         `SELECT r.sale_id,
                 DATE_FORMAT(MIN(r.refund_date), '%Y-%m-%d') AS refund_date,
                 DATE_FORMAT(s.created_at, '%Y-%m-%d') AS charge_date,
-                s.usd_amount, s.store
+                s.usd_amount, s.store, s.sku, s.currency_code
          FROM refunds r
          JOIN sales s ON s.id = r.sale_id
          WHERE r.refund_date >= ? AND r.sale_id IS NOT NULL
            AND s.fraud = 0 AND s.livemode = 1
-         GROUP BY r.sale_id, s.created_at, s.usd_amount, s.store`,
+         GROUP BY r.sale_id, s.created_at, s.usd_amount, s.store, s.sku, s.currency_code`,
         [fromDate]
       );
       rows = (rawRows as Record<string, unknown>[]).map((r) => ({
@@ -460,6 +464,8 @@ export async function syncKineduRefunds(fromDate: string): Promise<{ synced: num
         charge_date: String(r.charge_date),
         usd_amount: Number(r.usd_amount) || 0,
         store: r.store as string | null,
+        sku: r.sku as string | null,
+        currency_code: r.currency_code as string | null,
       }));
     } finally {
       try { await mysqlConn.end(); } catch { /* ignore */ }
@@ -482,6 +488,8 @@ export async function syncKineduRefunds(fromDate: string): Promise<{ synced: num
     charge_date: r.charge_date,
     usd_amount: r.usd_amount,
     source: mapStore(r.store),
+    sku: r.sku,
+    country_code: getCountryFromCurrency(r.currency_code),
   }));
 
   const supabase = createServerClient();

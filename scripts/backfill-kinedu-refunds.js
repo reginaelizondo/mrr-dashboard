@@ -21,6 +21,13 @@ function mapStore(store) {
   return 'stripe'; // webapp, stripe, webapp-partners
 }
 
+// Same approximation the dashboard sync uses (getCountryFromCurrency)
+function countryFromCurrency(cc) {
+  if (!cc) return null;
+  const map = { MXN: 'MX', BRL: 'BR', USD: 'US', CAD: 'CA', GBP: 'GB', EUR: 'EU', COP: 'CO', AED: 'AE', AUD: 'AU' };
+  return map[String(cc).toUpperCase()] || null;
+}
+
 async function main() {
   const bq = new BigQuery({
     projectId: process.env.BIGQUERY_PROJECT_ID || 'celtic-music-240111',
@@ -38,14 +45,14 @@ async function main() {
              MIN(r.refund_date) AS refund_date,
              DATE(s.created_at) AS charge_date,
              CAST(s.usd_amount AS FLOAT64) AS usd_amount,
-             s.store
+             s.store, s.sku, s.currency_code
       FROM \`celtic-music-240111.aws_kinedu_app_import.refunds\` r
       JOIN \`celtic-music-240111.aws_kinedu_app_import.sales\` s ON s.id = r.sale_id
       WHERE r.sale_id IS NOT NULL
         AND r.refund_date IS NOT NULL
         AND COALESCE(r.__hevo__marked_deleted, FALSE) = FALSE
         AND s.fraud = 0 AND s.livemode = 1
-      GROUP BY r.sale_id, charge_date, usd_amount, s.store
+      GROUP BY r.sale_id, charge_date, usd_amount, s.store, s.sku, s.currency_code
     `,
   });
   console.log(`Fetched ${rows.length} unique refunded sales`);
@@ -57,6 +64,8 @@ async function main() {
     charge_date: asDate(r.charge_date),
     usd_amount: Number(r.usd_amount) || 0,
     source: mapStore(r.store),
+    sku: r.sku || null,
+    country_code: countryFromCurrency(r.currency_code),
   }));
 
   const BATCH = 500;
