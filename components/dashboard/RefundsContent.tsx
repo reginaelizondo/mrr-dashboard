@@ -661,7 +661,15 @@ type MonthlySortKey =
   | 'refund_rate_units'
   | 'charge_gross'
   | 'refund_gross'
-  | 'refund_rate_amount';
+  | 'refund_rate_amount'
+  | 'rate_units_gross'
+  | 'rate_amount_gross';
+
+/** Row + both rate bases so the table can show and sort by either. */
+type MonthlyDerivedRow = RefundMonthlyRow & {
+  rate_units_gross: number;
+  rate_amount_gross: number;
+};
 
 function MonthlyDetailTable({
   rows,
@@ -674,8 +682,14 @@ function MonthlyDetailTable({
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   const sorted = useMemo(() => {
-    const copy = [...rows];
-    copy.sort((a, b) => {
+    // Gross basis = refunds ÷ charges. Net basis (the stored rates) =
+    // refunds ÷ (charges − refunds), which is what App Store Connect reports.
+    const derived: MonthlyDerivedRow[] = rows.map((r) => ({
+      ...r,
+      rate_units_gross: r.charge_units > 0 ? r.refund_units / r.charge_units : 0,
+      rate_amount_gross: r.charge_gross > 0 ? r.refund_gross / r.charge_gross : 0,
+    }));
+    derived.sort((a, b) => {
       const av = a[sortKey];
       const bv = b[sortKey];
       if (typeof av === 'string' && typeof bv === 'string') {
@@ -683,7 +697,7 @@ function MonthlyDetailTable({
       }
       return sortDir === 'asc' ? Number(av) - Number(bv) : Number(bv) - Number(av);
     });
-    return copy;
+    return derived;
   }, [rows, sortKey, sortDir]);
 
   function header(label: string, key: MonthlySortKey, align: 'left' | 'right') {
@@ -715,13 +729,15 @@ function MonthlyDetailTable({
 
   // Heat-map bounds over the rows on screen (both rate columns scale independently)
   const heat = useMemo(() => {
-    const u = rows.map((r) => r.refund_rate_units * 100);
-    const a = rows.map((r) => r.refund_rate_amount * 100);
+    const bounds = (vals: number[]) => ({
+      min: vals.length ? Math.min(...vals) : 0,
+      max: vals.length ? Math.max(...vals) : 0,
+    });
     return {
-      uMin: u.length ? Math.min(...u) : 0,
-      uMax: u.length ? Math.max(...u) : 0,
-      aMin: a.length ? Math.min(...a) : 0,
-      aMax: a.length ? Math.max(...a) : 0,
+      uG: bounds(rows.map((r) => (r.charge_units > 0 ? (r.refund_units / r.charge_units) * 100 : 0))),
+      uN: bounds(rows.map((r) => r.refund_rate_units * 100)),
+      aG: bounds(rows.map((r) => (r.charge_gross > 0 ? (r.refund_gross / r.charge_gross) * 100 : 0))),
+      aN: bounds(rows.map((r) => r.refund_rate_amount * 100)),
     };
   }, [rows]);
 
@@ -744,8 +760,10 @@ function MonthlyDetailTable({
           {granularity === 'weekly' ? 'Weekly' : 'Monthly'} Detail
         </CardTitle>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Rate cells are heat-mapped: the darker the red, the higher that period&apos;s rate
-          relative to the rest on screen. Click any column header to sort.
+          <span className="font-medium">Gross</span> = refunds ÷ charges (share of the period&apos;s
+          sales given back). <span className="font-medium">Net</span> = refunds ÷ (charges − refunds)
+          — the App Store Connect definition, always the higher of the two. Rate cells are
+          heat-mapped (darker = higher within this view); click any header to sort.
         </p>
       </CardHeader>
       <CardContent>
@@ -758,14 +776,18 @@ function MonthlyDetailTable({
                 {header('Charged $', 'charge_gross', 'right')}
                 {header('Refunded', 'refund_units', 'right')}
                 {header('Refunded $', 'refund_gross', 'right')}
-                {header('Rate (units)', 'refund_rate_units', 'right')}
-                {header('Rate ($)', 'refund_rate_amount', 'right')}
+                {header('Rate units (gross)', 'rate_units_gross', 'right')}
+                {header('Rate units (net)', 'refund_rate_units', 'right')}
+                {header('Rate $ (gross)', 'rate_amount_gross', 'right')}
+                {header('Rate $ (net)', 'refund_rate_amount', 'right')}
               </tr>
             </thead>
             <tbody>
               {sorted.map((r) => {
                 const rateU = r.refund_rate_units * 100;
                 const rateA = r.refund_rate_amount * 100;
+                const rateUG = r.rate_units_gross * 100;
+                const rateAG = r.rate_amount_gross * 100;
                 return (
                   <tr
                     key={r.month}
@@ -784,10 +806,16 @@ function MonthlyDetailTable({
                     <td className="text-right py-2 px-3 tabular-nums">
                       {formatCurrency(r.refund_gross)}
                     </td>
-                    <td className="text-right py-2 px-3 tabular-nums font-semibold" style={heatStyle(rateU, heat.uMin, heat.uMax)}>
+                    <td className="text-right py-2 px-3 tabular-nums font-semibold" style={heatStyle(rateUG, heat.uG.min, heat.uG.max)}>
+                      {rateUG.toFixed(2)}%
+                    </td>
+                    <td className="text-right py-2 px-3 tabular-nums font-semibold" style={heatStyle(rateU, heat.uN.min, heat.uN.max)}>
                       {rateU.toFixed(2)}%
                     </td>
-                    <td className="text-right py-2 px-3 tabular-nums font-semibold" style={heatStyle(rateA, heat.aMin, heat.aMax)}>
+                    <td className="text-right py-2 px-3 tabular-nums font-semibold" style={heatStyle(rateAG, heat.aG.min, heat.aG.max)}>
+                      {rateAG.toFixed(2)}%
+                    </td>
+                    <td className="text-right py-2 px-3 tabular-nums font-semibold" style={heatStyle(rateA, heat.aN.min, heat.aN.max)}>
                       {rateA.toFixed(2)}%
                     </td>
                   </tr>
@@ -820,7 +848,13 @@ function MonthlyDetailTable({
                     {formatCurrency(totalRefundGross)}
                   </td>
                   <td className="text-right py-2.5 px-3 tabular-nums text-[#7A1F1F]">
+                    {(totalCharges > 0 ? (totalRefunds / totalCharges) * 100 : 0).toFixed(2)}%
+                  </td>
+                  <td className="text-right py-2.5 px-3 tabular-nums text-[#7A1F1F]">
                     {totalRateUnits.toFixed(2)}%
+                  </td>
+                  <td className="text-right py-2.5 px-3 tabular-nums text-[#7A1F1F]">
+                    {(totalChargeGross > 0 ? (totalRefundGross / totalChargeGross) * 100 : 0).toFixed(2)}%
                   </td>
                   <td className="text-right py-2.5 px-3 tabular-nums text-[#7A1F1F]">
                     {totalRateAmount.toFixed(2)}%

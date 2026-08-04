@@ -29,7 +29,15 @@ type SortKey =
   | 'refunded_gross'
   | 'cohort_rate_units'
   | 'cohort_rate_amount'
+  | 'rate_units_net'
+  | 'rate_amount_net'
   | 'avg_days_to_refund';
+
+/** Cohort row + the net-basis rates so both definitions are visible. */
+type CohortDerivedRow = RefundCohortRow & {
+  rate_units_net: number;
+  rate_amount_net: number;
+};
 
 interface Props {
   cohorts: Record<CohortSource, RefundCohortRow[]>;
@@ -62,7 +70,20 @@ export function RefundCohortsSection({ cohorts, breakdowns, granularity, matureT
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
   const sorted = useMemo(() => {
-    const copy = [...rows];
+    // Stored rates are GROSS (refunded ÷ charged). Net basis divides by
+    // (charged − refunded) — the App Store Connect definition used in the
+    // calendar view above, so both can be compared side by side.
+    const copy: CohortDerivedRow[] = rows.map((r) => ({
+      ...r,
+      rate_units_net:
+        r.charge_units > r.refunded_units
+          ? r.refunded_units / (r.charge_units - r.refunded_units)
+          : 0,
+      rate_amount_net:
+        r.charge_gross > r.refunded_gross
+          ? r.refunded_gross / (r.charge_gross - r.refunded_gross)
+          : 0,
+    }));
     copy.sort((a, b) => {
       const av = a[sortKey];
       const bv = b[sortKey];
@@ -76,13 +97,23 @@ export function RefundCohortsSection({ cohorts, breakdowns, granularity, matureT
 
   // Heat-map bounds over the rows on screen (each rate column scales on its own)
   const heat = useMemo(() => {
-    const u = rows.map((r) => r.cohort_rate_units * 100);
-    const a = rows.map((r) => r.cohort_rate_amount * 100);
+    const bounds = (vals: number[]) => ({
+      min: vals.length ? Math.min(...vals) : 0,
+      max: vals.length ? Math.max(...vals) : 0,
+    });
+    const netU = (r: RefundCohortRow) =>
+      r.charge_units > r.refunded_units
+        ? (r.refunded_units / (r.charge_units - r.refunded_units)) * 100
+        : 0;
+    const netA = (r: RefundCohortRow) =>
+      r.charge_gross > r.refunded_gross
+        ? (r.refunded_gross / (r.charge_gross - r.refunded_gross)) * 100
+        : 0;
     return {
-      uMin: u.length ? Math.min(...u) : 0,
-      uMax: u.length ? Math.max(...u) : 0,
-      aMin: a.length ? Math.min(...a) : 0,
-      aMax: a.length ? Math.max(...a) : 0,
+      uG: bounds(rows.map((r) => r.cohort_rate_units * 100)),
+      uN: bounds(rows.map(netU)),
+      aG: bounds(rows.map((r) => r.cohort_rate_amount * 100)),
+      aN: bounds(rows.map(netA)),
     };
   }, [rows]);
 
@@ -203,8 +234,11 @@ export function RefundCohortsSection({ cohorts, breakdowns, granularity, matureT
             <CardHeader>
               <CardTitle className="text-base font-semibold text-[#0E3687]">Cohort Detail</CardTitle>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Rate cells are heat-mapped: the darker the red, the higher that cohort&apos;s rate
-                relative to the rest on screen. Click any column header to sort.
+                <span className="font-medium">Gross</span> = refunded ÷ charged (share of that
+                cohort&apos;s sales given back). <span className="font-medium">Net</span> = refunded ÷
+                (charged − refunded) — the App Store Connect definition, comparable with the calendar
+                table above. Rate cells are heat-mapped (darker = higher within this view); click any
+                header to sort.
               </p>
             </CardHeader>
             <CardContent className="overflow-x-auto">
@@ -216,8 +250,10 @@ export function RefundCohortsSection({ cohorts, breakdowns, granularity, matureT
                     {header('Charged $', 'charge_gross', 'right')}
                     {header('Refunded', 'refunded_units', 'right')}
                     {header('Refunded $', 'refunded_gross', 'right')}
-                    {header('Rate (units)', 'cohort_rate_units', 'right')}
-                    {header('Rate ($)', 'cohort_rate_amount', 'right')}
+                    {header('Rate units (gross)', 'cohort_rate_units', 'right')}
+                    {header('Rate units (net)', 'rate_units_net', 'right')}
+                    {header('Rate $ (gross)', 'cohort_rate_amount', 'right')}
+                    {header('Rate $ (net)', 'rate_amount_net', 'right')}
                     {header('Avg days to refund', 'avg_days_to_refund', 'right')}
                   </tr>
                 </thead>
@@ -234,11 +270,17 @@ export function RefundCohortsSection({ cohorts, breakdowns, granularity, matureT
                         <td className="py-2 px-3 text-right tabular-nums">{formatCurrency(r.charge_gross)}</td>
                         <td className="py-2 px-3 text-right tabular-nums">{r.refunded_units.toLocaleString()}</td>
                         <td className="py-2 px-3 text-right tabular-nums">{formatCurrency(r.refunded_gross)}</td>
-                        <td className="py-2 px-3 text-right tabular-nums font-semibold" style={heatStyle(r.cohort_rate_units * 100, heat.uMin, heat.uMax)}>
+                        <td className="py-2 px-3 text-right tabular-nums font-semibold" style={heatStyle(r.cohort_rate_units * 100, heat.uG.min, heat.uG.max)}>
                           {(r.cohort_rate_units * 100).toFixed(1)}%
                         </td>
-                        <td className="py-2 px-3 text-right tabular-nums font-semibold" style={heatStyle(r.cohort_rate_amount * 100, heat.aMin, heat.aMax)}>
+                        <td className="py-2 px-3 text-right tabular-nums font-semibold" style={heatStyle(r.rate_units_net * 100, heat.uN.min, heat.uN.max)}>
+                          {(r.rate_units_net * 100).toFixed(1)}%
+                        </td>
+                        <td className="py-2 px-3 text-right tabular-nums font-semibold" style={heatStyle(r.cohort_rate_amount * 100, heat.aG.min, heat.aG.max)}>
                           {(r.cohort_rate_amount * 100).toFixed(1)}%
+                        </td>
+                        <td className="py-2 px-3 text-right tabular-nums font-semibold" style={heatStyle(r.rate_amount_net * 100, heat.aN.min, heat.aN.max)}>
+                          {(r.rate_amount_net * 100).toFixed(1)}%
                         </td>
                         <td className="py-2 px-3 text-right tabular-nums">
                           {r.avg_days_to_refund === null ? '—' : Math.round(r.avg_days_to_refund)}
