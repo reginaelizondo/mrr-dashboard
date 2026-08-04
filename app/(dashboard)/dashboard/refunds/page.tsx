@@ -11,6 +11,8 @@ import {
   getLastAppleSalesSync,
   getRefundCohorts,
   getRefundCohortBreakdowns,
+  getGenericRefundsByWeek,
+  getCalendarBreakdowns,
 } from '@/lib/refunds';
 import { RefundsContent } from '@/components/dashboard/RefundsContent';
 import { RefundCohortsSection } from '@/components/dashboard/RefundCohortsSection';
@@ -111,12 +113,18 @@ export default async function RefundsPage({
     return null;
   });
 
-  const [apple, google, stripe, appleWeekly, appleBreakdowns, lastSync, cohortAll, cohortApple, cohortGoogle, cohortStripe, cbAll, cbApple, cbGoogle, cbStripe] = await Promise.all([
+  const [apple, google, stripe, appleWeekly, googleWeekly, stripeWeekly, appleBreakdowns, lastSync, cohortAll, cohortApple, cohortGoogle, cohortStripe, cbAll, cbApple, cbGoogle, cbStripe, calAll, calGoogle, calStripe] = await Promise.all([
     getRefundsByMonth('apple', range.startMonth, range.endMonth, countries),
     getRefundsByMonth('google', range.startMonth, range.endMonth),
     getRefundsByMonth('stripe', range.startMonth, range.endMonth),
     granularity === 'weekly'
       ? getAppleRefundsByWeek(range.startDate, range.endDate, countries)
+      : Promise.resolve([]),
+    granularity === 'weekly'
+      ? getGenericRefundsByWeek('google', range.startDate, range.endDate)
+      : Promise.resolve([]),
+    granularity === 'weekly'
+      ? getGenericRefundsByWeek('stripe', range.startDate, range.endDate)
       : Promise.resolve([]),
     breakdownsWithTimeout,
     getLastAppleSalesSync(),
@@ -129,6 +137,10 @@ export default async function RefundsPage({
     getRefundCohortBreakdowns('apple', range.startMonth, range.endMonth),
     getRefundCohortBreakdowns('google', range.startMonth, range.endMonth),
     getRefundCohortBreakdowns('stripe', range.startMonth, range.endMonth),
+    // Calendar-basis segmentation for the non-Apple store views
+    getCalendarBreakdowns('all', range.startMonth, range.endMonth),
+    getCalendarBreakdowns('google', range.startMonth, range.endMonth),
+    getCalendarBreakdowns('stripe', range.startMonth, range.endMonth),
   ]);
 
   // A cohort is "mature" once ~45 days have passed since the END of its month
@@ -165,8 +177,9 @@ export default async function RefundsPage({
       <Suspense fallback={<Skeleton className="h-96 w-full" />}>
         <RefundsContent
           data={data}
-          appleWeekly={appleWeekly}
+          weekly={{ apple: appleWeekly, google: googleWeekly, stripe: stripeWeekly }}
           appleBreakdowns={appleBreakdowns}
+          calendarBreakdowns={{ all: calAll, apple: calAll, google: calGoogle, stripe: calStripe }}
           lastSync={lastSync}
           preset={range.preset}
           startDate={range.startDate}

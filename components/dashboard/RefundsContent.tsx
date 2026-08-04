@@ -31,7 +31,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { formatCurrency } from '@/lib/constants';
-import type { RefundMonthlyRow, AppleRefundBreakdowns, BreakdownRow } from '@/lib/refunds';
+import type { RefundMonthlyRow, AppleRefundBreakdowns, BreakdownRow, RefundCohortBreakdowns } from '@/lib/refunds';
 import type { Source } from '@/types';
 
 type Preset = '3m' | '6m' | '12m' | 'ytd' | 'all' | 'custom';
@@ -46,8 +46,9 @@ interface SyncInfo {
 
 interface Props {
   data: Record<Source, RefundMonthlyRow[]>;
-  appleWeekly: RefundMonthlyRow[];
+  weekly: Record<Source, RefundMonthlyRow[]>;
   appleBreakdowns: AppleRefundBreakdowns | null;
+  calendarBreakdowns: Record<'all' | Source, RefundCohortBreakdowns>;
   lastSync: SyncInfo;
   preset: Preset;
   startDate: string;
@@ -118,8 +119,9 @@ function formatTimeAgo(iso: string | null): string {
 
 export function RefundsContent({
   data,
-  appleWeekly,
+  weekly,
   appleBreakdowns,
+  calendarBreakdowns,
   lastSync,
   preset,
   startDate,
@@ -159,10 +161,7 @@ export function RefundsContent({
     startTransition(() => router.push(url));
   };
 
-  // Weekly view is Apple-only (only the SALES report has daily granularity).
-  // For Google/Stripe/All always show monthly.
-  const effectiveGranularity: Granularity =
-    granularity === 'weekly' && source === 'apple' ? 'weekly' : 'monthly';
+  const effectiveGranularity: Granularity = granularity === 'weekly' ? 'weekly' : 'monthly';
 
   // 'All stores' = sum of the three sources per month, rates recomputed net-basis.
   const allRows = useMemo<RefundMonthlyRow[]>(() => {
@@ -189,8 +188,36 @@ export function RefundsContent({
     return merged;
   }, [data]);
 
+  // Weekly 'All stores' = merge the three sources' ISO weeks (Apple from the
+  // SALES report, Google/Stripe from transactions), net-basis rates recomputed.
+  const allWeekly = useMemo<RefundMonthlyRow[]>(() => {
+    const map = new Map<string, RefundMonthlyRow>();
+    for (const src of ['apple', 'google', 'stripe'] as Source[]) {
+      for (const r of weekly[src] || []) {
+        const prev = map.get(r.month);
+        if (!prev) map.set(r.month, { ...r });
+        else {
+          prev.charge_units += r.charge_units;
+          prev.refund_units += r.refund_units;
+          prev.charge_gross += r.charge_gross;
+          prev.refund_gross += r.refund_gross;
+        }
+      }
+    }
+    const merged = [...map.values()].sort((a, b) => a.month.localeCompare(b.month));
+    for (const r of merged) {
+      const netUnits = r.charge_units - r.refund_units;
+      const netGross = r.charge_gross - r.refund_gross;
+      r.refund_rate_units = netUnits > 0 ? r.refund_units / netUnits : 0;
+      r.refund_rate_amount = netGross > 0 ? r.refund_gross / netGross : 0;
+    }
+    return merged;
+  }, [weekly]);
+
   const rows: RefundMonthlyRow[] =
-    effectiveGranularity === 'weekly' ? appleWeekly : source === 'all' ? allRows : data[source] || [];
+    effectiveGranularity === 'weekly'
+      ? source === 'all' ? allWeekly : weekly[source] || []
+      : source === 'all' ? allRows : data[source] || [];
 
   function urlParams(overrides: Record<string, string | undefined>): string {
     const sp = new URLSearchParams();
@@ -344,7 +371,7 @@ export function RefundsContent({
               Granularity
             </span>
             {(['monthly', 'weekly'] as const).map((g) => {
-              const disabled = g === 'weekly' && source !== 'apple';
+              const disabled = false;
               return (
                 <button
                   key={g}
@@ -565,7 +592,14 @@ export function RefundsContent({
       <MonthlyDetailTable rows={rows} granularity={effectiveGranularity} />
 
       {/* Apple-only segmentation from SUBSCRIPTION_EVENT report */}
-      {source === 'apple' && <AppleBreakdownSections breakdowns={appleBreakdowns} />}
+      {source === 'apple' ? (
+        <AppleBreakdownSections breakdowns={appleBreakdowns} />
+      ) : (
+        <CalendarBreakdownSections
+          breakdowns={calendarBreakdowns[source]}
+          label={SOURCES.find((s) => s.key === source)?.label || source}
+        />
+      )}
 
       {/* Findings & takeaways — only meaningful for Apple */}
       {source === 'apple' && appleBreakdowns?.hasData && (
@@ -770,6 +804,52 @@ function MonthlyDetailTable({
 // ============================================================================
 // Apple SUBSCRIPTION_EVENT-based segmentation
 // ============================================================================
+
+function CalendarBreakdownSections({
+  breakdowns,
+  label,
+}: {
+  breakdowns: RefundCohortBreakdowns | undefined;
+  label: string;
+}) {
+  if (!breakdowns || !breakdowns.hasData) return null;
+  return (
+    <>
+      <div className="pt-2 border-t border-border/40">
+        <div className="flex flex-wrap items-center gap-3">
+          <h2 className="text-lg font-bold text-[#0E3687]">Refund Segmentation — {label}</h2>
+          <span className="rounded-full bg-[#0086D8]/10 px-2.5 py-0.5 text-xs font-medium text-[#0086D8]">
+            calendar basis
+          </span>
+        </div>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Refunds that happened in the selected window, by charge attributes (exact backend
+          linkage). Country ≈ from charge currency. Renewal-stage, days-to-refund and offer-type
+          exist only for iOS (Apple event feed) — switch Source to iOS (Apple) to see them.
+          Cohort-basis version lives in the &ldquo;Refunds by Cohort&rdquo; section below.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <BreakdownTable
+          title="By SKU (top 15)"
+          subtitle="Concentrate fixes on the worst offenders"
+          rows={breakdowns.bySku}
+        />
+        <BreakdownTable
+          title="By country (top 15)"
+          subtitle="Country ≈ from charge currency (USD groups several countries)"
+          rows={breakdowns.byCountry}
+        />
+        <BreakdownTable
+          title="By plan duration"
+          subtitle="Annual refunds hurt the most financially"
+          rows={breakdowns.byPlanDuration}
+        />
+      </div>
+    </>
+  );
+}
 
 function AppleBreakdownSections({
   breakdowns,

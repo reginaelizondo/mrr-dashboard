@@ -203,6 +203,105 @@ export async function getAppleRefundsByWeek(
 }
 
 /**
+ * Google/Stripe weekly aggregation from `transactions` (migration 022).
+ * Same shape as getAppleRefundsByWeek so the chart components can mix sources.
+ */
+export async function getGenericRefundsByWeek(
+  source: Source,
+  startDate: string,
+  endDate: string
+): Promise<RefundMonthlyRow[]> {
+  const supabase = createServerClient();
+  const { data, error } = await supabase.rpc('transactions_refunds_weekly_range', {
+    src: source,
+    start_date: startDate,
+    end_date: endDate,
+  });
+  if (error) {
+    console.error('[refunds] transactions_refunds_weekly_range error:', error.message);
+    return [];
+  }
+  return (data || []).map(
+    (r: { week_start: string; week_end: string; charge_units: number; refund_units: number; charge_gross: number; refund_gross: number }) => {
+      const charge_units = Number(r.charge_units || 0);
+      const refund_units = Number(r.refund_units || 0);
+      const charge_gross = Number(r.charge_gross || 0);
+      const refund_gross = Number(r.refund_gross || 0);
+      const net_units = charge_units - refund_units;
+      const net_gross = charge_gross - refund_gross;
+      return {
+        month: r.week_start,
+        week_end: r.week_end,
+        charge_units,
+        refund_units,
+        charge_gross,
+        refund_gross,
+        refund_rate_units: net_units > 0 ? refund_units / net_units : 0,
+        refund_rate_amount: net_gross > 0 ? refund_gross / net_gross : 0,
+      };
+    }
+  );
+}
+
+/**
+ * CALENDAR-basis segmentation (SKU / country / plan duration) for any store,
+ * from the exact backend charge↔refund linkage (migration 022). Lets the
+ * segmentation section follow the store filter instead of being iOS-only.
+ * refund_rate is net-basis (refunds / (paid − refunds)) to match the page.
+ */
+export async function getCalendarBreakdowns(
+  source: Source | 'all',
+  startMonth: string,
+  endMonth: string
+): Promise<RefundCohortBreakdowns> {
+  const supabase = createServerClient();
+
+  type Row = { bucket: string; refunds: number; paid_events: number };
+  const call = (dim: string, topN: number) =>
+    supabase.rpc('refund_calendar_breakdown', {
+      dim,
+      src: source,
+      start_month: startMonth,
+      end_month: endMonth,
+      top_n: topN,
+    });
+
+  const [skuRes, countryRes, durationRes] = await Promise.all([
+    call('sku', 15),
+    call('country', 15),
+    call('duration', 10),
+  ]);
+
+  for (const [name, res] of [['sku', skuRes], ['country', countryRes], ['duration', durationRes]] as const) {
+    if (res.error) console.error(`[refunds] refund_calendar_breakdown ${name} error:`, res.error.message);
+  }
+
+  const toRows = (rows: Row[] | null | undefined): BreakdownRow[] =>
+    (rows || []).map((r) => {
+      const refunds = Number(r.refunds || 0);
+      const paid = Number(r.paid_events || 0);
+      const net = paid - refunds;
+      return {
+        bucket: r.bucket,
+        refunds,
+        paid_events: paid,
+        refund_rate: net > 0 ? refunds / net : paid > 0 ? refunds / paid : 0,
+      };
+    });
+
+  const bySku = toRows(skuRes.data as Row[] | null);
+  const byCountry = toRows(countryRes.data as Row[] | null);
+  const byPlanDuration = toRows(durationRes.data as Row[] | null);
+
+  return {
+    bySku,
+    byCountry,
+    byPlanDuration,
+    hasData: bySku.length > 0 || byCountry.length > 0 || byPlanDuration.length > 0,
+  };
+}
+
+/**
  * Top N countries by gross USD in the Apple Sales Report for a given range.
  * Used to populate the country filter dropdown on the Refunds page.
  */
