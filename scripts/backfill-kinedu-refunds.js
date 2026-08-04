@@ -1,16 +1,25 @@
 #!/usr/bin/env node
 /**
- * One-off backfill: loads the ENTIRE kinedu backend `refunds` table
- * (sale_id → refund_date) from BigQuery into Supabase `kinedu_refunds`.
+ * One-off backfill: loads the ENTIRE kinedu backend `refunds` table into
+ * Supabase `kinedu_refunds`, INCLUDING the original charge info (date, USD
+ * amount, store) from `sales` — refunded charges flip payment_status
+ * 'paid'→'canceled' and get dropped from `transactions` on re-sync, so the
+ * cohort view needs the charge data carried here.
  *
- * Prereq: migration 018_refund_cohorts.sql applied in Supabase.
+ * Prereq: migration 019_refund_cohorts_v2.sql applied in Supabase.
  * Usage:   node scripts/backfill-kinedu-refunds.js
- *
- * After this, the daily cron keeps the last 45 days fresh automatically.
  */
 require('dotenv').config({ path: '.env.local' });
 const { BigQuery } = require('@google-cloud/bigquery');
 const { createClient } = require('@supabase/supabase-js');
+
+function mapStore(store) {
+  if (!store) return 'stripe';
+  const s = String(store).toLowerCase();
+  if (s === 'apple') return 'apple';
+  if (s === 'google') return 'google';
+  return 'stripe'; // webapp, stripe, webapp-partners
+}
 
 async function main() {
   const bq = new BigQuery({
@@ -22,28 +31,33 @@ async function main() {
     process.env.SUPABASE_SERVICE_ROLE_KEY
   );
 
-  console.log('Fetching all refunds from BigQuery…');
+  console.log('Fetching all refunds (+ original charge info) from BigQuery…');
   const [rows] = await bq.query({
     query: `
-      SELECT sale_id, refund_date
-      FROM \`celtic-music-240111.aws_kinedu_app_import.refunds\`
-      WHERE sale_id IS NOT NULL
-        AND refund_date IS NOT NULL
-        AND COALESCE(__hevo__marked_deleted, FALSE) = FALSE
+      SELECT r.sale_id,
+             MIN(r.refund_date) AS refund_date,
+             DATE(s.created_at) AS charge_date,
+             CAST(s.usd_amount AS FLOAT64) AS usd_amount,
+             s.store
+      FROM \`celtic-music-240111.aws_kinedu_app_import.refunds\` r
+      JOIN \`celtic-music-240111.aws_kinedu_app_import.sales\` s ON s.id = r.sale_id
+      WHERE r.sale_id IS NOT NULL
+        AND r.refund_date IS NOT NULL
+        AND COALESCE(r.__hevo__marked_deleted, FALSE) = FALSE
+        AND s.fraud = 0 AND s.livemode = 1
+      GROUP BY r.sale_id, charge_date, usd_amount, s.store
     `,
   });
-  console.log(`Fetched ${rows.length} refund rows`);
+  console.log(`Fetched ${rows.length} unique refunded sales`);
 
-  // Dedup by sale_id keeping earliest refund_date
-  const bySale = new Map();
-  for (const r of rows) {
-    const d = typeof r.refund_date === 'object' ? r.refund_date.value : String(r.refund_date);
-    const id = Number(r.sale_id);
-    const prev = bySale.get(id);
-    if (!prev || d < prev) bySale.set(id, d);
-  }
-  const deduped = Array.from(bySale, ([sale_id, refund_date]) => ({ sale_id, refund_date }));
-  console.log(`${deduped.length} unique sale_ids after dedup`);
+  const asDate = (v) => (typeof v === 'object' && v !== null ? v.value : String(v));
+  const deduped = rows.map((r) => ({
+    sale_id: Number(r.sale_id),
+    refund_date: asDate(r.refund_date),
+    charge_date: asDate(r.charge_date),
+    usd_amount: Number(r.usd_amount) || 0,
+    source: mapStore(r.store),
+  }));
 
   const BATCH = 500;
   let ok = 0;
@@ -60,12 +74,12 @@ async function main() {
   }
   console.log(`Done: ${ok}/${deduped.length} refunds in kinedu_refunds`);
 
-  // Sanity: count linked charges on a recent month
+  // Sanity: Jan-2026 should show ~1,098 refunded charges (validated in BigQuery)
   const { data, error } = await supabase.rpc('refund_cohorts_monthly', {
     src: 'all', start_month: '2026-01', end_month: '2026-01',
   });
-  if (error) console.error('Sanity RPC error (did you apply migration 018?):', error.message);
-  else console.log('Sanity check 2026-01:', JSON.stringify(data));
+  if (error) console.error('Sanity RPC error (did you apply migration 019?):', error.message);
+  else console.log('Sanity check 2026-01 (expect ~1,098 refunded):', JSON.stringify(data));
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

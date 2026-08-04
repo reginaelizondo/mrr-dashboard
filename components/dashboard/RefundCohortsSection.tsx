@@ -88,7 +88,7 @@ export function RefundCohortsSection({ cohorts, matureThrough }: Props) {
       {!hasData ? (
         <Card>
           <CardContent className="py-10 text-center text-sm text-muted-foreground">
-            No cohort data yet. Apply migration <code>018_refund_cohorts.sql</code> in Supabase and run{' '}
+            No cohort data yet. Apply migration <code>019_refund_cohorts_v2.sql</code> in Supabase and run{' '}
             <code>node scripts/backfill-kinedu-refunds.js</code> to populate the charge↔refund linkage.
           </CardContent>
         </Card>
@@ -171,8 +171,10 @@ export function RefundCohortsSection({ cohorts, matureThrough }: Props) {
               </table>
               <p className="mt-3 text-xs text-muted-foreground">
                 Refunded $ assumes full-charge refunds (the backend records a refund against the whole
-                sale). Source: kinedu backend charges + refunds, linked by sale ID — may differ slightly
-                from the App Store Connect calendar view above, which uses Apple&apos;s own aggregate reports.
+                sale). Note: &ldquo;Charges&rdquo; here includes refunded charges in the denominator
+                (gross basis) — the rest of the dashboard drops refunded charges entirely, so this
+                Charged $ will read slightly higher than the MRR tab. May also differ from the App
+                Store Connect calendar view above, which uses Apple&apos;s own aggregate reports.
               </p>
             </CardContent>
           </Card>

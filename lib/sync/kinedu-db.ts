@@ -386,6 +386,9 @@ export async function syncKineduDB(fromDate: string, toDate: string): Promise<Sy
 interface KineduRefundRow {
   sale_id: number;
   refund_date: string; // YYYY-MM-DD
+  charge_date: string; // YYYY-MM-DD (sales.created_at)
+  usd_amount: number;
+  store: string | null;
 }
 
 /**
@@ -406,34 +409,58 @@ export async function syncKineduRefunds(fromDate: string): Promise<{ synced: num
 
   if (useBigQuery) {
     const bq = getBigQueryClient();
+    // Join to `sales` for the ORIGINAL CHARGE info (date/amount/store): refunded
+    // charges flip payment_status 'paid'→'canceled' and get dropped from
+    // `transactions` on re-sync, so the cohort view needs the charge data here.
     const [bqRows] = await bq.query({
       query: `
-        SELECT sale_id, refund_date
-        FROM \`celtic-music-240111.aws_kinedu_app_import.refunds\`
-        WHERE refund_date >= @fromDate
-          AND sale_id IS NOT NULL
-          AND COALESCE(__hevo__marked_deleted, FALSE) = FALSE
+        SELECT r.sale_id,
+               MIN(r.refund_date) AS refund_date,
+               DATE(s.created_at) AS charge_date,
+               CAST(s.usd_amount AS FLOAT64) AS usd_amount,
+               s.store
+        FROM \`celtic-music-240111.aws_kinedu_app_import.refunds\` r
+        JOIN \`celtic-music-240111.aws_kinedu_app_import.sales\` s ON s.id = r.sale_id
+        WHERE r.refund_date >= @fromDate
+          AND r.sale_id IS NOT NULL
+          AND COALESCE(r.__hevo__marked_deleted, FALSE) = FALSE
+          AND s.fraud = 0 AND s.livemode = 1
+        GROUP BY r.sale_id, charge_date, usd_amount, s.store
       `,
       params: { fromDate },
     });
+    const asDate = (v: unknown): string =>
+      typeof v === 'object' && v !== null ? (v as { value: string }).value : String(v);
     rows = (bqRows as Record<string, unknown>[]).map((r) => ({
       sale_id: Number(r.sale_id),
-      refund_date:
-        typeof r.refund_date === 'object' && r.refund_date !== null
-          ? (r.refund_date as { value: string }).value
-          : String(r.refund_date),
+      refund_date: asDate(r.refund_date),
+      charge_date: asDate(r.charge_date),
+      usd_amount: Number(r.usd_amount) || 0,
+      store: r.store as string | null,
     }));
   } else {
     const ssh = await connectSSH();
     const mysqlConn = await createTunnelConnection(ssh);
     try {
       const [rawRows] = await mysqlConn.execute(
-        `SELECT sale_id, DATE_FORMAT(refund_date, '%Y-%m-%d') AS refund_date
-         FROM refunds
-         WHERE refund_date >= ? AND sale_id IS NOT NULL`,
+        `SELECT r.sale_id,
+                DATE_FORMAT(MIN(r.refund_date), '%Y-%m-%d') AS refund_date,
+                DATE_FORMAT(s.created_at, '%Y-%m-%d') AS charge_date,
+                s.usd_amount, s.store
+         FROM refunds r
+         JOIN sales s ON s.id = r.sale_id
+         WHERE r.refund_date >= ? AND r.sale_id IS NOT NULL
+           AND s.fraud = 0 AND s.livemode = 1
+         GROUP BY r.sale_id, s.created_at, s.usd_amount, s.store`,
         [fromDate]
       );
-      rows = rawRows as KineduRefundRow[];
+      rows = (rawRows as Record<string, unknown>[]).map((r) => ({
+        sale_id: Number(r.sale_id),
+        refund_date: String(r.refund_date),
+        charge_date: String(r.charge_date),
+        usd_amount: Number(r.usd_amount) || 0,
+        store: r.store as string | null,
+      }));
     } finally {
       try { await mysqlConn.end(); } catch { /* ignore */ }
       ssh.end();
@@ -444,12 +471,18 @@ export async function syncKineduRefunds(fromDate: string): Promise<{ synced: num
   if (rows.length === 0) return { synced: 0, fetched: 0 };
 
   // Dedup by sale_id keeping the earliest refund_date (a sale is refunded once)
-  const bySale = new Map<number, string>();
+  const bySale = new Map<number, KineduRefundRow>();
   for (const r of rows) {
     const prev = bySale.get(r.sale_id);
-    if (!prev || r.refund_date < prev) bySale.set(r.sale_id, r.refund_date);
+    if (!prev || r.refund_date < prev.refund_date) bySale.set(r.sale_id, r);
   }
-  const deduped = Array.from(bySale, ([sale_id, refund_date]) => ({ sale_id, refund_date }));
+  const deduped = Array.from(bySale.values(), (r) => ({
+    sale_id: r.sale_id,
+    refund_date: r.refund_date,
+    charge_date: r.charge_date,
+    usd_amount: r.usd_amount,
+    source: mapStore(r.store),
+  }));
 
   const supabase = createServerClient();
   const BATCH_SIZE = 500;
