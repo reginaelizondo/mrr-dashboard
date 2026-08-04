@@ -13,6 +13,7 @@ import {
   getRefundCohortBreakdowns,
   getGenericRefundsByWeek,
   getCalendarBreakdowns,
+  getRefundCohortsWeekly,
 } from '@/lib/refunds';
 import { RefundsContent } from '@/components/dashboard/RefundsContent';
 import { RefundCohortsSection } from '@/components/dashboard/RefundCohortsSection';
@@ -113,7 +114,7 @@ export default async function RefundsPage({
     return null;
   });
 
-  const [apple, google, stripe, appleWeekly, googleWeekly, stripeWeekly, appleBreakdowns, lastSync, cohortAll, cohortApple, cohortGoogle, cohortStripe, cbAll, cbApple, cbGoogle, cbStripe, calAll, calGoogle, calStripe] = await Promise.all([
+  const [apple, google, stripe, appleWeekly, googleWeekly, stripeWeekly, appleBreakdowns, lastSync, cohortAll, cohortApple, cohortGoogle, cohortStripe, cbAll, cbApple, cbGoogle, cbStripe, calAll, calGoogle, calStripe, cwAll, cwApple, cwGoogle, cwStripe] = await Promise.all([
     getRefundsByMonth('apple', range.startMonth, range.endMonth, countries),
     getRefundsByMonth('google', range.startMonth, range.endMonth),
     getRefundsByMonth('stripe', range.startMonth, range.endMonth),
@@ -141,13 +142,25 @@ export default async function RefundsPage({
     getCalendarBreakdowns('all', range.startMonth, range.endMonth),
     getCalendarBreakdowns('google', range.startMonth, range.endMonth),
     getCalendarBreakdowns('stripe', range.startMonth, range.endMonth),
+    // Weekly cohorts — only fetched when the weekly granularity is active
+    ...(['all', 'apple', 'google', 'stripe'] as const).map((src) =>
+      granularity === 'weekly'
+        ? getRefundCohortsWeekly(src, range.startDate, range.endDate)
+        : Promise.resolve([])
+    ),
   ]);
 
-  // A cohort is "mature" once ~45 days have passed since the END of its month
-  // (refunds arrive up to ~45 days post-charge). String month math (TZ-safe).
+  // A cohort is "mature" once ~45 days have passed since the END of its period
+  // (refunds arrive up to ~45 days post-charge). The marker compares cohort keys
+  // as strings, so it must match the key format: 'YYYY-MM' for monthly cohorts,
+  // 'YYYY-MM-DD' (week start) for weekly — otherwise every week of the cutoff
+  // month would compare as immature.
   const matureCutoff = new Date();
   matureCutoff.setUTCDate(matureCutoff.getUTCDate() - 75);
-  const matureThrough = matureCutoff.toISOString().slice(0, 7);
+  const matureThrough =
+    granularity === 'weekly'
+      ? matureCutoff.toISOString().slice(0, 10)
+      : matureCutoff.toISOString().slice(0, 7);
 
   // Reuse the byCountry breakdown (already fetched) to populate the country
   // dropdown instead of a separate 6-second `apple_sales_top_countries` call.
@@ -191,7 +204,12 @@ export default async function RefundsPage({
       </Suspense>
 
       <RefundCohortsSection
-        cohorts={{ all: cohortAll, apple: cohortApple, google: cohortGoogle, stripe: cohortStripe }}
+        cohorts={
+          granularity === 'weekly'
+            ? { all: cwAll, apple: cwApple, google: cwGoogle, stripe: cwStripe }
+            : { all: cohortAll, apple: cohortApple, google: cohortGoogle, stripe: cohortStripe }
+        }
+        granularity={granularity}
         breakdowns={{ all: cbAll, apple: cbApple, google: cbGoogle, stripe: cbStripe }}
         matureThrough={matureThrough}
       />

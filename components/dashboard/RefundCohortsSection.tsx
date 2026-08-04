@@ -22,8 +22,9 @@ type CohortSource = 'all' | Source;
 
 interface Props {
   cohorts: Record<CohortSource, RefundCohortRow[]>;
+  granularity: 'monthly' | 'weekly';
   breakdowns: Record<CohortSource, RefundCohortBreakdowns>;
-  /** YYYY-MM of the newest month considered mature (refunds fully accrued). */
+  /** Newest fully-accrued cohort key: YYYY-MM (monthly) or YYYY-MM-DD (weekly). */
   matureThrough: string;
 }
 
@@ -36,11 +37,13 @@ const SOURCE_LABEL: Record<CohortSource, string> = {
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 function fmtMonth(ym: string): string {
-  const [y, m] = ym.split('-').map(Number);
-  return `${MONTHS[m - 1]} ${String(y).slice(2)}`;
+  const parts = ym.split('-').map(Number);
+  // Weekly cohorts arrive as YYYY-MM-DD (week start) → "3 Mar"
+  if (parts.length === 3) return `${parts[2]} ${MONTHS[parts[1] - 1]}`;
+  return `${MONTHS[parts[1] - 1]} ${String(parts[0]).slice(2)}`;
 }
 
-export function RefundCohortsSection({ cohorts, breakdowns, matureThrough }: Props) {
+export function RefundCohortsSection({ cohorts, breakdowns, granularity, matureThrough }: Props) {
   const [source, setSource] = useState<CohortSource>('all');
   const rows = cohorts[source] || [];
   const bd = breakdowns[source];
@@ -81,10 +84,11 @@ export function RefundCohortsSection({ cohorts, breakdowns, matureThrough }: Pro
       <p className="text-sm text-muted-foreground">
         Unlike the calendar view above (refunds that <em>happened</em> in a period), this view answers:{' '}
         <span className="font-medium text-[#0E3687]">
-          &ldquo;of the charges made in month X, what % did we eventually refund?&rdquo;
+          {granularity === 'weekly' ? '\u201Cof the charges made in week X, what % did we eventually refund?\u201D' : '\u201Cof the charges made in month X, what % did we eventually refund?\u201D'}
         </span>{' '}
-        — the quality of each month&apos;s sales. Refunds are linked to their exact original charge
-        (backend sale ID). Months marked <span className="font-medium">*</span> are still accruing
+        — the quality of each {granularity === 'weekly' ? 'week' : 'month'}&apos;s sales. Refunds are linked to their exact original charge
+        (backend sale ID). {granularity === 'weekly' ? 'Weeks' : 'Months'} marked{' '}
+        <span className="font-medium">*</span> are still accruing
         refunds (refunds arrive up to ~45 days after the charge) — their rate will rise.
       </p>
 
@@ -100,7 +104,7 @@ export function RefundCohortsSection({ cohorts, breakdowns, matureThrough }: Pro
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-semibold text-[#0E3687]">
-                Cohort refund rate — % of each month&apos;s charges eventually refunded ({SOURCE_LABEL[source]})
+                Cohort refund rate — % of each {granularity === 'weekly' ? 'week' : 'month'}&apos;s charges eventually refunded ({SOURCE_LABEL[source]})
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -137,7 +141,7 @@ export function RefundCohortsSection({ cohorts, breakdowns, matureThrough }: Pro
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b text-left text-xs uppercase tracking-wider text-muted-foreground">
-                    <th className="py-2 pr-3">Cohort (charge month)</th>
+                    <th className="py-2 pr-3">Cohort (charge {granularity === 'weekly' ? 'week' : 'month'})</th>
                     <th className="py-2 pr-3 text-right">Charges</th>
                     <th className="py-2 pr-3 text-right">Charged $</th>
                     <th className="py-2 pr-3 text-right">Refunded</th>

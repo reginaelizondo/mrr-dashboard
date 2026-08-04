@@ -395,7 +395,10 @@ export async function getLastAppleSalesSync(): Promise<{
 // ============================================================================
 
 export interface RefundCohortRow {
-  cohort_month: string; // YYYY-MM (month of the CHARGE)
+  /** YYYY-MM for monthly cohorts, YYYY-MM-DD (week start) for weekly */
+  cohort_month: string;
+  /** set only for weekly cohorts */
+  week_end?: string;
   charge_units: number;
   charge_gross: number;
   refunded_units: number;
@@ -445,6 +448,55 @@ export async function getRefundCohorts(
         // Cohort rate is refunded/charged (NOT net-basis): "what share of that
         // month's sales did we end up giving back". Different from the
         // calendar view's Apple net-basis rate by design.
+        cohort_rate_units: charge_units > 0 ? refunded_units / charge_units : 0,
+        cohort_rate_amount: charge_gross > 0 ? refunded_gross / charge_gross : 0,
+        avg_days_to_refund: r.avg_days_to_refund === null ? null : Number(r.avg_days_to_refund),
+      };
+    }
+  );
+}
+
+/**
+ * Weekly refund cohorts (migration 024) — same shape as getRefundCohorts but
+ * cohort_month carries the ISO week start (YYYY-MM-DD) so the section can
+ * reuse the same chart/table.
+ */
+export async function getRefundCohortsWeekly(
+  source: Source | 'all',
+  startDate: string,
+  endDate: string
+): Promise<RefundCohortRow[]> {
+  const supabase = createServerClient();
+  const { data, error } = await supabase.rpc('refund_cohorts_weekly', {
+    src: source,
+    start_date: startDate,
+    end_date: endDate,
+  });
+  if (error) {
+    console.error('[refunds] refund_cohorts_weekly error:', error.message);
+    return [];
+  }
+  return (data || []).map(
+    (r: {
+      cohort_week: string;
+      week_end: string;
+      charge_units: number;
+      charge_gross: number;
+      refunded_units: number;
+      refunded_gross: number;
+      avg_days_to_refund: number | null;
+    }) => {
+      const charge_units = Number(r.charge_units || 0);
+      const refunded_units = Number(r.refunded_units || 0);
+      const charge_gross = Number(r.charge_gross || 0);
+      const refunded_gross = Number(r.refunded_gross || 0);
+      return {
+        cohort_month: r.cohort_week,
+        week_end: r.week_end,
+        charge_units,
+        charge_gross,
+        refunded_units,
+        refunded_gross,
         cohort_rate_units: charge_units > 0 ? refunded_units / charge_units : 0,
         cohort_rate_amount: charge_gross > 0 ? refunded_gross / charge_gross : 0,
         avg_days_to_refund: r.avg_days_to_refund === null ? null : Number(r.avg_days_to_refund),
