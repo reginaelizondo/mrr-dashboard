@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { format, subDays, subMonths } from 'date-fns';
-import { syncKineduDB } from '@/lib/sync/kinedu-db';
+import { syncKineduDB, syncKineduRefunds } from '@/lib/sync/kinedu-db';
 import { computeMonthlySnapshot } from '@/lib/sync/snapshots';
 import { syncAppleEventsRange } from '@/lib/sync/apple-events';
 import { syncAppleSalesRecent } from '@/lib/sync/apple-sales';
@@ -47,13 +47,17 @@ export async function GET(request: NextRequest) {
         // charged amount, so the daily sync can't re-inflate them. Must run
         // before snapshots so they reflect the corrected amounts.
         const rep = await repriceAppleIntroSkus(fromDate, today);
+        // Refund cohort linkage: refunds arrive up to ~45 days after the charge,
+        // so re-pull that window daily (tiny: a few hundred rows).
+        const refundsFrom = format(subDays(now, 45), 'yyyy-MM-dd');
+        const ref = await syncKineduRefunds(refundsFrom);
         const months = [
           today,
           format(subMonths(now, 1), 'yyyy-MM-01'),
           format(subMonths(now, 2), 'yyyy-MM-01'),
         ];
         for (const m of months) await computeMonthlySnapshot(m);
-        results.kineduDb = { status: 'success', synced: result.synced, repriced: rep.repriced, snapshots: months };
+        results.kineduDb = { status: 'success', synced: result.synced, repriced: rep.repriced, refunds: ref.synced, snapshots: months };
       } catch (err) {
         results.kineduDb = { status: 'error', error: (err as Error).message };
       }

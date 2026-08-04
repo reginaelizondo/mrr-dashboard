@@ -380,3 +380,92 @@ export async function syncKineduDB(fromDate: string, toDate: string): Promise<Sy
     return { synced: totalSynced, fetched: rows.length };
   }
 }
+
+// ─── Refunds sync (powers the cohort view on the Refunds tab) ───────────────
+
+interface KineduRefundRow {
+  sale_id: number;
+  refund_date: string; // YYYY-MM-DD
+}
+
+/**
+ * Syncs the kinedu backend `refunds` table (sale_id → refund_date) into
+ * Supabase `kinedu_refunds`. The linkage refunds.sale_id = sales.id is exact
+ * (validated 100% in BigQuery), which lets the dashboard attribute each refund
+ * to its original charge — the cohort view ("of the charges in month X, how
+ * many were refunded?").
+ *
+ * Incremental: pass fromDate to fetch only refunds with refund_date >= fromDate
+ * (the daily cron uses ~45 days; the backfill script passes '2000-01-01').
+ */
+export async function syncKineduRefunds(fromDate: string): Promise<{ synced: number; fetched: number }> {
+  const useBigQuery = process.env.USE_BIGQUERY_SYNC === 'true';
+  console.log(`[kinedu-refunds] Syncing refunds from ${fromDate} via ${useBigQuery ? 'BigQuery' : 'MySQL'}`);
+
+  let rows: KineduRefundRow[];
+
+  if (useBigQuery) {
+    const bq = getBigQueryClient();
+    const [bqRows] = await bq.query({
+      query: `
+        SELECT sale_id, refund_date
+        FROM \`celtic-music-240111.aws_kinedu_app_import.refunds\`
+        WHERE refund_date >= @fromDate
+          AND sale_id IS NOT NULL
+          AND COALESCE(__hevo__marked_deleted, FALSE) = FALSE
+      `,
+      params: { fromDate },
+    });
+    rows = (bqRows as Record<string, unknown>[]).map((r) => ({
+      sale_id: Number(r.sale_id),
+      refund_date:
+        typeof r.refund_date === 'object' && r.refund_date !== null
+          ? (r.refund_date as { value: string }).value
+          : String(r.refund_date),
+    }));
+  } else {
+    const ssh = await connectSSH();
+    const mysqlConn = await createTunnelConnection(ssh);
+    try {
+      const [rawRows] = await mysqlConn.execute(
+        `SELECT sale_id, DATE_FORMAT(refund_date, '%Y-%m-%d') AS refund_date
+         FROM refunds
+         WHERE refund_date >= ? AND sale_id IS NOT NULL`,
+        [fromDate]
+      );
+      rows = rawRows as KineduRefundRow[];
+    } finally {
+      try { await mysqlConn.end(); } catch { /* ignore */ }
+      ssh.end();
+    }
+  }
+
+  console.log(`[kinedu-refunds] Fetched ${rows.length} refunds`);
+  if (rows.length === 0) return { synced: 0, fetched: 0 };
+
+  // Dedup by sale_id keeping the earliest refund_date (a sale is refunded once)
+  const bySale = new Map<number, string>();
+  for (const r of rows) {
+    const prev = bySale.get(r.sale_id);
+    if (!prev || r.refund_date < prev) bySale.set(r.sale_id, r.refund_date);
+  }
+  const deduped = Array.from(bySale, ([sale_id, refund_date]) => ({ sale_id, refund_date }));
+
+  const supabase = createServerClient();
+  const BATCH_SIZE = 500;
+  let synced = 0;
+  for (let i = 0; i < deduped.length; i += BATCH_SIZE) {
+    const batch = deduped.slice(i, i + BATCH_SIZE);
+    const { error } = await supabase
+      .from('kinedu_refunds')
+      .upsert(batch, { onConflict: 'sale_id' });
+    if (error) {
+      console.error(`[kinedu-refunds] Batch upsert error (offset ${i}):`, error.message);
+    } else {
+      synced += batch.length;
+    }
+  }
+
+  console.log(`[kinedu-refunds] Sync complete: ${synced}/${deduped.length} refunds synced`);
+  return { synced, fetched: rows.length };
+}

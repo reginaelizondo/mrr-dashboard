@@ -289,6 +289,72 @@ export async function getLastAppleSalesSync(): Promise<{
 }
 
 // ============================================================================
+// Refund COHORTS — charge-date attribution
+// ("of the charges made in month X, how many were eventually refunded?")
+// Requires migration 018 (kinedu_refunds + refund_cohorts_monthly RPC) and the
+// backfill script. Returns [] gracefully if the migration isn't applied yet.
+// ============================================================================
+
+export interface RefundCohortRow {
+  cohort_month: string; // YYYY-MM (month of the CHARGE)
+  charge_units: number;
+  charge_gross: number;
+  refunded_units: number;
+  refunded_gross: number;
+  cohort_rate_units: number; // 0..1 — refunded / charged (gross basis: quality of that month's sales)
+  cohort_rate_amount: number; // 0..1
+  avg_days_to_refund: number | null;
+}
+
+export async function getRefundCohorts(
+  source: Source | 'all',
+  startMonth: string,
+  endMonth: string
+): Promise<RefundCohortRow[]> {
+  const supabase = createServerClient();
+  const { data, error } = await supabase.rpc('refund_cohorts_monthly', {
+    src: source,
+    start_month: startMonth,
+    end_month: endMonth,
+  });
+
+  if (error) {
+    // Migration 018 not applied yet → surface empty state, not a crash
+    console.error('[refunds] refund_cohorts_monthly error:', error.message);
+    return [];
+  }
+
+  return (data || []).map(
+    (r: {
+      cohort_month: string;
+      charge_units: number;
+      charge_gross: number;
+      refunded_units: number;
+      refunded_gross: number;
+      avg_days_to_refund: number | null;
+    }) => {
+      const charge_units = Number(r.charge_units || 0);
+      const refunded_units = Number(r.refunded_units || 0);
+      const charge_gross = Number(r.charge_gross || 0);
+      const refunded_gross = Number(r.refunded_gross || 0);
+      return {
+        cohort_month: r.cohort_month,
+        charge_units,
+        charge_gross,
+        refunded_units,
+        refunded_gross,
+        // Cohort rate is refunded/charged (NOT net-basis): "what share of that
+        // month's sales did we end up giving back". Different from the
+        // calendar view's Apple net-basis rate by design.
+        cohort_rate_units: charge_units > 0 ? refunded_units / charge_units : 0,
+        cohort_rate_amount: charge_gross > 0 ? refunded_gross / charge_gross : 0,
+        avg_days_to_refund: r.avg_days_to_refund === null ? null : Number(r.avg_days_to_refund),
+      };
+    }
+  );
+}
+
+// ============================================================================
 // Apple SUBSCRIPTION_EVENT report-based breakdowns
 // (requires apple_subscription_events table populated by /api/cron/apple-events)
 // ============================================================================

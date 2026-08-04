@@ -9,8 +9,10 @@ import {
   getAppleRefundsByWeek,
   getAppleRefundBreakdowns,
   getLastAppleSalesSync,
+  getRefundCohorts,
 } from '@/lib/refunds';
 import { RefundsContent } from '@/components/dashboard/RefundsContent';
+import { RefundCohortsSection } from '@/components/dashboard/RefundCohortsSection';
 import { ManualSyncButton } from '@/components/dashboard/ManualSyncButton';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { Source } from '@/types';
@@ -108,7 +110,7 @@ export default async function RefundsPage({
     return null;
   });
 
-  const [apple, google, stripe, appleWeekly, appleBreakdowns, lastSync] = await Promise.all([
+  const [apple, google, stripe, appleWeekly, appleBreakdowns, lastSync, cohortAll, cohortApple, cohortGoogle, cohortStripe] = await Promise.all([
     getRefundsByMonth('apple', range.startMonth, range.endMonth, countries),
     getRefundsByMonth('google', range.startMonth, range.endMonth),
     getRefundsByMonth('stripe', range.startMonth, range.endMonth),
@@ -117,7 +119,17 @@ export default async function RefundsPage({
       : Promise.resolve([]),
     breakdownsWithTimeout,
     getLastAppleSalesSync(),
+    getRefundCohorts('all', range.startMonth, range.endMonth),
+    getRefundCohorts('apple', range.startMonth, range.endMonth),
+    getRefundCohorts('google', range.startMonth, range.endMonth),
+    getRefundCohorts('stripe', range.startMonth, range.endMonth),
   ]);
+
+  // A cohort is "mature" once ~45 days have passed since the END of its month
+  // (refunds arrive up to ~45 days post-charge). String month math (TZ-safe).
+  const matureCutoff = new Date();
+  matureCutoff.setUTCDate(matureCutoff.getUTCDate() - 75);
+  const matureThrough = matureCutoff.toISOString().slice(0, 7);
 
   // Reuse the byCountry breakdown (already fetched) to populate the country
   // dropdown instead of a separate 6-second `apple_sales_top_countries` call.
@@ -157,6 +169,11 @@ export default async function RefundsPage({
           selectedCountries={countries || []}
         />
       </Suspense>
+
+      <RefundCohortsSection
+        cohorts={{ all: cohortAll, apple: cohortApple, google: cohortGoogle, stripe: cohortStripe }}
+        matureThrough={matureThrough}
+      />
     </div>
   );
 }
