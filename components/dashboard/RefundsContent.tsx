@@ -214,10 +214,17 @@ export function RefundsContent({
     return merged;
   }, [weekly]);
 
-  const rows: RefundMonthlyRow[] =
-    effectiveGranularity === 'weekly'
-      ? source === 'all' ? allWeekly : weekly[source] || []
-      : source === 'all' ? allRows : data[source] || [];
+  const rows: RefundMonthlyRow[] = useMemo(
+    () =>
+      effectiveGranularity === 'weekly'
+        ? source === 'all'
+          ? allWeekly
+          : weekly[source] || []
+        : source === 'all'
+        ? allRows
+        : data[source] || [],
+    [effectiveGranularity, source, allWeekly, weekly, allRows, data]
+  );
 
   function urlParams(overrides: Record<string, string | undefined>): string {
     const sp = new URLSearchParams();
@@ -466,6 +473,19 @@ export function RefundsContent({
       )}
 
       {/* Apple context banner */}
+      {source === 'all' && (
+        <Card className="border-l-4 border-l-[#0086D8] bg-[#0086D8]/[0.04]">
+          <CardContent className="py-3">
+            <p className="text-xs text-[#0E3687]">
+              <span className="font-semibold">All stores</span> sums iOS + Android + Web per period.
+              iOS comes from Apple&apos;s own Sales report (kept for App Store Connect parity — it runs
+              ~1.6% above our backend count); Android and Web come from the backend charge↔refund
+              linkage. Select a single store for a single-source view.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
       {source === 'apple' && (
         <Card className="border-l-4 border-l-amber-500 bg-amber-50/40">
           <CardContent className="py-4">
@@ -1189,7 +1209,7 @@ function FindingsSection({
             </Action>
             <Action priority="P1">
               <strong>Strengthen the paywall copy</strong>: make the post-trial charge amount
-              the largest text on the screen, not the smallest. Apple's compliance team
+              the largest text on the screen, not the smallest. Apple&apos;s compliance team
               reviews paywalls during 5.6.4 escalations.
             </Action>
             <Action priority="P2">
