@@ -155,7 +155,8 @@ export default async function RefundsPage({
         <div>
           <h1 className="text-2xl font-bold text-[#0E3687]">Refunds</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Refund rate monitoring — required for App Review Guideline 5.6.4 compliance
+            Refund rate monitoring across all stores (iOS · Android · Web) — includes Apple&apos;s
+            App Review Guideline 5.6.4 compliance view
           </p>
         </div>
         <ManualSyncButton />

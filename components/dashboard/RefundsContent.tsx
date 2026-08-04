@@ -128,7 +128,7 @@ export function RefundsContent({
   availableCountries,
   selectedCountries,
 }: Props) {
-  const [source, setSource] = useState<ViewSource>('apple');
+  const [source, setSource] = useState<ViewSource>('all');
   const router = useRouter();
   const pathname = usePathname();
   const [isPending, startTransition] = useTransition();
@@ -282,7 +282,14 @@ export function RefundsContent({
               {SOURCES.map((s) => (
                 <button
                   key={s.key}
-                  onClick={() => setSource(s.key)}
+                  onClick={() => {
+                    setSource(s.key);
+                    // Country filter is Apple-only; clear it when leaving Apple so
+                    // 'All stores' never mixes filtered Apple with unfiltered rest.
+                    if (s.key !== 'apple' && selectedCountries.length > 0) {
+                      nav(`${pathname}?${urlParams({ countries: undefined })}`);
+                    }
+                  }}
                   className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
                     source === s.key
                       ? 'bg-[#0E3687] text-white'
@@ -487,7 +494,7 @@ export function RefundsContent({
               ? 'rose'
               : 'green'
           }
-          subtitle="Net-basis (Apple methodology)"
+          subtitle="Net basis: refunds ÷ (charges − refunds)"
         />
         <MetricCard
           label="Refunds in period"
