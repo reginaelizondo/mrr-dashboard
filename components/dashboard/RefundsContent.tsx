@@ -960,7 +960,7 @@ function AppleBreakdownSections({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <BreakdownTable
           title="By renewal stage (Consecutive Paid Periods)"
-          subtitle="1 = first paid charge, 2 = first renewal, etc."
+          subtitle="0 = still in intro/trial (not paid yet) · 1 = first paid period · 2 = first renewal"
           rows={breakdowns.byConsecutivePaidPeriod}
         />
         <BreakdownTable
@@ -1097,15 +1097,24 @@ export function BreakdownTable({
                         {r.paid_events.toLocaleString()}
                       </td>
                       <td className="text-right py-1.5 px-2 tabular-nums">
-                        <span
-                          className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
-                            rateAsShare
-                              ? 'bg-[#0E3687]/10 text-[#0E3687]'
-                              : rateColor(ratePct)
-                          }`}
-                        >
-                          {r.paid_events > 0 ? `${ratePct.toFixed(2)}%` : '—'}
-                        </span>
+                        {r.rate_meaningful === false ? (
+                          <span
+                            className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-gray-100 text-gray-500"
+                            title="Refunds and paid events in this bucket come from different populations (e.g. refunds of intro charges vs. a denominator of rare reactivations), so a rate would be misleading."
+                          >
+                            n/a
+                          </span>
+                        ) : (
+                          <span
+                            className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
+                              rateAsShare
+                                ? 'bg-[#0E3687]/10 text-[#0E3687]'
+                                : rateColor(ratePct)
+                            }`}
+                          >
+                            {r.paid_events > 0 ? `${ratePct.toFixed(2)}%` : '—'}
+                          </span>
+                        )}
                       </td>
                     </tr>
                   );

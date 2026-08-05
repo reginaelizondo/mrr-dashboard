@@ -587,6 +587,14 @@ export interface BreakdownRow {
   refunds: number;
   paid_events: number; // Subscribe + Renew + Reactivate at the same dimension
   refund_rate: number; // refunds / paid_events (0..1)
+  /**
+   * False when numerator and denominator don't describe the same population,
+   * so a ratio would be nonsense (e.g. Apple's CPP=0 bucket: refunds of intro
+   * charges land there, but nearly every CPP=0 event is classified 'other',
+   * leaving a denominator of a few rare reactivations → >100%).
+   * The UI renders "n/a" instead of a misleading percentage.
+   */
+  rate_meaningful?: boolean;
 }
 
 export interface AppleRefundBreakdowns {
@@ -659,14 +667,16 @@ export async function getAppleRefundBreakdowns(
       const refunds = Number(r.refunds || 0);
       const paid = Number(r.paid_events || 0);
       // Net-basis rate to match Apple App Store Connect methodology
-      // (refunds / (paid - refunds)). When paid <= refunds the bucket is
-      // pathological and we fall back to gross basis.
+      // (refunds / (paid - refunds)). When paid <= refunds the two counts
+      // describe different populations, so no rate is reported.
       const net = paid - refunds;
+      const meaningful = net > 0;
       return {
         bucket: r.bucket,
         refunds,
         paid_events: paid,
-        refund_rate: net > 0 ? refunds / net : (paid > 0 ? refunds / paid : 0),
+        refund_rate: meaningful ? refunds / net : 0,
+        rate_meaningful: meaningful,
       };
     });
   }
@@ -681,6 +691,7 @@ export async function getAppleRefundBreakdowns(
       refunds: Number(r.refunds || 0),
       paid_events: total,
       refund_rate: total > 0 ? Number(r.refunds || 0) / total : 0,
+      rate_meaningful: true,
     }));
   }
 
