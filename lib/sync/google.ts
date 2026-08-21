@@ -1,4 +1,5 @@
 import { Storage } from '@google-cloud/storage';
+import { unzipSync } from 'fflate';
 import { createServerClient } from '@/lib/supabase/server';
 import { getRegion } from '@/lib/constants';
 import type { Transaction } from '@/types';
@@ -258,9 +259,11 @@ export async function listGoogleEarningsFiles(yearMonth?: string): Promise<strin
     : 'earnings/';
 
   const [files] = await bucket.getFiles({ prefix });
+  // Google Play exporta a GCS como .zip (PKZIP); históricamente el código
+  // asumía .csv. Aceptamos ambos.
   return files
     .map((f) => f.name)
-    .filter((name) => name.endsWith('.csv'));
+    .filter((name) => name.endsWith('.csv') || name.endsWith('.zip'));
 }
 
 export async function fetchGoogleEarningsReport(fileName: string): Promise<GoogleEarningsRow[]> {
@@ -270,7 +273,18 @@ export async function fetchGoogleEarningsReport(fileName: string): Promise<Googl
 
   const file = bucket.file(fileName);
   const [content] = await file.download();
-  const csv = content.toString('utf-8');
+
+  // Los earnings en GCS vienen comprimidos (PKZIP, magic "PK\x03\x04"). Si es
+  // zip, descomprime y toma el CSV interno; si ya es CSV plano, úsalo directo.
+  let csv: string;
+  if (content.length >= 2 && content[0] === 0x50 && content[1] === 0x4b) {
+    const entries = unzipSync(new Uint8Array(content));
+    const csvName = Object.keys(entries).find((n) => n.toLowerCase().endsWith('.csv'));
+    if (!csvName) throw new Error(`Zip de earnings sin CSV adentro: ${fileName}`);
+    csv = Buffer.from(entries[csvName]).toString('utf-8');
+  } else {
+    csv = content.toString('utf-8');
+  }
 
   return parseCSV(csv);
 }
