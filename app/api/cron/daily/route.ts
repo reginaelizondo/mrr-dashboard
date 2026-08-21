@@ -10,6 +10,7 @@ import { purgeOldBotBookmarks } from '@/lib/mixpanel/insights';
 import { createServerClient } from '@/lib/supabase/server';
 import { countSyncedRecords } from '@/lib/sync/sync-log';
 import { repriceAppleIntroSkus } from '@/lib/sync/reprice-intro';
+import { applyRealNetFromMV } from '@/lib/sync/apply-real-net';
 
 export const maxDuration = 300;
 
@@ -131,6 +132,24 @@ export async function GET(request: NextRequest) {
     results.storeNetRateRefresh = { status: 'success' };
   } catch (err) {
     results.storeNetRateRefresh = { status: 'error', error: (err as Error).message };
+  }
+
+  // Homologa el neto del DASHBOARD PRINCIPAL a la tasa real de la MV (apple/google)
+  // y recomputa los snapshots del trailing window para que reflejen el neto real.
+  // Corre DESPUÉS del refresh de la MV. Ventana = últimos 3 meses (para alcanzar los
+  // earnings de Google que llegan con lag). Stripe ya es real en transactions.
+  try {
+    const realFrom = format(subMonths(now, 2), 'yyyy-MM-01');
+    const rn = await applyRealNetFromMV(realFrom, today);
+    const months = [
+      today,
+      format(subMonths(now, 1), 'yyyy-MM-01'),
+      format(subMonths(now, 2), 'yyyy-MM-01'),
+    ];
+    for (const m of months) await computeMonthlySnapshot(m);
+    results.realNet = { status: 'success', updated: rn.updated, snapshots: months };
+  } catch (err) {
+    results.realNet = { status: 'error', error: (err as Error).message };
   }
 
   const hasError = Object.values(results).some(

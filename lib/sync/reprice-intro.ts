@@ -126,6 +126,10 @@ export async function repriceAppleIntroSkus(
           .update({
             amount_gross: u.amount_gross,
             amount_net: u.amount_net,
+            // Mantener commission_amount consistente con gross/net (antes quedaba
+            // stale → inflaba total_commissions). El neto real de la MV lo reescribe
+            // después, pero dejamos la fila consistente por si acaso.
+            commission_amount: Math.round((u.amount_gross - u.amount_net) * 100) / 100,
             original_amount: u.original_amount,
             plan_type: 'monthly',
             raw_data: u.raw_data,
