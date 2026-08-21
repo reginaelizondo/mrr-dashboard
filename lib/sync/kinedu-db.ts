@@ -272,19 +272,32 @@ export async function syncKineduDB(fromDate: string, toDate: string): Promise<Sy
       const planName = getPlanNameFromSku(row.sku);
       const usdAmount = Number(row.usd_amount) || 0;
 
-      // Commission rates (same as Tableau)
-      let commissionRate = 0;
-      if (source === 'apple') commissionRate = 0.30;
-      else if (source === 'google') commissionRate = 0.15;
-      else commissionRate = 0.029;
-
-      const commission = usdAmount * commissionRate;
-      const netAmount = usdAmount - commission;
-
       const createdAt = new Date(row.created_at);
       const transactionDate = createdAt.toISOString().split('T')[0];
 
       const countryCode = getCountryFromCurrency(row.currency_code);
+
+      // Commission. Apple/Google keep the flat nominal rate (Tableau-aligned).
+      // Stripe is modeled from the live Stripe API instead of the old flat 2.9%:
+      // real fee ≈ rate*amount + fixed. Fitted on live balanceTransactions (2026),
+      // split by CHARGE CURRENCY to match how we apply it here (country derived from
+      // currency): USD-currency 2.89%+$0.22 (blended 3.35%), foreign-currency
+      // 5.09%+$0.32 (blended 5.73% — intl card + FX conversion surcharge). Overall
+      // real blended ≈3.54%, reproduced within ~0% on sample; the old flat 2.9%
+      // understated Stripe fees ~0.6pt of gross. USD→domestic via getCountryFromCurrency.
+      // See memory reference_stripe_commission_hardcode.
+      let commission: number;
+      if (source === 'apple') commission = usdAmount * 0.30;
+      else if (source === 'google') commission = usdAmount * 0.15;
+      else {
+        const isUsd = countryCode === 'US';
+        commission = isUsd
+          ? usdAmount * 0.0289 + 0.22
+          : usdAmount * 0.0509 + 0.32;
+      }
+      // Guard tiny/zero charges so commission never exceeds gross or goes negative.
+      commission = Math.max(0, Math.min(commission, usdAmount));
+      const netAmount = usdAmount - commission;
 
       return {
         source,
