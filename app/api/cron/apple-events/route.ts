@@ -49,6 +49,11 @@ export async function GET(request: NextRequest) {
       mvRefresh = 'ok';
     }
 
+    // Refresh de la MV de tasa neta por tienda (migración 026) para que cohortes
+    // lea la deducción real de Apple fresca cada noche. No-fatal, igual que arriba.
+    const { error: rateErr } = await supabase.rpc('refresh_store_net_rate_mvs');
+    if (rateErr) console.error('[cron/apple-events] store net-rate MV refresh failed:', rateErr);
+
     if (syncLog) {
       await supabase
         .from('sync_log')
