@@ -49,6 +49,14 @@ export async function GET(request: NextRequest) {
         // charged amount, so the daily sync can't re-inflate them. Must run
         // before snapshots so they reflect the corrected amounts.
         const rep = await repriceAppleIntroSkus(fromDate, today);
+        // Homologa el neto del dashboard principal a la tasa REAL de la MV
+        // (apple/google) antes de los snapshots, para que reflejen el neto real y
+        // el cron no re-nominalice el trailing window. Usa la MV como está (la
+        // refresca el fin de la corrida previa / pg_cron); el lag ~1 día es
+        // despreciable para la tasa blended mensual. Stripe ya es real. Ventana
+        // = últimos 3 meses (alcanza los earnings de Google que llegan con lag).
+        const realFrom = format(subMonths(now, 2), 'yyyy-MM-01');
+        const rn = await applyRealNetFromMV(realFrom, today);
         // Refund cohort linkage: refunds arrive up to ~45 days after the charge,
         // so re-pull that window daily (tiny: a few hundred rows).
         const refundsFrom = format(subDays(now, 45), 'yyyy-MM-dd');
@@ -59,7 +67,7 @@ export async function GET(request: NextRequest) {
           format(subMonths(now, 2), 'yyyy-MM-01'),
         ];
         for (const m of months) await computeMonthlySnapshot(m);
-        results.kineduDb = { status: 'success', synced: result.synced, repriced: rep.repriced, refunds: ref.synced, snapshots: months };
+        results.kineduDb = { status: 'success', synced: result.synced, repriced: rep.repriced, realNet: rn.updated, refunds: ref.synced, snapshots: months };
       } catch (err) {
         results.kineduDb = { status: 'error', error: (err as Error).message };
       }
@@ -132,24 +140,6 @@ export async function GET(request: NextRequest) {
     results.storeNetRateRefresh = { status: 'success' };
   } catch (err) {
     results.storeNetRateRefresh = { status: 'error', error: (err as Error).message };
-  }
-
-  // Homologa el neto del DASHBOARD PRINCIPAL a la tasa real de la MV (apple/google)
-  // y recomputa los snapshots del trailing window para que reflejen el neto real.
-  // Corre DESPUÉS del refresh de la MV. Ventana = últimos 3 meses (para alcanzar los
-  // earnings de Google que llegan con lag). Stripe ya es real en transactions.
-  try {
-    const realFrom = format(subMonths(now, 2), 'yyyy-MM-01');
-    const rn = await applyRealNetFromMV(realFrom, today);
-    const months = [
-      today,
-      format(subMonths(now, 1), 'yyyy-MM-01'),
-      format(subMonths(now, 2), 'yyyy-MM-01'),
-    ];
-    for (const m of months) await computeMonthlySnapshot(m);
-    results.realNet = { status: 'success', updated: rn.updated, snapshots: months };
-  } catch (err) {
-    results.realNet = { status: 'error', error: (err as Error).message };
   }
 
   const hasError = Object.values(results).some(
