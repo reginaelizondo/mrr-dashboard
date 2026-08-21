@@ -5,6 +5,7 @@ import { computeMonthlySnapshot } from '@/lib/sync/snapshots';
 import { syncAppleEventsRange } from '@/lib/sync/apple-events';
 import { syncAppleSalesRecent } from '@/lib/sync/apple-sales';
 import { syncAppleReviewsRecent, syncAppleRatingsSummary } from '@/lib/sync/apple-reviews';
+import { syncGoogleRates } from '@/lib/sync/google';
 import { purgeOldBotBookmarks } from '@/lib/mixpanel/insights';
 import { createServerClient } from '@/lib/supabase/server';
 import { countSyncedRecords } from '@/lib/sync/sync-log';
@@ -109,7 +110,28 @@ export async function GET(request: NextRequest) {
         results.mixpanelPurge = { status: 'error', error: (err as Error).message };
       }
     })(),
+
+    // 6. Google net-rate por país/mes (earnings CSV → google_net_rate_monthly),
+    // que alimenta la tienda 'google' en v_store_net_rate_monthly (cohortes).
+    (async () => {
+      try {
+        const cells = await syncGoogleRates();
+        results.googleRates = { status: 'success', cells };
+      } catch (err) {
+        results.googleRates = { status: 'error', error: (err as Error).message };
+      }
+    })(),
   ]);
+
+  // Refresca la MV de tasa neta por tienda (apple + stripe + google) tras los
+  // syncs. Es chica (~2.7K filas, <1s) → no le pega el timeout de PostgREST que
+  // sí afecta a las MV grandes de refunds. No-fatal.
+  try {
+    await supabase.rpc('refresh_store_net_rate_mvs');
+    results.storeNetRateRefresh = { status: 'success' };
+  } catch (err) {
+    results.storeNetRateRefresh = { status: 'error', error: (err as Error).message };
+  }
 
   const hasError = Object.values(results).some(
     (r) => (r as { status: string }).status === 'error'

@@ -307,3 +307,68 @@ export async function syncGoogle(yearMonth: string): Promise<number> {
 
   return totalRecords;
 }
+
+/**
+ * Sincroniza la tasa NETA REAL de Google por país/mes desde los earnings CSV
+ * (GCS) hacia `google_net_rate_monthly`. La vista v_store_net_rate_monthly la
+ * lee (migración 028) y le aplica la capa de IVA-consumidor en SQL.
+ *
+ * Guarda el NET DE CAJA: gross = SUM(Charge), cash_net = SUM(Charge + Google
+ * fee + Tax) — pivoteado por Transaction Type, NUNCA sumando la columna de monto
+ * (Charge/fee/Tax son filas distintas). Refunds excluidos. Captura fee, IVA-
+ * sobre-fee y las retenciones reales de Brasil (que viven en filas Tax).
+ *
+ * Procesa TODOS los archivos → suma las (a veces dos) cuentas por mes y mantiene
+ * el histórico completo. La tasa es FX-invariante (net/gross); la conversión a
+ * USD solo afecta montos absolutos que la vista no expone.
+ */
+export async function syncGoogleRates(): Promise<number> {
+  const files = await listGoogleEarningsFiles(); // todos los earnings/*.csv
+  if (files.length === 0) return 0;
+
+  const agg = new Map<string, { gross: number; net: number; units: number }>();
+  for (const fileName of files) {
+    const rows = await fetchGoogleEarningsReport(fileName);
+    for (const r of rows) {
+      const tt = r['Transaction Type'];
+      if (tt !== 'Charge' && tt !== 'Google fee' && tt !== 'Tax') continue; // refunds fuera
+      const cc = (r['Buyer Country'] || '').trim().toUpperCase();
+      if (!/^[A-Z]{2}$/.test(cc)) continue;
+      const date = parseGoogleDate(r['Transaction Date']);
+      const month = date.slice(0, 7);
+      if (!/^\d{4}-\d{2}$/.test(month)) continue;
+      const merch = r['Merchant Currency'] || 'USD';
+      const raw = Number(String(r['Amount (Merchant Currency)'] || '').replace(/,/g, '')) || 0;
+      const usd = merch === 'USD' ? raw : convertToUSD(raw, date); // preserva el signo (fee/tax negativos)
+      const key = `${cc}|${month}`;
+      if (!agg.has(key)) agg.set(key, { gross: 0, net: 0, units: 0 });
+      const a = agg.get(key)!;
+      if (tt === 'Charge') { a.gross += usd; a.net += usd; a.units += 1; }
+      else a.net += usd;
+    }
+  }
+
+  const records = [...agg.entries()]
+    .filter(([, a]) => a.gross > 0)
+    .map(([key, a]) => {
+      const [country_code, year_month] = key.split('|');
+      return {
+        country_code,
+        year_month,
+        gross_usd: Math.round(a.gross * 100) / 100,
+        cash_net_usd: Math.round(a.net * 100) / 100,
+        charge_units: a.units,
+      };
+    });
+  if (records.length === 0) return 0;
+
+  const supabase = createServerClient();
+  const B = 500;
+  for (let i = 0; i < records.length; i += B) {
+    const { error } = await supabase
+      .from('google_net_rate_monthly')
+      .upsert(records.slice(i, i + B), { onConflict: 'country_code,year_month' });
+    if (error) throw new Error(`Google rates sync DB error: ${error.message}`);
+  }
+  return records.length;
+}
