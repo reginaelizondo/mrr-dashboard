@@ -521,8 +521,8 @@ export interface RefundCohortBreakdowns {
 
 export async function getRefundCohortBreakdowns(
   source: Source | 'all',
-  startMonth: string,
-  endMonth: string
+  startDate: string,
+  endDate: string
 ): Promise<RefundCohortBreakdowns> {
   const supabase = createServerClient();
 
@@ -534,14 +534,38 @@ export async function getRefundCohortBreakdowns(
     refunded_gross: number;
   };
 
-  const call = (dim: string, topN: number) =>
-    supabase.rpc('refund_cohort_breakdown', {
+  // Day-granular RPC (migration 030): honours the exact [startDate, endDate]
+  // window and the Weekly/Monthly toggle. The older month-only RPC floored any
+  // sub-month or weekly selection to whole months, so a single-week pick blended
+  // into a 2-month average.
+  //
+  // Order-independent deploy: if migration 030 isn't applied yet the range RPC
+  // is missing (PostgREST PGRST202), so we fall back to the month-granular RPC —
+  // the previous prod behaviour — instead of surfacing an empty state.
+  const startMonth = startDate.slice(0, 7);
+  const endMonth = endDate.slice(0, 7);
+  const isMissingFn = (err: { code?: string; message?: string } | null | undefined) =>
+    !!err && (err.code === 'PGRST202' || /refund_cohort_breakdown_range/i.test(err.message || ''));
+
+  const call = async (dim: string, topN: number) => {
+    const ranged = await supabase.rpc('refund_cohort_breakdown_range', {
       dim,
       src: source,
-      start_month: startMonth,
-      end_month: endMonth,
+      start_date: startDate,
+      end_date: endDate,
       top_n: topN,
     });
+    if (isMissingFn(ranged.error)) {
+      return supabase.rpc('refund_cohort_breakdown', {
+        dim,
+        src: source,
+        start_month: startMonth,
+        end_month: endMonth,
+        top_n: topN,
+      });
+    }
+    return ranged;
+  };
 
   const [skuRes, countryRes, durationRes] = await Promise.all([
     call('sku', 15),

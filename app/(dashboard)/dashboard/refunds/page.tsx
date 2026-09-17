@@ -133,11 +133,13 @@ export default async function RefundsPage({
     getRefundCohorts('apple', range.startMonth, range.endMonth),
     getRefundCohorts('google', range.startMonth, range.endMonth),
     getRefundCohorts('stripe', range.startMonth, range.endMonth),
-    // Cohort-basis dimension breakdowns (per store) for the cohort section
-    getRefundCohortBreakdowns('all', range.startMonth, range.endMonth),
-    getRefundCohortBreakdowns('apple', range.startMonth, range.endMonth),
-    getRefundCohortBreakdowns('google', range.startMonth, range.endMonth),
-    getRefundCohortBreakdowns('stripe', range.startMonth, range.endMonth),
+    // Cohort-basis dimension breakdowns (per store) for the cohort section.
+    // Day-granular so they follow the exact window and the Weekly/Monthly toggle
+    // (previously floored to whole months — see migration 030).
+    getRefundCohortBreakdowns('all', range.startDate, range.endDate),
+    getRefundCohortBreakdowns('apple', range.startDate, range.endDate),
+    getRefundCohortBreakdowns('google', range.startDate, range.endDate),
+    getRefundCohortBreakdowns('stripe', range.startDate, range.endDate),
     // Calendar-basis segmentation for the non-Apple store views
     getCalendarBreakdowns('all', range.startMonth, range.endMonth),
     getCalendarBreakdowns('google', range.startMonth, range.endMonth),
