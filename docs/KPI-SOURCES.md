@@ -101,8 +101,43 @@ falta sumar Stripe aparte). Mobile CM real = solo Apple + Google − spend.
   `+ stripe × 0.965` de TOTAL CONTRIBUTION se agregó asumiendo que "MOBILE
   CONTRIBUTION MARGIN" era solo móvil por el nombre. Problema de nombre, no de
   intención.
-- Prueba de aceptación tras el cambio en dbt/Looker: semana 5–11 oct debe dar
-  TOTAL CONTRIBUTION **$21,975**, Mobile CM **$16,000**, Net Sales **$65,927**.
+**Decisión final (12-oct-2026, Pepis): se respetan las DOS decisiones de negocio**
+— (a) la atribución por `os` se queda (ventas / New Subs / CAC por plataforma) y
+(b) **Stripe sigue dentro de Net Sales**. Lo único que se corrige es la
+duplicidad: Stripe deja de netearse como Apple/Google y Total deja de sumarlo
+aparte. **Cambio ("Variante 2"):**
+
+```
+Net Sales (refactor) with yearly ios
+   1) en cada bucket por os (iOS, Android, Unknown, Web y el término del 6 %):
+      SUM(IF(os = "iOS", ..., 0))  →  SUM(IF(os = "iOS" AND OS (payment processor) != "stripe", ..., 0))
+      (!= significa "distinto de": el bucket ya no toma las filas de Stripe)
+   2) NUEVO término dentro de Net Sales (en las dos mitades, incluida la del ratio de refunds):
+      + ( SUM(IF(OS (payment processor) = "stripe", new_subscriptions_sales, 0))
+        + SUM(IF(OS (payment processor) = "stripe", renewals_sales, 0)) ) × 0.965
+      (es el mismo término que hoy vive en TOTAL CONTRIBUTION, movido aquí)
+MOBILE CONTRIBUTION MARGIN: sin cambio de fórmula (= Net Sales − spend).
+TOTAL CONTRIBUTION: se QUITA el "+ Stripe × 0.965" → queda = Mobile CM.
+```
+
+Con esto Stripe se cuenta una sola vez, a su comisión. Mobile CM y Total
+Contribution quedan con el mismo valor (sugerir dejar uno o renombrar). El bot
+usa exactamente esta variante (`netSalesByOs(true)` en `lib/kpi/formulas.ts`;
+`mobileCm` = `totalContribution` = Net Sales − spend).
+
+- **Prueba de aceptación, semana 5–11 oct (corrida dbt 17:02 MX del 12-oct):**
+  Net Sales **$65,592** · Mobile CM **$21,637** · TOTAL CONTRIBUTION **$21,637**
+  (hoy: $64,553 / $20,601 / $27,293). 2026 YTD: TC $992K → $748K (−$245K, −25 %).
+- Alternativas descartadas: (1) Stripe solo en Total, fuera de Net Sales (TC
+  $22,745) — cambia el significado de Net Sales; (2) solo borrar el término de
+  Total (TC $20,598) — deja a Stripe neteado como Apple (~$2K/semana de menos).
+- Opcional, misma pasada (~$250/semana): las renovaciones anuales de Stripe
+  caen en `renewals_sales_yearly_ios` y se netean al 0.85 − 6 %.
+- Verificado contra el API de Stripe (misma semana): 203 cobros de suscripción,
+  $8,356 brutos, comisión $319 = **3.8 %**, neto $8,037; BigQuery marca $8,762
+  como `stripe` (±5 % por fronteras de día y refunds). Son cobros reales de Stripe.
+- La tabla se reconstruye al menos dos veces al día (≈ 09:01 y 17:02 MX), por
+  eso las cifras "hoy" pueden moverse unos dólares entre corridas.
 
 **Para el equipo de tech / data (qué pedir).** En el modelo dbt o en Looker:
 (a) netear por `payment_processor` en vez de `os`; (b) quitar el término

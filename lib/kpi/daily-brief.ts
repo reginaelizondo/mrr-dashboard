@@ -57,9 +57,9 @@ const RATIO: Set<KPIKey> = new Set(['firstTicketCac']);
  * "Discrepancias vs Looker" block so the team can reconcile against the dashboard.
  */
 const LOOKER_PAIRS: Array<{ real: KPIKey; looker: KPIKey; why: string }> = [
-  { real: 'totalContribution', looker: 'totalContributionLooker', why: 'Looker netea por os y vuelve a sumar Stripe al 0.965 (doble conteo)' },
-  { real: 'netSales', looker: 'netSalesLooker', why: 'Looker netea por os del usuario, el bot por procesador de pago' },
-  { real: 'mobileCm', looker: 'mobileCmLooker', why: 'Looker incluye ventas Stripe en el margen "mobile"' },
+  { real: 'totalContribution', looker: 'totalContributionLooker', why: 'Looker netea Stripe como Apple/Google dentro de Net Sales y lo vuelve a sumar al 0.965 (doble conteo)' },
+  { real: 'netSales', looker: 'netSalesLooker', why: 'Looker netea Stripe con la comisión de Apple/Google (por os) en vez de la de Stripe (0.965)' },
+  { real: 'mobileCm', looker: 'mobileCmLooker', why: 'misma causa que Net Sales (Mobile CM = Net Sales − spend)' },
   { real: 'purchasesNonFt', looker: 'purchasesNonFtLooker', why: 'Looker resta sobre new subs netas de refunds; el bot sobre brutas' },
 ];
 const DISCREPANCY_MIN_PCT = 1;
@@ -566,7 +566,7 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
 
   if (discrepancies.length) {
     section(
-      `*Discrepancias vs Looker — ${discPeriodLabel}*  _(el brief usa la definición real; Looker se muestra para cuadrar con el dashboard)_\n` +
+      `*Discrepancias vs Looker — ${discPeriodLabel}*  _(el brief usa la definición corregida; Looker se muestra para cuadrar con el dashboard)_\n` +
       renderDiscrepancies('Definición', discrepancies).replace('_Definición_\n', '')
     );
   }
