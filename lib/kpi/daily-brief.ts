@@ -507,9 +507,12 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
     notasDeDatos: notas,
   };
 
-  // Narrative
+  // Narrative. DAILY_BRIEF_NARRATIVE=off skips the Claude call entirely (decided
+  // 2026-10-12: brief only, no API credit) — the rule-based narrative is used.
+  // Remove the env var (or set it to anything else) to turn Claude back on.
   let narrative: BriefNarrative | null = null;
-  if (!opts.skipNarrative) narrative = await writeBriefNarrative(facts);
+  const narrativeOff = process.env.DAILY_BRIEF_NARRATIVE === 'off';
+  if (!opts.skipNarrative && !narrativeOff) narrative = await writeBriefNarrative(facts);
   const narrativeSource: 'claude' | 'fallback' = narrative ? 'claude' : 'fallback';
   const sameLabel = `vs ${dayShortEs(addDays(y, -7))}`;
   narrative ??= buildFallbackNarrative(daily, week ?? wtd, movers, sameLabel);
