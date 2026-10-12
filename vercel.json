@@ -5,8 +5,8 @@
       "schedule": "0 7 * * *"
     },
     {
-      "path": "/api/cron/weekly-kpi-report",
-      "schedule": "0 15 * * 1"
+      "path": "/api/cron/daily-brief",
+      "schedule": "30 15 * * *"
     }
   ]
 }

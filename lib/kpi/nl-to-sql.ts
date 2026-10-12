@@ -108,6 +108,20 @@ expressions as shown.
 - Total Renewal Sales:                ${KPI_SQL.totalRenewalSales}
 - Total Sales:                        ${KPI_SQL.totalSales}
 - Net Sales (refactor, yearly iOS):   ${KPI_SQL.netSales}
+- FT starts / FTs Started:            ${KPI_SQL.ftsStarted}
+- FT converted / FTs Converted:       ${KPI_SQL.ftsConverted}
+- FT Start Rate:                      ${KPI_SQL.ftStartRate}
+- FT Share (share of new subs from FT): ${KPI_SQL.ftShare}
+- CPNU (cost per new user/signup):    ${KPI_SQL.cpnu}
+- CPFT (cost per free trial):         ${KPI_SQL.cpft}
+- Purchases (non FT):                 ${KPI_SQL.purchasesNonFt}
+- Renewals (count, incl. yearly iOS): ${KPI_SQL.renewals}
+- Refunds (amount, refund-date):      ${KPI_SQL.refundsAmount}
+- Refunds (count, refund-date):       ${KPI_SQL.refundsCount}
+- Mobile Contribution Margin:         ${KPI_SQL.mobileCm}
+- Total Contribution:                 ${KPI_SQL.totalContribution}
+- Contribution Margin %:              ${KPI_SQL.contributionMarginPct}
+- New Subs Margin:                    ${KPI_SQL.newSubsMargin}
 
 Notes on semantics:
 - new_subscriptions / new_subscriptions_sales are stored NET of refunds. To get

@@ -1,6 +1,9 @@
 /**
- * Period utilities — derive ISO Mon-Sun week ranges in Mexico City timezone.
- * The agent runs on Vercel (UTC) but reports against MX business weeks.
+ * Period utilities — derive ISO Mon-Sun week ranges and day ranges in Mexico City time.
+ * The agent runs on Vercel (UTC) but reports against MX business days/weeks.
+ *
+ * All date math is done on 'YYYY-MM-DD' strings via Date.UTC(), never via local-time
+ * Date objects — local-time math shifts a day/month in UTC-6 (see feedback_tz_month_math).
  */
 
 const MX_TZ_OFFSET_HOURS = -6; // Mexico City is UTC-6 year-round (no DST since 2022)
@@ -17,10 +20,49 @@ function fmtDate(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+/** 'YYYY-MM-DD' → Date at UTC midnight (safe for UTC-based arithmetic). */
+function parseDay(s: string): Date {
+  return new Date(s + 'T00:00:00Z');
+}
+
 export interface Period {
   start: string; // YYYY-MM-DD
   end: string;   // YYYY-MM-DD
   label: string;
+}
+
+/** Today's calendar date in Mexico City as 'YYYY-MM-DD'. */
+export function todayMx(): string {
+  const n = nowInMx();
+  return fmtDate(new Date(Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate())));
+}
+
+/** Add (or subtract) whole days to a 'YYYY-MM-DD' string. */
+export function addDays(day: string, delta: number): string {
+  const d = parseDay(day);
+  d.setUTCDate(d.getUTCDate() + delta);
+  return fmtDate(d);
+}
+
+/** 0 = Monday … 6 = Sunday (ISO). */
+export function isoWeekday(day: string): number {
+  const dow = parseDay(day).getUTCDay(); // 0=Sun
+  return dow === 0 ? 6 : dow - 1;
+}
+
+/** Monday of the ISO week containing `day`. */
+export function mondayOf(day: string): string {
+  return addDays(day, -isoWeekday(day));
+}
+
+/** Single-day period. */
+export function dayPeriod(day: string): Period {
+  return { start: day, end: day, label: day };
+}
+
+/** Inclusive range period. */
+export function rangePeriod(start: string, end: string): Period {
+  return { start, end, label: `${start} → ${end}` };
 }
 
 /**
@@ -59,4 +101,32 @@ export function priorWeek(period: Period): Period {
     end: fmtDate(prevSunday),
     label: `${fmtDate(prevMonday)} → ${fmtDate(prevSunday)}`,
   };
+}
+
+// --- Spanish labels -----------------------------------------------------------
+
+const DOW_ES = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
+const DOW_ES_SHORT = ['lun', 'mar', 'mié', 'jue', 'vie', 'sáb', 'dom'];
+const MONTH_ES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+const MONTH_ES_LONG = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+
+/** 'lunes 12 de octubre' */
+export function dayLabelEs(day: string): string {
+  const d = parseDay(day);
+  return `${DOW_ES[isoWeekday(day)]} ${d.getUTCDate()} de ${MONTH_ES_LONG[d.getUTCMonth()]}`;
+}
+
+/** 'dom 11-oct' */
+export function dayShortEs(day: string): string {
+  const d = parseDay(day);
+  return `${DOW_ES_SHORT[isoWeekday(day)]} ${d.getUTCDate()}-${MONTH_ES[d.getUTCMonth()]}`;
+}
+
+/** '5–11 oct' (same month) or '28 sep–4 oct' */
+export function rangeShortEs(start: string, end: string): string {
+  const s = parseDay(start), e = parseDay(end);
+  if (s.getUTCMonth() === e.getUTCMonth()) {
+    return `${s.getUTCDate()}–${e.getUTCDate()} ${MONTH_ES[e.getUTCMonth()]}`;
+  }
+  return `${s.getUTCDate()} ${MONTH_ES[s.getUTCMonth()]}–${e.getUTCDate()} ${MONTH_ES[e.getUTCMonth()]}`;
 }
