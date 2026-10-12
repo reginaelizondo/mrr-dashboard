@@ -107,7 +107,8 @@ expressions as shown.
      derivative phrasing — ALL mean the same firstTicketCac formula)
 - Total Renewal Sales:                ${KPI_SQL.totalRenewalSales}
 - Total Sales:                        ${KPI_SQL.totalSales}
-- Net Sales (refactor, yearly iOS):   ${KPI_SQL.netSales}
+- Net Sales (REAL — netted by payment processor; this is the default "net"): ${KPI_SQL.netSales}
+- Net Sales (Looker's definition, netted by os — only if the user asks for "como Looker" / "Looker"): ${KPI_SQL.netSalesLooker}
 - FT starts / FTs Started:            ${KPI_SQL.ftsStarted}
 - FT converted / FTs Converted:       ${KPI_SQL.ftsConverted}
 - FT Start Rate:                      ${KPI_SQL.ftStartRate}
@@ -118,9 +119,10 @@ expressions as shown.
 - Renewals (count, incl. yearly iOS): ${KPI_SQL.renewals}
 - Refunds (amount, refund-date):      ${KPI_SQL.refundsAmount}
 - Refunds (count, refund-date):       ${KPI_SQL.refundsCount}
-- Mobile Contribution Margin:         ${KPI_SQL.mobileCm}
-- Total Contribution:                 ${KPI_SQL.totalContribution}
-- Contribution Margin %:              ${KPI_SQL.contributionMarginPct}
+- Mobile Contribution Margin (real):  ${KPI_SQL.mobileCm}
+- Total Contribution (real):          ${KPI_SQL.totalContribution}
+- Contribution Margin % (real):       ${KPI_SQL.contributionMarginPct}
+- Total Contribution (Looker's definition — only if the user asks for "como Looker"): ${KPI_SQL.totalContributionLooker}
 - New Subs Margin:                    ${KPI_SQL.newSubsMargin}
 
 Notes on semantics:

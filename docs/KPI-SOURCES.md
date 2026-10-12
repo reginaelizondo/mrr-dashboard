@@ -45,24 +45,68 @@ Reproducción de la tabla semanal de Looker (semanas del 21-sep, 28-sep, 5-oct y
 | renewals, renewals_yearly_ios | `SUM(renewals)`, `SUM(renewals_yearly_ios)` | ✅ punto por punto |
 | Purchases (non FT's) | Looker: `SUM(new_subscriptions) − SUM(fts_converted)` (neto) | ✅ reproducido, **ver hallazgo 3** |
 
-## Hallazgos que son decisión del equipo (no se cambiaron)
+## Hallazgos y decisión: el brief usa la definición real y muestra Looker como discrepancia
 
-1. **TOTAL CONTRIBUTION cuenta Stripe dos veces.** Las suscripciones cobradas
-   por Stripe traen el `os` del usuario (iOS/Android), así que Net Sales ya las
-   incluye — al 0.7/0.85 de Apple/Google, que además no es la comisión de
-   Stripe (~3.6 %) — y luego TOTAL CONTRIBUTION les suma otra vez
-   `stripe × 0.965`. Magnitud: ~$7 K/semana de ventas Stripe → TC inflado
-   ~$4.5 K/semana (~17 %). El bot reporta el número **tal como lo ve Looker**
-   para que cuadre con el dashboard; corregirlo es cambiar la definición del KPI.
-2. **`payment_processor = 'other_sales'`** existe, pero sus ventas van en la
-   columna `other_sales`, que TOTAL CONTRIBUTION no suma. Los dos términos de
-   esa fórmula valen siempre 0. Inofensivo ($300 en 3 semanas).
-3. **"Purchases (non FT's)" mezcla bases.** Resta `fts_converted` del conteo
-   **neto** de refunds, mientras la barra "New Subs" de la misma gráfica es
-   **bruta**. Resultado: ~10 % por debajo (126 vs 151 el 5-oct). El bot usa la
-   base bruta (`New Subs − fts_converted`) para ser consistente con New Subs.
-4. **"New Subs Margin" usa ventas netas** (`new_subscriptions_sales`) aunque la
-   columna "NS Sales" de al lado es bruta. Se reproduce tal cual.
+Criterio de Pepis (12-oct-2026): *"hay que hacer caso al real, pero siempre
+identificar las discrepancias"*. Por eso el bot calcula las dos versiones:
+las columnas `netSales` / `mobileCm` / `totalContribution` /
+`purchasesNonFt` son la definición real, y `…Looker` reproduce al centavo lo
+que ve el dashboard. Cuando difieren ≥ 1 %, el brief agrega la sección
+"Discrepancias vs Looker".
+
+### 1. TOTAL CONTRIBUTION (y Net Sales) netean por `os`, no por procesador de pago → Stripe se cuenta dos veces
+
+**Qué pasa.** Net Sales (refactor) aplica la comisión según el `os` del
+usuario: iOS → 0.7, Android → 0.85, y además resta 6 % de impuestos a todo lo
+móvil. Pero una suscripción cobrada por **Stripe** desde un iPhone trae
+`payment_processor = 'stripe'` y `os = 'iOS'`, así que entra en Net Sales al
+0.64 (como si Apple cobrara comisión). Luego TOTAL CONTRIBUTION le **vuelve a
+sumar** `stripe × 0.965`. Resultado: cada dólar de Stripe cuenta ~1.6 veces.
+
+**Cuánto es** (semanas Mon–Sun, misma tabla, mismos constantes 0.7 / 0.85 / 0.965 / 6 %):
+
+| Semana | Ventas subs Stripe | Net Sales Looker | Net Sales real | TC Looker | TC real | Diferencia |
+|---|---|---|---|---|---|---|
+| 14–20 sep | $6,174 | $60,986 | $62,460 | $22,818 | $18,335 | **+$4,483 (+24.5 %)** |
+| 21–27 sep | $6,573 | $61,557 | $63,033 | $24,696 | $19,828 | **+$4,868 (+24.5 %)** |
+| 28 sep–4 oct | $7,316 | $66,883 | $68,386 | $29,836 | $24,278 | **+$5,557 (+22.9 %)** |
+| 5–11 oct | $6,938 | $64,564 | $65,927 | $27,306 | $21,975 | **+$5,332 (+24.3 %)** |
+
+Desglose de la diferencia (semana 5–11 oct): $3,371 es Stripe neteado al 0.64
+*y además* sumado al 0.965; el resto (~$1,960) son ventas de Apple/Google cuyo
+`os` no coincide con su procesador (p. ej. filas `apple` con `os = 'Web'` al
+0.98) y el término de refunds, que hereda la misma mezcla.
+
+**Definición real que usa el bot.** Igual a la de Looker, pero cada venta se
+netea con la tasa de **su procesador**: `apple × 0.7`, `google × 0.85`,
+`renewals_sales_yearly_ios × 0.85`, `stripe × 0.965`, otros procesadores web
+(`paypal`, `learnworlds`, `Web`, `Unknown`) × 0.98, `other_sales` 0.97/0.98 por
+`network`, −6 % sobre Apple + Google + yearly iOS, y refunds de `_refund_date`
+al ratio neto. TOTAL CONTRIBUTION real = Net Sales real − spend (ya no hace
+falta sumar Stripe aparte). Mobile CM real = solo Apple + Google − spend.
+
+**Para el equipo de tech / data (qué pedir).** En el modelo dbt o en Looker:
+(a) netear por `payment_processor` en vez de `os`; (b) quitar el término
+`+ stripe × 0.965` de TOTAL CONTRIBUTION, o dejar Net Sales solo móvil y
+sumar Stripe una sola vez; (c) opcional, siguiente nivel: sustituir las
+constantes 0.7 / 0.85 por las comisiones reales medidas en el MRR dashboard
+(Apple all-in ≈ 34 % en 2026, Google 17.4 %, Stripe 3.6 %), que varían por mes
+y país — eso ya es una decisión de Finanzas.
+
+### 2. `payment_processor = 'other_sales'`
+Existe, pero sus ventas van en la columna `other_sales`, que TOTAL
+CONTRIBUTION no suma. Los dos términos de esa fórmula valen siempre 0.
+Inofensivo ($300 en 3 semanas). El bot real ya lo captura vía `other_sales`.
+
+### 3. "Purchases (non FT's)" mezcla bases
+Resta `fts_converted` del conteo **neto** de refunds, mientras la barra "New
+Subs" de la misma gráfica es **bruta**. Resultado: ~10 % por debajo (126 vs 151
+el 5-oct). El bot usa la base bruta (`New Subs − fts_converted`) y muestra la
+cifra de Looker como discrepancia.
+
+### 4. "New Subs Margin" usa ventas netas
+`new_subscriptions_sales` (neto) aunque la columna "NS Sales" de al lado es
+bruta. Se reproduce tal cual; no entra en el brief.
 
 ## Semántica que hay que tener presente
 

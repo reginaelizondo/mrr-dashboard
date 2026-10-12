@@ -41,14 +41,28 @@ const ADDITIVE: Set<KPIKey> = new Set([
   'spend', 'signups', 'ftsStarted', 'ftsConverted', 'newSubs', 'purchasesNonFt',
   'nsSales', 'totalRenewalSales', 'renewals', 'totalSales', 'netSales',
   'refundsAmount', 'refundsCount', 'mobileCm', 'totalContribution',
+  'netSalesLooker', 'mobileCmLooker', 'totalContributionLooker', 'purchasesNonFtLooker',
 ]);
 const LOWER_IS_BETTER: Set<KPIKey> = new Set(['cac', 'cpnu', 'cpft', 'refundsAmount', 'refundsCount']);
 const MONEY: Set<KPIKey> = new Set([
   'spend', 'nsSales', 'totalRenewalSales', 'totalSales', 'netSales', 'refundsAmount', 'mobileCm', 'totalContribution',
+  'netSalesLooker', 'mobileCmLooker', 'totalContributionLooker',
 ]);
 const MONEY_2DP: Set<KPIKey> = new Set(['cac', 'cpnu', 'cpft', 'arpu']);
-const PCT: Set<KPIKey> = new Set(['conversionRate', 'ftStartRate', 'ftShare', 'contributionMarginPct', 'newSubsMargin']);
+const PCT: Set<KPIKey> = new Set(['conversionRate', 'ftStartRate', 'ftShare', 'contributionMarginPct', 'contributionMarginPctLooker', 'newSubsMargin']);
 const RATIO: Set<KPIKey> = new Set(['firstTicketCac']);
+
+/**
+ * KPIs where the brief's (real) definition differs from Looker's. Rendered as a
+ * "Discrepancias vs Looker" block so the team can reconcile against the dashboard.
+ */
+const LOOKER_PAIRS: Array<{ real: KPIKey; looker: KPIKey; why: string }> = [
+  { real: 'totalContribution', looker: 'totalContributionLooker', why: 'Looker netea por os y vuelve a sumar Stripe al 0.965 (doble conteo)' },
+  { real: 'netSales', looker: 'netSalesLooker', why: 'Looker netea por os del usuario, el bot por procesador de pago' },
+  { real: 'mobileCm', looker: 'mobileCmLooker', why: 'Looker incluye ventas Stripe en el margen "mobile"' },
+  { real: 'purchasesNonFt', looker: 'purchasesNonFtLooker', why: 'Looker resta sobre new subs netas de refunds; el bot sobre brutas' },
+];
+const DISCREPANCY_MIN_PCT = 1;
 
 const ACQ_ORDER: KPIKey[] = ['spend', 'signups', 'ftsStarted', 'ftStartRate', 'cpnu', 'cpft'];
 const MON_ORDER: KPIKey[] = [
@@ -277,6 +291,32 @@ function findMovers(dims: Array<{ label: string; rows: SegmentRow[] }>, baseLabe
   return out;
 }
 
+// ---- Discrepancies vs Looker ------------------------------------------------------
+
+interface Discrepancy { label: string; real: string; looker: string; diff: string; why: string }
+
+function findDiscrepancies(v: KPIValues): Discrepancy[] {
+  const out: Discrepancy[] = [];
+  for (const p of LOOKER_PAIRS) {
+    const r = v[p.real], l = v[p.looker];
+    if (r === null || l === null || r === 0) continue;
+    const pct = ((l - r) / Math.abs(r)) * 100;
+    if (Math.abs(pct) < DISCREPANCY_MIN_PCT) continue;
+    out.push({
+      label: KPI_LABELS[p.real],
+      real: fmtValue(p.real, r),
+      looker: fmtValue(p.looker, l),
+      diff: `${fmtSigned(pct, 0)}%`,
+      why: p.why,
+    });
+  }
+  return out;
+}
+
+function renderDiscrepancies(title: string, items: Discrepancy[]): string {
+  return `_${title}_\n` + items.map((d) => `• *${d.label}*: real ${d.real} · Looker ${d.looker} (${d.diff}) — ${d.why}`).join('\n');
+}
+
 // ---- Narrative fallback ---------------------------------------------------------
 
 /** Who should look at a KPI that left its band, and where. */
@@ -431,6 +471,14 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   notas.push('Los refunds atribuidos a fecha de venta siguen cayendo ~2 semanas; New Subs y NS Sales de los últimos días pueden bajar ligeramente al madurar.');
   if (wtd) notas.push(`Semana en curso lleva ${wtdDays} día(s); se compara con los mismos ${wtdDays} día(s) de la semana pasada.`);
 
+  // Discrepancies vs Looker (real definition vs the dashboard's), for the headline period
+  const discPeriodKey = weekly ? 'lastWeek' : 'yesterday';
+  const discPeriodLabel = weekly ? `semana pasada (${rangeShortEs(lwStart, lwEnd)})` : `ayer (${dayShortEs(y)})`;
+  const discrepancies = findDiscrepancies(totals[discPeriodKey]);
+  for (const d of discrepancies) {
+    notas.push(`Discrepancia vs Looker en ${d.label} (${discPeriodLabel}): real ${d.real}, Looker ${d.looker} (${d.diff}) — ${d.why}. El brief usa la definición real.`);
+  }
+
   // Facts for the writer
   const facts: BriefFacts = {
     fecha: dayLabelEs(today),
@@ -512,6 +560,13 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   section(`_País (top ${countries.length} por NS Sales)_\n${countryRows.map(renderSegmentLine).join('\n')}`);
 
   section(`*Qué revisaría hoy*\n` + narrative.queRevisariaHoy.map((a, i) => `${i + 1}. ${a}`).join('\n'));
+
+  if (discrepancies.length) {
+    section(
+      `*Discrepancias vs Looker — ${discPeriodLabel}*  _(el brief usa la definición real; Looker se muestra para cuadrar con el dashboard)_\n` +
+      renderDiscrepancies('Definición', discrepancies).replace('_Definición_\n', '')
+    );
+  }
 
   const footer = `Fuente: \`an_operational_dash\` (BigQuery) · ${notas[0] ?? ''} · 🔴/🟢 = fuera de la banda de 28 días · 🤖 KPI Bot${narrativeSource === 'fallback' ? ' · narrativa automática' : ''}`;
   blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: footer.slice(0, 2900) }] });
