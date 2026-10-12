@@ -85,6 +85,25 @@ netea con la tasa de **su procesador**: `apple × 0.7`, `google × 0.85`,
 al ratio neto. TOTAL CONTRIBUTION real = Net Sales real − spend (ya no hace
 falta sumar Stripe aparte). Mobile CM real = solo Apple + Google − spend.
 
+**Double check (12-oct-2026, a petición de Mariana / tech).**
+- Las filas `payment_processor = 'stripe'` traen `os` = iOS / Android / Web / Unknown
+  **desde enero 2025; nunca `os` vacío** → no hay periodo en que la fórmula por os
+  + término Stripe no duplicara. Las fórmulas actuales son las mismas documentadas
+  el 22-abr-2026 y reproducen el dashboard al centavo: no cambiaron desde entonces.
+- Impacto mensual TC Looker vs real: 2025-H2 +9–21 % (+$75K en 6 meses);
+  2026 ene–oct +22–37 % por mes; **2026 YTD (ene–11 oct) $992K vs $778K =
+  +$214K (+27.5 %)**. Crece porque las ventas Stripe se duplicaron en 2026.
+- Renglón de ejemplo: 2026-10-07, stripe / iOS / US / yearly, ns_sales $359.94 →
+  en Net Sales como iOS $230.36 (×0.64) + en TC otra vez $347.34 (×0.965) =
+  $577.70 contados por $359.94 vendidos.
+- Lectura probable del origen: Net Sales (refactor) tiene buckets `Web × 0.98` /
+  `Unknown × 0.98`, es decir, ya pretende incluir las compras web/Stripe. El
+  `+ stripe × 0.965` de TOTAL CONTRIBUTION se agregó asumiendo que "MOBILE
+  CONTRIBUTION MARGIN" era solo móvil por el nombre. Problema de nombre, no de
+  intención.
+- Prueba de aceptación tras el cambio en dbt/Looker: semana 5–11 oct debe dar
+  TOTAL CONTRIBUTION **$21,975**, Mobile CM **$16,000**, Net Sales **$65,927**.
+
 **Para el equipo de tech / data (qué pedir).** En el modelo dbt o en Looker:
 (a) netear por `payment_processor` en vez de `os`; (b) quitar el término
 `+ stripe × 0.965` de TOTAL CONTRIBUTION, o dejar Net Sales solo móvil y
