@@ -351,6 +351,12 @@ function pctShare(part: number, whole: number): string {
   return whole === 0 ? '—' : `${Math.round((part / whole) * 100)}%`;
 }
 
+/** Human name for a segment in prose ("en" alone reads badly in a sentence). */
+const LANG_NAMES: Record<string, string> = { en: 'inglés', es: 'español', pt: 'portugués' };
+function segName(seg: string, dimLabel: string): string {
+  return dimLabel === 'idioma' ? (LANG_NAMES[seg] ?? seg) : seg;
+}
+
 /**
  * One or two sentences explaining a flagged KPI from the data we already have:
  *  - ratio KPIs: which component moved (numerator vs denominator) + the segment
@@ -384,7 +390,7 @@ function explainMove(c: Comparison, curr: KPIValues, baseScaled: KPIValues, dims
       }
     }
     if (best && Math.abs(best.r) >= 3) {
-      parts.push(`${best.seg} (${best.dim}, ${pctShare(best.w, 1)} de ${KPI_LABELS[rp.den]}): ${fmtValue(k, best.v)} (${dot(k, best.v, (best.v as number) / (1 + best.r / 100))} ${fmtSigned(best.r, 0)}%)`);
+      parts.push(`${segName(best.seg, best.dim)} (${best.dim}, ${pctShare(best.w, 1)} de ${KPI_LABELS[rp.den]}): ${fmtValue(k, best.v)} (${dot(k, best.v, (best.v as number) / (1 + best.r / 100))} ${fmtSigned(best.r, 0)}%)`);
     }
     return parts.length ? parts.join('. ') : null;
   }
@@ -406,7 +412,7 @@ function explainMove(c: Comparison, curr: KPIValues, baseScaled: KPIValues, dims
       const amt = MONEY.has(k) ? `$${Math.round(Math.abs(best.delta)).toLocaleString('en-US')}` : Math.round(Math.abs(best.delta)).toLocaleString('en-US');
       const share = best.delta / dTotal;
       const how = share >= 0.97 ? 'lo explica por completo' : `explica ${pctShare(best.delta, dTotal)} del movimiento`;
-      bits.push(`${best.seg} (${d.label}) ${how} (${best.delta < 0 ? '−' : '+'}${amt})`);
+      bits.push(`${segName(best.seg, d.label)} (${d.label}) ${how} (${best.delta < 0 ? '−' : '+'}${amt})`);
     }
     if (bits.length === 2) break;
   }
