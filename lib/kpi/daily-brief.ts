@@ -67,9 +67,13 @@ const DISCREPANCY_MIN_PCT = 1;
 const ACQ_ORDER: KPIKey[] = ['spend', 'signups', 'ftsStarted', 'ftStartRate', 'cpnu', 'cpft'];
 const MON_ORDER: KPIKey[] = [
   'newSubs', 'conversionRate', 'nsSales', 'cac', 'arpu', 'firstTicketCac',
-  'totalSales', 'netSales', 'renewals', 'refundsAmount', 'totalContribution',
+  'totalSales', 'netSales', 'renewals', 'refundsAmount',
 ];
-const WEEK_ORDER: KPIKey[] = [...ACQ_ORDER, ...MON_ORDER];
+/** Daily sections. Total Contribution is too lumpy day to day (refund batches) → weekly only. */
+const DAY_ORDER: KPIKey[] = [...ACQ_ORDER, ...MON_ORDER];
+const WEEK_ORDER: KPIKey[] = [...DAY_ORDER, 'totalContribution'];
+/** KPIs with no good/bad direction (spend is a decision, not an outcome). */
+const NEUTRAL: Set<KPIKey> = new Set(['spend']);
 /** KPIs shown per segment in the breakdown. */
 const DIM_KPIS: KPIKey[] = ['newSubs', 'nsSales', 'cac', 'conversionRate'];
 /** KPIs whose movement we decompose by segment for the narrative. */
@@ -202,15 +206,29 @@ function toFact(c: Comparison): FactComparison {
   };
 }
 
+/**
+ * Colour dot for a comparison: 🟢 moved in the good direction, 🔴 in the bad one,
+ * ⚪ flat (< 1 % / < 0.2 pp) or a KPI with no direction (spend).
+ */
+function dot(key: KPIKey, value: number | null, base: number | null): string {
+  const rel = relChange(key, value, base);
+  if (rel === null) return '⚪';
+  const flat = PCT.has(key) ? Math.abs(rel) < 0.2 : Math.abs(rel) < 1;
+  if (flat || NEUTRAL.has(key)) return '⚪';
+  const up = rel > 0;
+  const good = LOWER_IS_BETTER.has(key) ? !up : up;
+  return good ? '🟢' : '🔴';
+}
+
 function renderComparisonLine(c: Comparison, baseLabel: string, sameLabel?: string): string {
   const parts = [`*${KPI_LABELS[c.key]}* ${fmtValue(c.key, c.value)}`];
   const d1 = fmtDelta(c.key, c.value, c.base);
-  if (d1) parts.push(`${d1} ${baseLabel}`);
+  if (d1) parts.push(`${dot(c.key, c.value, c.base)} ${d1} ${baseLabel}`);
   if (sameLabel && c.sameDay !== null) {
     const d2 = fmtDelta(c.key, c.value, c.sameDay);
-    if (d2) parts.push(`${d2} ${sameLabel}`);
+    if (d2) parts.push(`${dot(c.key, c.value, c.sameDay)} ${d2} ${sameLabel}`);
   }
-  const mark = c.flag === 'mejor' ? '  🟢' : c.flag === 'peor' ? '  🔴' : '';
+  const mark = c.flag ? '  ‼️' : '';
   return `• ${parts.join('  ·  ')}${mark}`;
 }
 
@@ -255,7 +273,7 @@ function renderSegmentLine(r: SegmentRow): string {
   const cells = DIM_KPIS.map((k) => {
     const d = fmtDelta(k, r.curr[k], r.base[k]);
     const short = k === 'newSubs' ? 'subs' : k === 'nsSales' ? 'NS' : k === 'cac' ? 'CAC' : 'conv';
-    return `${short} ${fmtValue(k, r.curr[k])}${d ? ` (${d})` : ''}`;
+    return `${short} ${fmtValue(k, r.curr[k])}${d ? ` (${dot(k, r.curr[k], r.base[k])} ${d})` : ''}`;
   });
   return `• *${r.segment}*: ${cells.join(' · ')}`;
 }
@@ -313,10 +331,6 @@ function findDiscrepancies(v: KPIValues): Discrepancy[] {
   return out;
 }
 
-function renderDiscrepancies(title: string, items: Discrepancy[]): string {
-  return `_${title}_\n` + items.map((d) => `• *${d.label}*: real ${d.real} · Looker ${d.looker} (${d.diff}) — ${d.why}`).join('\n');
-}
-
 // ---- Narrative fallback ---------------------------------------------------------
 
 /** Who should look at a KPI that left its band, and where. */
@@ -353,15 +367,17 @@ function buildFallbackNarrative(
 
   const parts: string[] = [];
   if (flagged.length === 0) {
-    parts.push('Día dentro de rango: ningún KPI operativo salió de su banda estacional de 28 días. `FACT`');
+    parts.push('Ayer dentro de rango: ningún KPI operativo salió de su banda estacional de 28 días. `FACT`');
   } else {
-    if (worse.length) parts.push('Fuera de banda, a la baja: ' + worse.slice(0, 3).map(describe).join('; ') + '. `FACT`');
-    if (better.length) parts.push('A favor: ' + better.slice(0, 2).map(describe).join('; ') + '. `FACT`');
+    if (worse.length) parts.push('🔴 Ayer, fuera de banda a la baja: ' + worse.slice(0, 3).map(describe).join('; ') + '. `FACT`');
+    if (better.length) parts.push('🟢 A favor: ' + better.slice(0, 2).map(describe).join('; ') + '. `FACT`');
   }
+  // Weekly movers go into the headline itself (not a loose comment under the table).
   const weekFlag = weekly?.filter((c) => c.flag) ?? [];
-  const comentarioSemana = weekFlag.length
-    ? 'Semana: ' + weekFlag.slice(0, 3).map((c) => `${KPI_LABELS[c.key]} ${fmtDelta(c.key, c.value, c.base)}`).join(', ') + '. `FACT`'
-    : undefined;
+  if (weekFlag.length) {
+    parts.push('Semana: ' + weekFlag.slice(0, 3).map((c) => `${dot(c.key, c.value, c.base)} ${KPI_LABELS[c.key]} *${fmtValue(c.key, c.value)}* (${fmtDelta(c.key, c.value, c.base)})`).join(', ') + '. `FACT`');
+  }
+  const comentarioSemana = undefined;
   const comentarioDesglose = movers.length ? movers.slice(0, 2).join('. ') + '. `FACT`' : undefined;
 
   // One action per role, worst first, max 4.
@@ -393,6 +409,8 @@ export interface DailyBriefOptions {
   weekly?: boolean;
   /** Skip the Claude narrative and use the rule-based fallback. */
   skipNarrative?: boolean;
+  /** Mark the message as a preview (title suffix) — for test posts. */
+  preview?: boolean;
 }
 
 export interface DailyBriefResult {
@@ -440,7 +458,7 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
 
   // Daily comparisons
   const yDow = isoWeekday(y);
-  const daily = WEEK_ORDER.map((k) => compareDaily(k, totals.yesterday, totals.trailing7, totals.sameDow, bands.get(k) ?? null, yDow));
+  const daily = DAY_ORDER.map((k) => compareDaily(k, totals.yesterday, totals.trailing7, totals.sameDow, bands.get(k) ?? null, yDow));
   const dailyAcq = daily.filter((c) => ACQ_ORDER.includes(c.key));
   const dailyMon = daily.filter((c) => MON_ORDER.includes(c.key));
 
@@ -518,7 +536,7 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   narrative ??= buildFallbackNarrative(daily, week ?? wtd, movers, sameLabel);
 
   // ---- Render -------------------------------------------------------------------
-  const title = `Morning brief KPIs — Kinedu — ${dayLabelEs(today)}`;
+  const title = `Morning brief KPIs — Kinedu — ${dayLabelEs(today)}${opts.preview ? ' · vista previa' : ''}`;
   const blocks: SlackBlock[] = [];
   const textParts: string[] = [title, ''];
 
@@ -564,14 +582,18 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
 
   section(`*Qué revisaría hoy*\n` + narrative.queRevisariaHoy.map((a, i) => `${i + 1}. ${a}`).join('\n'));
 
-  if (discrepancies.length) {
-    section(
-      `*Discrepancias vs Looker — ${discPeriodLabel}*  _(el brief usa la definición corregida; Looker se muestra para cuadrar con el dashboard)_\n` +
-      renderDiscrepancies('Definición', discrepancies).replace('_Definición_\n', '')
-    );
+  section(`*En resumen*\n${narrative.loMasImportante}`);
+
+  // One discreet line while Looker still carries the old definition (removed
+  // automatically once the dashboard matches: the pair stops differing ≥ 1 %).
+  const tcDisc = discrepancies.find((d) => d.label === KPI_LABELS.totalContribution);
+  const nsDisc = discrepancies.find((d) => d.label === KPI_LABELS.netSales);
+  if (tcDisc || nsDisc) {
+    const lookerBits = [tcDisc ? `Total Contribution ${tcDisc.looker}` : null, nsDisc ? `Net Sales ${nsDisc.looker}` : null].filter(Boolean).join(' · ');
+    section(`_Nota: Net Sales y Total Contribution usan la definición corregida (Stripe a su comisión, sin doble conteo). Looker hoy, ${discPeriodLabel}: ${lookerBits}._`);
   }
 
-  const footer = `Fuente: \`an_operational_dash\` (BigQuery) · ${notas[0] ?? ''} · 🔴/🟢 = fuera de la banda de 28 días · 🤖 KPI Bot${narrativeSource === 'fallback' ? ' · narrativa automática' : ''}`;
+  const footer = `Fuente: \`an_operational_dash\` (BigQuery) · ${notas[0] ?? ''} · 🟢/🔴 mejor/peor que la base · ⚪ sin cambio · ‼️ fuera de la banda de 28 días · 🤖 KPI Bot${narrativeSource === 'fallback' ? ' · narrativa automática' : ''}`;
   blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: footer.slice(0, 2900) }] });
   textParts.push(footer);
 

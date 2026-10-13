@@ -39,6 +39,7 @@ const opt = (f: string) => { const i = args.indexOf(f); return i >= 0 ? args[i +
     today: opt('--today'),
     weekly: flag('--weekly') ? true : flag('--no-weekly') ? false : undefined,
     skipNarrative: flag('--no-llm'),
+    preview: flag('--preview'),
   });
   console.error(`⏱  built in ${((Date.now() - t0) / 1000).toFixed(1)}s · narrative: ${result.narrativeSource}`);
   console.log(result.text);
