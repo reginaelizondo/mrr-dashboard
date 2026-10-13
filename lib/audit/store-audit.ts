@@ -41,7 +41,7 @@ const k = (v: number) => Math.abs(v) >= 10_000 ? `$${(v / 1000).toFixed(1)}K` : 
 const pct = (a: number, b: number) => (a === 0 ? null : (b - a) / a);
 const fpct = (p: number | null) => (p === null ? 'n/d' : `${p >= 0 ? '+' : '−'}${Math.abs(p * 100).toFixed(1)}%`);
 const icon = (s: Status) => (s === 'ok' ? '✅' : s === 'warn' ? '⚠️' : s === 'alarm' ? '🔴' : 'ℹ️');
-const worst = (xs: Status[]): Status => (xs.includes('alarm') ? 'alarm' : xs.includes('warn') ? 'warn' : 'ok');
+const worst = (xs: Status[]): Status => (xs.includes('alarm') ? 'alarm' : xs.includes('warn') ? 'warn' : xs.includes('info') ? 'info' : 'ok');
 
 function parseCsv(txt: string): string[][] {
   const rows: string[][] = []; let row: string[] = [], f = '', q = false;
@@ -255,16 +255,25 @@ export async function runStoreAudit(opts: { today?: string } = {}): Promise<Audi
     checks.push({ store: 'Apple', status: worst([st, rst, sk ? 'warn' : 'ok']), line: `Apple (${rangeShortEs(aStart, aEnd)}): tienda ${k(aS)} · Looker ${k(aL)} · ${fpct(aP)} ${icon(st)} · refunds ${fpct(aRp)} ${icon(rst)} · último día publicado ${dayShortEs(aEnd)}`, detail: sk ?? undefined });
   }
 
-  // Google — structural band (tax + FX); counts must track
-  const gS = sumDays(google.days, start, end, 'gross'), gL = sumLooker(looker.byPp.google, start, end, 'gross');
+  // Google — Looker is known to run above Play (tax-inclusive amount + a stronger FX).
+  // Inside the known band → ⏳ pending fix (not OK); outside it → ⚠️ something else changed;
+  // Looker ≈ Play price ex-tax at Google's FX (±5 %) → ✅ fix applied.
+  const gS = sumDays(google.days, start, end, 'gross'), gI = sumDays(google.days, start, end, 'item'), gL = sumLooker(looker.byPp.google, start, end, 'gross');
   const gN = sumDays(google.days, start, end, 'n'), gNl = sumLooker(looker.byPp.google, start, end, 'n');
-  const ratio = gS ? gL / gS : null; const cN = pct(gN, gNl);
+  const ratio = gS ? gL / gS : null; const ratioItem = gI ? gL / gI : null; const cN = pct(gN, gNl);
   if (!Object.keys(google.days).length) {
     checks.push({ store: 'Google', status: 'warn', line: `Google: no hay reporte diario de Play para ${rangeShortEs(start, end)} en el bucket (sales/salesreport_*.zip)` });
   } else {
-    const st: Status = ratio === null ? 'warn' : ratio >= GOOGLE_BAND[0] && ratio <= GOOGLE_BAND[1] ? 'ok' : 'warn';
+    const fixed = ratioItem !== null && Math.abs(ratioItem - 1) <= 0.05;
+    const inBand = ratio !== null && ratio >= GOOGLE_BAND[0] && ratio <= GOOGLE_BAND[1];
+    const st: Status = fixed ? 'ok' : inBand ? 'info' : 'warn';
     const cst: Status = cN === null || Math.abs(cN) > COUNT_WARN ? 'warn' : 'ok';
-    checks.push({ store: 'Google', status: worst([st, cst]), line: `Google (${rangeShortEs(start, end)}): Play cobrado ${k(gS)} · Looker ${k(gL)} · ${fpct(pct(gS, gL))} ${icon(st)} ${st === 'ok' ? 'patrón conocido (impuesto + FX, +3 a +22 %)' : 'FUERA del patrón conocido'} · cobros ${gN} vs ${gNl} ${icon(cst)}` });
+    const verdict = fixed
+      ? '✅ fix aplicado (Looker ≈ precio sin impuesto al FX de Google)'
+      : inBand
+        ? `⏳ sobreestimado ${fpct(pct(gI, gL))} vs precio s/imp · pendiente de corrección en tech (impuesto + FX)`
+        : `⚠️ FUERA del patrón conocido (+3 a +22 % vs cobrado) — algo más cambió`;
+    checks.push({ store: 'Google', status: worst([st, cst]), line: `Google (${rangeShortEs(start, end)}): Play cobrado ${k(gS)} · Looker ${k(gL)} · ${fpct(pct(gS, gL))} ${verdict} · cobros ${gN} vs ${gNl} ${icon(cst)}` });
   }
 
   // Stripe
@@ -286,11 +295,17 @@ export async function runStoreAudit(opts: { today?: string } = {}): Promise<Audi
   for (let d = start; d <= end; d = addDays(d, 1)) { const t = looker.tc[d]; const s = stripe[d]; if (t) counted += t.stripeNetted + t.stripeTerm; if (s) real += s.gross - s.fee; }
   const factor = real ? counted / real : null;
   const dc: Status = factor === null ? 'warn' : factor < DOUBLE_COUNT_FIXED_BELOW ? 'ok' : 'info';
-  checks.push({ store: 'Looker', status: worst([fresh, dc === 'ok' ? 'ok' : 'ok']), line: `Looker: tabla actualizada ${freshTxt} ${icon(fresh)} · Stripe en Total Contribution ${factor === null ? 'n/d' : `${factor.toFixed(2)}×`} ${dc === 'ok' ? '✅ fix aplicado (una sola vez)' : '⏳ doble conteo, fix pendiente en tech'}` });
+  checks.push({ store: 'Looker', status: worst([fresh, dc]), line: `Looker: tabla actualizada ${freshTxt} ${icon(fresh)} · Stripe en Total Contribution ${factor === null ? 'n/d' : `${factor.toFixed(2)}×`} ${dc === 'ok' ? '✅ fix aplicado (una sola vez)' : '⏳ doble conteo, fix pendiente en tech'}` });
 
   const status = worst(checks.map((c) => c.status));
   const alarms = checks.filter((c) => c.status === 'alarm').length, warns = checks.filter((c) => c.status === 'warn').length;
-  const headline = status === 'ok' ? '✅ Todo cuadra' : `${alarms ? `🔴 ${alarms} alarma${alarms > 1 ? 's' : ''}` : ''}${alarms && warns ? ' · ' : ''}${warns ? `⚠️ ${warns} aviso${warns > 1 ? 's' : ''}` : ''}`;
+  const pending = checks.filter((c) => c.status === 'info').length;
+  const parts: string[] = [];
+  if (alarms) parts.push(`🔴 ${alarms} alarma${alarms > 1 ? 's' : ''}`);
+  if (warns) parts.push(`⚠️ ${warns} aviso${warns > 1 ? 's' : ''}`);
+  if (!alarms && !warns) parts.push('✅ Todo cuadra');
+  if (pending) parts.push(`⏳ ${pending} pendiente${pending > 1 ? 's' : ''} de tech`);
+  const headline = parts.join(' · ');
   const title = `🔎 Auditoría tiendas vs Looker — ${dayShortEs(today)} · ${headline}`;
   const lines = checks.map((c) => `• ${c.line}${c.detail ? `\n   ↳ ${c.detail}` : ''}`);
   const footer = `_Ventana: 7 días hasta ${dayShortEs(end)} (Apple hasta su último día publicado). Apple = App Store Connect · Google = Play ventas estimadas, FX de Google · Stripe = API · Looker = an_operational_dash. Umbrales: Apple ±4/8 %, Stripe ±5/10 %, Google banda +3–22 %, conteos ±10 %. Método: docs/KPI-SOURCES.md_`;
