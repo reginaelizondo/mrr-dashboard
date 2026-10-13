@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { buildDailyBrief } from '@/lib/kpi/daily-brief';
-import { postToSlack } from '@/lib/slack/post';
+import { postWithThread, postToSlack } from '@/lib/slack/post';
 
 export const maxDuration = 120;
 
@@ -33,11 +33,11 @@ export async function GET(request: NextRequest) {
     if (dry) {
       return NextResponse.json({
         ok: true, posted: false, narrativeSource: result.narrativeSource,
-        text: result.text, facts: result.facts, message: result.message,
+        text: result.text, facts: result.facts, message: result.message, thread: result.thread,
       });
     }
-    await postToSlack(result.message);
-    return NextResponse.json({ ok: true, posted: true, narrativeSource: result.narrativeSource });
+    const via = await postWithThread({ main: result.message, thread: result.thread });
+    return NextResponse.json({ ok: true, posted: true, via: via.via, narrativeSource: result.narrativeSource });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[daily-brief] failed:', msg);

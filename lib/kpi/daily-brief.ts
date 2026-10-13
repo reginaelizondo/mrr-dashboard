@@ -108,6 +108,8 @@ const WEEK_ORDER: KPIKey[] = [...DAY_ORDER, 'totalContribution'];
 const NEUTRAL: Set<KPIKey> = new Set(['spend']);
 /** KPIs shown per segment in the breakdown. */
 const DIM_KPIS: KPIKey[] = ['newSubs', 'nsSales', 'cac', 'conversionRate'];
+/** The six KPIs in the executive traffic light (main message). */
+const SEMAFORO_KPIS: KPIKey[] = ['spend', 'newSubs', 'conversionRate', 'cac', 'nsSales', 'ftConversionRate'];
 /** KPIs whose movement we decompose by segment for the narrative. */
 const MOVER_KPIS: KPIKey[] = ['newSubs', 'nsSales', 'spend'];
 
@@ -519,7 +521,8 @@ export interface DailyBriefOptions {
 }
 
 export interface DailyBriefResult {
-  message: SlackMessage;
+  message: SlackMessage;      // main (executive) message
+  thread: SlackMessage[];     // detail replies, posted in a thread under `message`
   text: string;          // plain-text rendering (for dry runs / logs)
   facts: BriefFacts;
   narrative: BriefNarrative;
@@ -675,82 +678,69 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   narrative ??= buildFallbackNarrative(daily, week ?? wtd, movers, sameLabel);
 
   // ---- Render -------------------------------------------------------------------
+  // Main message = the executive view: headline, a six-KPI traffic light, top-3
+  // causes, actions. Everything else (full tables, breakdown, trend, notes) goes
+  // into a Slack thread under it, so the channel stays readable.
   const title = `Morning brief KPIs — Kinedu — ${dayLabelEs(today)}${opts.preview ? ' · vista previa' : ''}`;
-  const blocks: SlackBlock[] = [];
   const textParts: string[] = [title, ''];
-
-  const section = (md: string) => {
-    blocks.push({ type: 'section', text: { type: 'mrkdwn', text: md.slice(0, 2900) } });
-    textParts.push(md, '');
+  const sec = (md: string): SlackBlock => { textParts.push(md, ''); return { type: 'section', text: { type: 'mrkdwn', text: md.slice(0, 2900) } }; };
+  const ctx = (md: string): SlackBlock => { textParts.push(`_${md}_`, ''); return { type: 'context', elements: [{ type: 'mrkdwn', text: md.slice(0, 2900) }] }; };
+  const semaforo = (heading: string, comps: Comparison[], baseLabel: string): SlackBlock => {
+    const fields = SEMAFORO_KPIS.flatMap((k) => {
+      const c = comps.find((x) => x.key === k);
+      if (!c) return [];
+      const d = fmtDelta(k, c.value, c.base);
+      return [{ type: 'mrkdwn', text: `*${KPI_LABELS[k]}*\n${fmtValue(k, c.value)}  ${dot(k, c.value, c.base)} ${d ?? 'n/d'} ${baseLabel}${c.flag ? ' ‼️' : ''}` }];
+    });
+    textParts.push(`*${heading}*`, ...fields.map((f) => '  ' + f.text.replace('\n', ' ')), '');
+    return { type: 'section', text: { type: 'mrkdwn', text: `*${heading}*` }, fields };
   };
 
-  blocks.push({ type: 'header', text: { type: 'plain_text', text: title.slice(0, 150) } });
-
-  section(`*Lo más importante*\n${narrative.loMasImportante}`);
-
+  // --- main
+  const mainBlocks: SlackBlock[] = [{ type: 'header', text: { type: 'plain_text', text: title.slice(0, 150) } }];
+  mainBlocks.push(sec(`*Lo más importante*\n${narrative.loMasImportante}`));
+  mainBlocks.push(semaforo(`Ayer — ${dayShortEs(y)}  (vs prom. 7 días)`, daily, 'vs 7d'));
+  if (week) mainBlocks.push(semaforo(`Semana ${rangeShortEs(lwStart, lwEnd)}  (vs semana anterior)`, week, 'vs sem. ant.'));
+  else if (wtd) mainBlocks.push(semaforo(`Semana en curso — ${rangeShortEs(wtdStart, y)}  (vs mismos días de la semana pasada)`, wtd, 'vs sem. pas.'));
   if (causas.length) {
-    section(
-      `*Por qué se movió*  _(descomposición calculada de cada ‼️)_\n` +
-      causas.map((c) => `• *${KPI_LABELS[c.key]}*${c.scope === 'semana' ? ' (semana)' : ''}: ${c.text}.`).join('\n')
-    );
+    mainBlocks.push(sec(`*Por qué se movió*\n` + causas.slice(0, 3).map((c) => `• *${KPI_LABELS[c.key]}*${c.scope === 'semana' ? ' (semana)' : ''}: ${c.text}.`).join('\n')));
   }
+  mainBlocks.push(sec(`*Qué revisaría hoy*\n` + narrative.queRevisariaHoy.map((a, i) => `${i + 1}. ${a}`).join('\n')));
+  mainBlocks.push(ctx(`🧵 Detalle en el hilo: ayer completo · semana · desglose por plataforma, idioma y país · tendencia 4 semanas · 🟢/🔴 mejor/peor que la base · ⚪ sin cambio · ‼️ fuera de la banda de 28 días · 🤖 KPI Bot${narrativeSource === 'fallback' ? ' · narrativa automática' : ''}`));
 
-  section(
-    `*Ayer — ${dayShortEs(y)}*  _(vs prom. 7d · ${sameLabel})_\n` +
-    (narrative.comentarioAyer ? `${narrative.comentarioAyer}\n` : '') +
-    `_Adquisición_\n` + dailyAcq.map((c) => renderComparisonLine(c, 'vs prom. 7d', sameLabel)).join('\n')
-  );
-  section(`_Monetización_\n` + dailyMon.map((c) => renderComparisonLine(c, 'vs prom. 7d', sameLabel)).join('\n'));
-
-  if (wtd) {
-    section(
-      `*Semana en curso — ${rangeShortEs(wtdStart, y)} (${wtdDays} días)*  _(vs mismos días de la semana pasada)_\n` +
-      (narrative.comentarioSemana ? `${narrative.comentarioSemana}\n` : '') +
-      wtd.map((c) => renderComparisonLine(c, 'vs sem. pasada')).join('\n')
-    );
-  }
-  if (week) {
-    section(
-      `*Semana pasada — ${rangeShortEs(lwStart, lwEnd)}*  _(vs ${rangeShortEs(addDays(lwStart, -7), addDays(lwEnd, -7))})_\n` +
-      (narrative.comentarioSemana ? `${narrative.comentarioSemana}\n` : '') +
-      week.map((c) => renderComparisonLine(c, 'vs sem. anterior')).join('\n')
-    );
-  }
-
-  section(
-    `*Tendencia — últimas 4 semanas completas*  _(${rangeShortEs(addDays(lwStart, -21), addDays(lwEnd, -21))} → ${rangeShortEs(lwStart, lwEnd)}; color = última vs promedio de las 3 previas)_\n` +
-    trend.map((t) => `• *${KPI_LABELS[t.key]}*: ${t.line}  ${t.mark}`).join('\n')
-  );
-
+  // --- thread
+  textParts.push('——— 🧵 HILO ———', '');
+  const thread: SlackMessage[] = [];
+  thread.push({
+    text: 'Ayer — detalle',
+    blocks: [
+      sec(`*Ayer — ${dayShortEs(y)}*  _(vs prom. 7d · ${sameLabel})_\n` + (narrative.comentarioAyer ? `${narrative.comentarioAyer}\n` : '') + `_Adquisición_\n` + dailyAcq.map((c) => renderComparisonLine(c, 'vs prom. 7d', sameLabel)).join('\n')),
+      sec(`_Monetización_\n` + dailyMon.map((c) => renderComparisonLine(c, 'vs prom. 7d', sameLabel)).join('\n')),
+    ],
+  });
+  const semanaBlocks: SlackBlock[] = [];
+  if (wtd) semanaBlocks.push(sec(`*Semana en curso — ${rangeShortEs(wtdStart, y)} (${wtdDays} días)*  _(vs mismos días de la semana pasada)_\n` + wtd.map((c) => renderComparisonLine(c, 'vs sem. pasada')).join('\n')));
+  if (week) semanaBlocks.push(sec(`*Semana pasada — ${rangeShortEs(lwStart, lwEnd)}*  _(vs ${rangeShortEs(addDays(lwStart, -7), addDays(lwEnd, -7))})_\n` + week.map((c) => renderComparisonLine(c, 'vs sem. anterior')).join('\n')));
+  semanaBlocks.push(sec(`*Tendencia — últimas 4 semanas completas*  _(${rangeShortEs(addDays(lwStart, -21), addDays(lwEnd, -21))} → ${rangeShortEs(lwStart, lwEnd)}; color = última vs promedio de las 3 previas)_\n` + trend.map((t) => `• *${KPI_LABELS[t.key]}*: ${t.line}  ${t.mark}`).join('\n')));
+  thread.push({ text: 'Semana y tendencia', blocks: semanaBlocks });
   const bdTitle = weekly ? 'semana pasada vs anterior' : 'ayer vs prom. 7d';
-  section(
-    `*Desglose — ${bdTitle}*  _(subs · NS Sales · CAC · conv)_\n` +
-    (narrative.comentarioDesglose ? `${narrative.comentarioDesglose}\n` : '') +
-    `_Plataforma_\n${osRows.map((r) => renderSegmentLine(r)).join('\n')}\n` +
-    `_Idioma_\n${langRows.map((r) => renderSegmentLine(r)).join('\n')}`
-  );
-  section(
-    `_País (US · BR · MX${picked.extras.size ? ' + movimientos relevantes' : ''})_\n` +
-    countryRows.map((r) => renderSegmentLine(r, picked.extras.has(r.segment) ? '  ← entra por movimiento' : '')).join('\n')
-  );
-
-  section(`*Qué revisaría hoy*\n` + narrative.queRevisariaHoy.map((a, i) => `${i + 1}. ${a}`).join('\n'));
-
-  section(`*En resumen*\n${narrative.loMasImportante}`);
-
-  // One discreet line while Looker still carries the old definition (removed
-  // automatically once the dashboard matches: the pair stops differing ≥ 1 %).
+  thread.push({
+    text: 'Desglose',
+    blocks: [
+      sec(`*Desglose — ${bdTitle}*  _(subs · NS Sales · CAC · conv)_\n` + (narrative.comentarioDesglose ? `${narrative.comentarioDesglose}\n` : '') + `_Plataforma_\n${osRows.map((r) => renderSegmentLine(r)).join('\n')}\n_Idioma_\n${langRows.map((r) => renderSegmentLine(r)).join('\n')}`),
+      sec(`_País (US · BR · MX${picked.extras.size ? ' + movimientos relevantes' : ''})_\n` + countryRows.map((r) => renderSegmentLine(r, picked.extras.has(r.segment) ? '  ← entra por movimiento' : '')).join('\n')),
+    ],
+  });
+  const notasBlocks: SlackBlock[] = [];
+  if (causas.length > 3) notasBlocks.push(sec(`*Por qué se movió — completo*\n` + causas.map((c) => `• *${KPI_LABELS[c.key]}*${c.scope === 'semana' ? ' (semana)' : ''}: ${c.text}.`).join('\n')));
   const tcDisc = discrepancies.find((d) => d.label === KPI_LABELS.totalContribution);
-  if (tcDisc && weekly) {
-    section(`_Nota: Total Contribution usa la definición corregida (Stripe a su comisión, sin doble conteo). Looker hoy, ${discPeriodLabel}: ${tcDisc.looker}._`);
-  }
-
-  const footer = `Fuente: \`an_operational_dash\` (BigQuery) · ${notas[0] ?? ''} · 🟢/🔴 mejor/peor que la base · ⚪ sin cambio · ‼️ fuera de la banda de 28 días · 🤖 KPI Bot${narrativeSource === 'fallback' ? ' · narrativa automática' : ''}`;
-  blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: footer.slice(0, 2900) }] });
-  textParts.push(footer);
+  if (tcDisc && weekly) notasBlocks.push(sec(`_Nota: Total Contribution usa la definición corregida (Stripe a su comisión, sin doble conteo). Looker hoy, ${discPeriodLabel}: ${tcDisc.looker}._`));
+  notasBlocks.push(ctx(`Fuente: \`an_operational_dash\` (BigQuery) · ${notas[0] ?? ''}`));
+  thread.push({ text: 'Notas y fuente', blocks: notasBlocks });
 
   return {
-    message: { text: `${title} — ${narrative.loMasImportante.slice(0, 180)}`, blocks },
+    message: { text: `${title} — ${narrative.loMasImportante.slice(0, 180)}`, blocks: mainBlocks },
+    thread,
     text: textParts.join('\n'),
     facts,
     narrative,

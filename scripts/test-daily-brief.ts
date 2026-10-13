@@ -48,8 +48,8 @@ const opt = (f: string) => { const i = args.indexOf(f); return i >= 0 ? args[i +
     console.log(JSON.stringify(result.facts, null, 2));
   }
   if (flag('--post')) {
-    const { postToSlack } = await import('../lib/slack/post');
-    await postToSlack(result.message);
-    console.error('✅ posted to Slack webhook');
+    const { postWithThread } = await import('../lib/slack/post');
+    const via = await postWithThread({ main: result.message, thread: result.thread });
+    console.error(`✅ posted via ${via.via}`);
   }
 })().catch((e) => { console.error('❌', e instanceof Error ? e.stack ?? e.message : e); process.exit(1); });
