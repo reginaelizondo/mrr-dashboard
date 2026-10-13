@@ -64,6 +64,20 @@ const ROLE_HINT: Record<string, string> = {
   'General': 'ver en el desglose qué plataforma, idioma o país explica el movimiento',
 };
 
+/** How each ratio KPI decomposes, for the "por qué se movió" lines. */
+const RATIO_PARTS: Partial<Record<KPIKey, { num: KPIKey; den: KPIKey }>> = {
+  cac: { num: 'spend', den: 'newSubs' },
+  cpnu: { num: 'spend', den: 'signups' },
+  cpft: { num: 'spend', den: 'ftsStarted' },
+  conversionRate: { num: 'newSubs', den: 'signups' },
+  ftStartRate: { num: 'ftsStarted', den: 'signups' },
+  ftConversionRate: { num: 'ftsConverted', den: 'ftsStarted' },
+  arpu: { num: 'nsSales', den: 'newSubs' },
+  firstTicketCac: { num: 'arpu', den: 'cac' },
+};
+/** KPIs shown in the 4-week trend block. */
+const TREND_KPIS: KPIKey[] = ['signups', 'ftsStarted', 'ftConversionRate', 'newSubs', 'conversionRate', 'cac', 'nsSales'];
+
 /** Countries always shown; others only when they move a lot (see pickCountries). */
 const CORE_COUNTRIES = ['US', 'BR', 'MX'];
 const EXTRA_COUNTRY_MIN_MOVE = 0.25;  // |Δ NS Sales| ≥ 25 % vs base
@@ -329,6 +343,76 @@ function findMovers(dims: Array<{ label: string; rows: SegmentRow[] }>, baseLabe
   return out;
 }
 
+// ---- Why did it move? (deterministic decomposition of flagged KPIs) ---------------
+
+interface Dim { label: string; rows: SegmentRow[] }
+
+function pctShare(part: number, whole: number): string {
+  return whole === 0 ? '—' : `${Math.round((part / whole) * 100)}%`;
+}
+
+/**
+ * One or two sentences explaining a flagged KPI from the data we already have:
+ *  - ratio KPIs: which component moved (numerator vs denominator) + the segment
+ *    with the biggest weighted own-move;
+ *  - additive KPIs: the segment that contributes most of the total delta.
+ * `base` must already be a per-day baseline in daily mode.
+ */
+function explainMove(c: Comparison, curr: KPIValues, baseScaled: KPIValues, dims: Dim[]): string | null {
+  const k = c.key;
+  if (c.value === null || c.base === null) return null;
+  const parts: string[] = [];
+
+  const rp = RATIO_PARTS[k];
+  if (rp) {
+    const dNum = relChange(rp.num, curr[rp.num], baseScaled[rp.num]);
+    const dDen = relChange(rp.den, curr[rp.den], baseScaled[rp.den]);
+    if (dNum !== null && dDen !== null) {
+      const dominant = Math.abs(dNum) >= Math.abs(dDen) ? rp.num : rp.den;
+      parts.push(`${KPI_LABELS[rp.num]} ${fmtSigned(dNum, 0)}%, ${KPI_LABELS[rp.den]} ${fmtSigned(dDen, 0)}% → el movimiento viene de ${KPI_LABELS[dominant]}`);
+    }
+    // Segment with the largest own move, weighted by its share of the denominator.
+    let best: { seg: string; dim: string; w: number; r: number; v: number | null } | null = null;
+    const denTotal = curr[rp.den] ?? 0;
+    for (const d of dims.slice(0, 2)) {
+      for (const row of d.rows) {
+        const r = relChange(k, row.curr[k], row.base[k]);
+        const w = denTotal > 0 ? (row.curr[rp.den] ?? 0) / denTotal : 0;
+        if (r === null || w < 0.1) continue;
+        const score = w * Math.abs(r);
+        if (!best || score > best.w * Math.abs(best.r)) best = { seg: row.segment, dim: d.label, w, r, v: row.curr[k] };
+      }
+    }
+    if (best && Math.abs(best.r) >= 3) {
+      parts.push(`${best.seg} (${best.dim}, ${pctShare(best.w, 1)} de ${KPI_LABELS[rp.den]}): ${fmtValue(k, best.v)} (${dot(k, best.v, (best.v as number) / (1 + best.r / 100))} ${fmtSigned(best.r, 0)}%)`);
+    }
+    return parts.length ? parts.join('. ') : null;
+  }
+
+  // Additive: who contributes most of the delta, per dimension (only if ≥ 30 %).
+  const dTotal = c.value - c.base;
+  if (dTotal === 0) return null;
+  const bits: string[] = [];
+  for (const d of dims) {
+    let best: { seg: string; delta: number } | null = null;
+    for (const row of d.rows) {
+      const v = row.curr[k], b = row.base[k];
+      if (v === null || b === null) continue;
+      const delta = v - b;
+      if (Math.sign(delta) !== Math.sign(dTotal)) continue;
+      if (!best || Math.abs(delta) > Math.abs(best.delta)) best = { seg: row.segment, delta };
+    }
+    if (best && Math.abs(best.delta / dTotal) >= 0.3) {
+      const amt = MONEY.has(k) ? `$${Math.round(Math.abs(best.delta)).toLocaleString('en-US')}` : Math.round(Math.abs(best.delta)).toLocaleString('en-US');
+      const share = best.delta / dTotal;
+      const how = share >= 0.97 ? 'lo explica por completo' : `explica ${pctShare(best.delta, dTotal)} del movimiento`;
+      bits.push(`${best.seg} (${d.label}) ${how} (${best.delta < 0 ? '−' : '+'}${amt})`);
+    }
+    if (bits.length === 2) break;
+  }
+  return bits.length ? bits.join('; ') : null;
+}
+
 // ---- Discrepancies vs Looker ------------------------------------------------------
 
 interface Discrepancy { label: string; real: string; looker: string; diff: string; why: string }
@@ -456,7 +540,10 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
     { key: 'wtdPrior', start: addDays(wtdStart, -7), end: addDays(y, -7) },
     { key: 'lastWeek', start: lwStart, end: lwEnd },
     { key: 'priorWeek', start: addDays(lwStart, -7), end: addDays(lwEnd, -7) },
+    { key: 'week3', start: addDays(lwStart, -14), end: addDays(lwEnd, -14) },
+    { key: 'week4', start: addDays(lwStart, -21), end: addDays(lwEnd, -21) },
   ];
+  const trendKeys = ['week4', 'week3', 'priorWeek', 'lastWeek']; // oldest → newest
 
   const [totals, byOs, byLang, byCountry, series, freshness] = await Promise.all([
     fetchKPIsByPeriod(periods),
@@ -492,10 +579,37 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   const picked = pickCountries(byCountry[currKey], byCountry[baseKey], baseDays, weekly ? 30 : 10);
   const countries = picked.list;
   const countryRows = segmentRows(byCountry[currKey], byCountry[baseKey], countries, baseDays);
-  const movers = findMovers(
-    [{ label: 'plataforma', rows: osRows }, { label: 'idioma', rows: langRows }, { label: 'país', rows: countryRows }],
-    baseLabelShort
-  );
+  const dims: Dim[] = [{ label: 'plataforma', rows: osRows }, { label: 'idioma', rows: langRows }, { label: 'país', rows: countryRows }];
+  const movers = findMovers(dims, baseLabelShort);
+
+  // Why did each flagged KPI move? Daily flags explain against the trailing-7 per-day
+  // baseline with daily segment rows; weekly flags against the prior week.
+  const dailyDims: Dim[] = weekly
+    ? [
+        { label: 'plataforma', rows: segmentRows(byOs.yesterday, byOs.trailing7, OS_SEGMENTS, 7) },
+        { label: 'idioma', rows: segmentRows(byLang.yesterday, byLang.trailing7, LANG_SEGMENTS, 7) },
+      ]
+    : dims;
+  const t7PerDay = { ...totals.trailing7 } as KPIValues;
+  for (const k of Object.keys(t7PerDay) as KPIKey[]) if (ADDITIVE.has(k) && t7PerDay[k] !== null) t7PerDay[k] = (t7PerDay[k] as number) / 7;
+  const causas: Array<{ key: KPIKey; scope: string; text: string }> = [];
+  for (const c of daily.filter((x) => x.flag)) {
+    const text = explainMove(c, totals.yesterday, t7PerDay, dailyDims);
+    if (text) causas.push({ key: c.key, scope: 'ayer', text });
+  }
+  for (const c of (week ?? []).filter((x) => x.flag)) {
+    const text = explainMove(c, totals.lastWeek, totals.priorWeek, dims);
+    if (text) causas.push({ key: c.key, scope: 'semana', text });
+  }
+
+  // 4-week trend for the key KPIs (complete weeks, oldest → newest)
+  const trend = TREND_KPIS.map((k) => {
+    const vals = trendKeys.map((p) => totals[p]?.[k] ?? null);
+    const prev = vals.slice(0, 3).filter((v): v is number => v !== null);
+    const avgPrev = prev.length ? prev.reduce((a, b) => a + b, 0) / prev.length : null;
+    const last = vals[3];
+    return { key: k, line: vals.map((v) => fmtValue(k, v)).join(' → '), mark: dot(k, last, avgPrev) };
+  });
 
   // Data notes
   const notas: string[] = [];
@@ -539,6 +653,8 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
       pais: toBreakdownFacts(countryRows),
     },
     movers,
+    causas: causas.map((c) => `${KPI_LABELS[c.key]} (${c.scope}): ${c.text}`),
+    tendencia4Semanas: trend.map((t) => `${KPI_LABELS[t.key]}: ${t.line}`),
     notasDeDatos: notas,
   };
 
@@ -566,6 +682,13 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
 
   section(`*Lo más importante*\n${narrative.loMasImportante}`);
 
+  if (causas.length) {
+    section(
+      `*Por qué se movió*  _(descomposición calculada de cada ‼️)_\n` +
+      causas.map((c) => `• *${KPI_LABELS[c.key]}*${c.scope === 'semana' ? ' (semana)' : ''}: ${c.text}.`).join('\n')
+    );
+  }
+
   section(
     `*Ayer — ${dayShortEs(y)}*  _(vs prom. 7d · ${sameLabel})_\n` +
     (narrative.comentarioAyer ? `${narrative.comentarioAyer}\n` : '') +
@@ -587,6 +710,11 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
       week.map((c) => renderComparisonLine(c, 'vs sem. anterior')).join('\n')
     );
   }
+
+  section(
+    `*Tendencia — últimas 4 semanas completas*  _(${rangeShortEs(addDays(lwStart, -21), addDays(lwEnd, -21))} → ${rangeShortEs(lwStart, lwEnd)}; color = última vs promedio de las 3 previas)_\n` +
+    trend.map((t) => `• *${KPI_LABELS[t.key]}*: ${t.line}  ${t.mark}`).join('\n')
+  );
 
   const bdTitle = weekly ? 'semana pasada vs anterior' : 'ayer vs prom. 7d';
   section(
