@@ -49,8 +49,26 @@ const MONEY: Set<KPIKey> = new Set([
   'netSalesLooker', 'mobileCmLooker', 'totalContributionLooker',
 ]);
 const MONEY_2DP: Set<KPIKey> = new Set(['cac', 'cpnu', 'cpft', 'arpu']);
-const PCT: Set<KPIKey> = new Set(['conversionRate', 'ftStartRate', 'ftShare', 'contributionMarginPct', 'contributionMarginPctLooker', 'newSubsMargin']);
+const PCT: Set<KPIKey> = new Set(['conversionRate', 'ftStartRate', 'ftConversionRate', 'ftShare', 'contributionMarginPct', 'contributionMarginPctLooker', 'newSubsMargin']);
 const RATIO: Set<KPIKey> = new Set(['firstTicketCac']);
+
+/** Who owns each KPI in "Qué revisaría hoy". Anything else → General. */
+const ROLE: Partial<Record<KPIKey, string>> = {
+  signups: 'Producto/Tech', ftsStarted: 'Producto/Tech', ftStartRate: 'Producto/Tech',
+  ftConversionRate: 'Producto/Tech', conversionRate: 'Producto/Tech', newSubs: 'Producto/Tech',
+  spend: 'Marketing', cpnu: 'Marketing', cpft: 'Marketing', cac: 'Marketing', firstTicketCac: 'Marketing',
+};
+const ROLE_HINT: Record<string, string> = {
+  'Producto/Tech': 'revisar el funnel in-app (onboarding, trial, paywall) y ver en el desglose qué plataforma o idioma lo explica',
+  'Marketing': 'revisar spend y mezcla por canal y plataforma antes de tocar presupuestos',
+  'General': 'ver en el desglose qué plataforma, idioma o país explica el movimiento',
+};
+
+/** Countries always shown; others only when they move a lot (see pickCountries). */
+const CORE_COUNTRIES = ['US', 'BR', 'MX'];
+const EXTRA_COUNTRY_MIN_MOVE = 0.25;  // |Δ NS Sales| ≥ 25 % vs base
+const EXTRA_COUNTRY_MIN_SHARE = 0.02; // and ≥ 2 % of the period's NS Sales
+const EXTRA_COUNTRIES_MAX = 2;
 
 /**
  * KPIs where the brief's (real) definition differs from Looker's. Rendered as a
@@ -64,10 +82,10 @@ const LOOKER_PAIRS: Array<{ real: KPIKey; looker: KPIKey; why: string }> = [
 ];
 const DISCREPANCY_MIN_PCT = 1;
 
-const ACQ_ORDER: KPIKey[] = ['spend', 'signups', 'ftsStarted', 'ftStartRate', 'cpnu', 'cpft'];
+const ACQ_ORDER: KPIKey[] = ['spend', 'signups', 'cpnu', 'ftsStarted', 'ftStartRate', 'cpft', 'ftConversionRate'];
 const MON_ORDER: KPIKey[] = [
   'newSubs', 'conversionRate', 'nsSales', 'cac', 'arpu', 'firstTicketCac',
-  'totalSales', 'netSales', 'renewals', 'refundsAmount',
+  'totalSales', 'renewals', 'refundsAmount',
 ];
 /** Daily sections. Total Contribution is too lumpy day to day (refund batches) → weekly only. */
 const DAY_ORDER: KPIKey[] = [...ACQ_ORDER, ...MON_ORDER];
@@ -81,7 +99,6 @@ const MOVER_KPIS: KPIKey[] = ['newSubs', 'nsSales', 'spend'];
 
 const OS_SEGMENTS = ['iOS', 'Android'];
 const LANG_SEGMENTS = ['en', 'es', 'pt'];
-const TOP_COUNTRIES = 6;
 
 const Z_FLAG = 1.5;        // sd multiples outside the band
 const MIN_PCT_FLAG = 0.10; // and at least ±10% vs baseline (±1 pp for rates)
@@ -104,18 +121,14 @@ function fmtSigned(n: number, digits = 0): string {
   return r > 0 ? `+${s}` : r < 0 ? `−${s}` : s;
 }
 
-/** Delta between value and baseline: pp for rate KPIs, % otherwise. */
+/** Delta between value and baseline, always as % change (rates included — no pp). */
 function fmtDelta(key: KPIKey, value: number | null, base: number | null): string | null {
-  if (value === null || base === null) return null;
-  if (PCT.has(key)) return `${fmtSigned((value - base) * 100, 2)} pp`;
-  if (base === 0) return null;
-  return `${fmtSigned(((value - base) / Math.abs(base)) * 100, 0)}%`;
+  const rel = relChange(key, value, base);
+  return rel === null ? null : `${fmtSigned(rel, 0)}%`;
 }
 
-function relChange(key: KPIKey, value: number | null, base: number | null): number | null {
-  if (value === null || base === null) return null;
-  if (PCT.has(key)) return (value - base) * 100; // in pp
-  if (base === 0) return null;
+function relChange(_key: KPIKey, value: number | null, base: number | null): number | null {
+  if (value === null || base === null || base === 0) return null;
   return ((value - base) / Math.abs(base)) * 100;
 }
 
@@ -149,8 +162,7 @@ function flagFor(key: KPIKey, value: number | null, band: Band | null, dow: numb
   const z = (value - expected) / band.sd;
   const rel = relChange(key, value, expected);
   if (rel === null) return null;
-  const relOk = PCT.has(key) ? Math.abs(rel) >= 1 : Math.abs(rel) >= MIN_PCT_FLAG * 100;
-  if (Math.abs(z) < Z_FLAG || !relOk) return null;
+  if (Math.abs(z) < Z_FLAG || Math.abs(rel) < MIN_PCT_FLAG * 100) return null;
   const up = value > expected;
   const good = LOWER_IS_BETTER.has(key) ? !up : up;
   return good ? 'mejor' : 'peor';
@@ -186,8 +198,7 @@ function compareWindows(key: KPIKey, curr: KPIValues, prev: KPIValues): Comparis
   const rel = relChange(key, value, base);
   let flag: 'mejor' | 'peor' | null = null;
   if (rel !== null) {
-    const big = PCT.has(key) ? Math.abs(rel) >= 1 : Math.abs(rel) >= 10;
-    if (big) {
+    if (Math.abs(rel) >= 10) {
       const up = (value ?? 0) > (base ?? 0);
       flag = (LOWER_IS_BETTER.has(key) ? !up : up) ? 'mejor' : 'peor';
     }
@@ -213,8 +224,7 @@ function toFact(c: Comparison): FactComparison {
 function dot(key: KPIKey, value: number | null, base: number | null): string {
   const rel = relChange(key, value, base);
   if (rel === null) return '⚪';
-  const flat = PCT.has(key) ? Math.abs(rel) < 0.2 : Math.abs(rel) < 1;
-  if (flat || NEUTRAL.has(key)) return '⚪';
+  if (Math.abs(rel) < 1 || NEUTRAL.has(key)) return '⚪';
   const up = rel > 0;
   const good = LOWER_IS_BETTER.has(key) ? !up : up;
   return good ? '🟢' : '🔴';
@@ -258,24 +268,34 @@ function segmentRows(
   });
 }
 
-function topCountries(base: Record<string, KPIValues>, curr: Record<string, KPIValues>, n: number): string[] {
-  const score = new Map<string, number>();
-  for (const [k, v] of Object.entries(base)) score.set(k, (score.get(k) ?? 0) + (v.nsSales ?? 0));
-  for (const [k, v] of Object.entries(curr)) score.set(k, (score.get(k) ?? 0) + (v.nsSales ?? 0));
-  return Array.from(score.entries())
-    .filter(([k]) => k !== '(null)' && k !== 'Unknown')
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, n)
-    .map(([k]) => k);
+/**
+ * US · BR · MX always; any other country only when its NS Sales moved ≥ 25 % vs
+ * the base AND it weighs ≥ 2 % of the period's NS Sales (max 2, biggest move first).
+ */
+function pickCountries(curr: Record<string, KPIValues>, base: Record<string, KPIValues>, baseDays: number, minSubs: number): { list: string[]; extras: Set<string> } {
+  const total = Object.values(curr).reduce((a, v) => a + (v.nsSales ?? 0), 0);
+  const extras = Object.keys(curr)
+    .filter((c) => !CORE_COUNTRIES.includes(c) && c !== '(null)' && c !== 'Unknown')
+    .map((c) => {
+      const v = curr[c].nsSales ?? 0;
+      const b = (base[c]?.nsSales ?? 0) / baseDays;
+      const rel = b > 0 ? (v - b) / b : null;
+      return { c, v, rel, subs: curr[c].newSubs ?? 0 };
+    })
+    .filter((x) => x.rel !== null && Math.abs(x.rel) >= EXTRA_COUNTRY_MIN_MOVE && total > 0 && x.v / total >= EXTRA_COUNTRY_MIN_SHARE && x.subs >= minSubs)
+    .sort((a, b) => Math.abs(b.rel as number) - Math.abs(a.rel as number))
+    .slice(0, EXTRA_COUNTRIES_MAX)
+    .map((x) => x.c);
+  return { list: [...CORE_COUNTRIES, ...extras], extras: new Set(extras) };
 }
 
-function renderSegmentLine(r: SegmentRow): string {
+function renderSegmentLine(r: SegmentRow, suffix = ''): string {
   const cells = DIM_KPIS.map((k) => {
     const d = fmtDelta(k, r.curr[k], r.base[k]);
     const short = k === 'newSubs' ? 'subs' : k === 'nsSales' ? 'NS' : k === 'cac' ? 'CAC' : 'conv';
     return `${short} ${fmtValue(k, r.curr[k])}${d ? ` (${dot(k, r.curr[k], r.base[k])} ${d})` : ''}`;
   });
-  return `• *${r.segment}*: ${cells.join(' · ')}`;
+  return `• *${r.segment}*: ${cells.join(' · ')}${suffix}`;
 }
 
 function toBreakdownFacts(rows: SegmentRow[]): FactBreakdownRow[] {
@@ -339,22 +359,17 @@ function actionFor(c: Comparison, sameLabel: string): string {
   const d7 = fmtDelta(k, c.value, c.base) ?? '';
   const dd = c.sameDay === null ? '' : ` · ${fmtDelta(k, c.value, c.sameDay)} ${sameLabel}`;
   const v = `${KPI_LABELS[k]} ${fmtValue(k, c.value)} (${d7} vs prom. 7d${dd})`;
+  const role = ROLE[k] ?? 'General';
   if (c.flag === 'mejor') {
-    return `Data: ${v} — confirmar que se sostiene 2–3 días antes de leerlo como tendencia.`;
-  }
-  if (k === 'cac' || k === 'cpnu' || k === 'cpft' || k === 'spend') {
-    return `Marketing: ${v} — revisar spend y mezcla por canal/plataforma antes de tocar presupuestos.`;
-  }
-  if (k === 'signups' || k === 'ftsStarted' || k === 'ftStartRate') {
-    return `Marketing: ${v} — ver si el cambio viene de volumen de campañas o de onboarding (desglose por plataforma e idioma).`;
+    return `${role}: ${v} — confirmar que se sostiene 2–3 días antes de leerlo como tendencia.`;
   }
   if (k === 'refundsAmount' || k === 'refundsCount') {
-    return `Finanzas: ${v} — revisar refunds por SKU y tienda en el dashboard de refunds.`;
+    return `${role}: ${v} — revisar refunds por SKU y tienda en el dashboard de refunds.`;
   }
   if (k === 'renewals' || k === 'totalRenewalSales') {
-    return `Finanzas: ${v} — confirmar si es calendario de renovaciones (cohortes anuales) o churn.`;
+    return `${role}: ${v} — confirmar si es calendario de renovaciones (cohortes anuales) o churn.`;
   }
-  return `Producto/Marketing: ${v} — ver en el desglose qué plataforma, idioma o país explica el movimiento.`;
+  return `${role}: ${v} — ${ROLE_HINT[role]}.`;
 }
 
 function buildFallbackNarrative(
@@ -473,7 +488,9 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   const baseLabelShort = weekly ? 'vs sem. anterior' : 'vs prom. 7d';
   const osRows = segmentRows(byOs[currKey], byOs[baseKey], OS_SEGMENTS, baseDays);
   const langRows = segmentRows(byLang[currKey], byLang[baseKey], LANG_SEGMENTS, baseDays);
-  const countries = topCountries(byCountry.trailing7, byCountry[currKey], TOP_COUNTRIES);
+  // A country only "enters by movement" with real volume: ≥ 30 subs in a week, ≥ 10 in a day.
+  const picked = pickCountries(byCountry[currKey], byCountry[baseKey], baseDays, weekly ? 30 : 10);
+  const countries = picked.list;
   const countryRows = segmentRows(byCountry[currKey], byCountry[baseKey], countries, baseDays);
   const movers = findMovers(
     [{ label: 'plataforma', rows: osRows }, { label: 'idioma', rows: langRows }, { label: 'país', rows: countryRows }],
@@ -575,10 +592,13 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   section(
     `*Desglose — ${bdTitle}*  _(subs · NS Sales · CAC · conv)_\n` +
     (narrative.comentarioDesglose ? `${narrative.comentarioDesglose}\n` : '') +
-    `_Plataforma_\n${osRows.map(renderSegmentLine).join('\n')}\n` +
-    `_Idioma_\n${langRows.map(renderSegmentLine).join('\n')}`
+    `_Plataforma_\n${osRows.map((r) => renderSegmentLine(r)).join('\n')}\n` +
+    `_Idioma_\n${langRows.map((r) => renderSegmentLine(r)).join('\n')}`
   );
-  section(`_País (top ${countries.length} por NS Sales)_\n${countryRows.map(renderSegmentLine).join('\n')}`);
+  section(
+    `_País (US · BR · MX${picked.extras.size ? ' + movimientos relevantes' : ''})_\n` +
+    countryRows.map((r) => renderSegmentLine(r, picked.extras.has(r.segment) ? '  ← entra por movimiento' : '')).join('\n')
+  );
 
   section(`*Qué revisaría hoy*\n` + narrative.queRevisariaHoy.map((a, i) => `${i + 1}. ${a}`).join('\n'));
 
@@ -587,10 +607,8 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   // One discreet line while Looker still carries the old definition (removed
   // automatically once the dashboard matches: the pair stops differing ≥ 1 %).
   const tcDisc = discrepancies.find((d) => d.label === KPI_LABELS.totalContribution);
-  const nsDisc = discrepancies.find((d) => d.label === KPI_LABELS.netSales);
-  if (tcDisc || nsDisc) {
-    const lookerBits = [tcDisc ? `Total Contribution ${tcDisc.looker}` : null, nsDisc ? `Net Sales ${nsDisc.looker}` : null].filter(Boolean).join(' · ');
-    section(`_Nota: Net Sales y Total Contribution usan la definición corregida (Stripe a su comisión, sin doble conteo). Looker hoy, ${discPeriodLabel}: ${lookerBits}._`);
+  if (tcDisc && weekly) {
+    section(`_Nota: Total Contribution usa la definición corregida (Stripe a su comisión, sin doble conteo). Looker hoy, ${discPeriodLabel}: ${tcDisc.looker}._`);
   }
 
   const footer = `Fuente: \`an_operational_dash\` (BigQuery) · ${notas[0] ?? ''} · 🟢/🔴 mejor/peor que la base · ⚪ sin cambio · ‼️ fuera de la banda de 28 días · 🤖 KPI Bot${narrativeSource === 'fallback' ? ' · narrativa automática' : ''}`;

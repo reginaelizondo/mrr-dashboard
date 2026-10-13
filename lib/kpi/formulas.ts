@@ -116,6 +116,8 @@ export const KPI_SQL = {
   // Unit economics
   conversionRate: `SAFE_DIVIDE(SUM(new_subscriptions) + SUM(num_of_refunds_sale_date), SUM(signups))`,
   ftStartRate: `SAFE_DIVIDE(SUM(fts_started), SUM(signups))`,
+  // FT → paid, same-period proxy (conversions land ~7 days after the trial starts).
+  ftConversionRate: `SAFE_DIVIDE(SUM(fts_converted), SUM(fts_started))`,
   ftShare: `SAFE_DIVIDE(SUM(fts_converted), SUM(new_subscriptions) + SUM(num_of_refunds_sale_date))`,
   cac: CAC,
   cpnu: `SAFE_DIVIDE(SUM(spend), SUM(signups))`,
@@ -164,6 +166,7 @@ export const KPI_LABELS: Record<KPIKey, string> = {
   purchasesNonFt: 'Purchases (non FT)',
   conversionRate: 'Conversion Rate',
   ftStartRate: 'FT Start Rate',
+  ftConversionRate: 'FT conversion',
   ftShare: 'FT Share',
   cac: 'CAC',
   cpnu: 'CPNU',
