@@ -2,14 +2,14 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { BarChart3, LogOut, LayoutDashboard, PieChart, UserMinus, RotateCcw, MessageSquare, MessageSquareWarning, Smile, Boxes } from 'lucide-react';
+import { BarChart3, LogOut, LayoutDashboard, PieChart, UserMinus, RotateCcw, MessageSquare, MessageSquareWarning, Smile, Boxes, Gauge } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { navItems as navConfig } from '@/lib/nav-config';
 
 const ICONS: Record<string, LucideIcon> = {
-  LayoutDashboard, PieChart, UserMinus, RotateCcw, MessageSquare, MessageSquareWarning, Smile, Boxes,
+  LayoutDashboard, PieChart, UserMinus, RotateCcw, MessageSquare, MessageSquareWarning, Smile, Boxes, Gauge,
 };
 
 const navItems = navConfig.map(item => ({ ...item, icon: ICONS[item.iconName] }));

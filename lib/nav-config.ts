@@ -19,4 +19,5 @@ export const navItems: NavItem[] = [
   { label: 'Reviews',         href: '/dashboard/reviews',        iconName: 'MessageSquare' },
   { label: 'Voice of Refund', href: '/dashboard/refund-voice',   iconName: 'MessageSquareWarning' },
   { label: 'NPS',             href: '/dashboard/nps',            iconName: 'Smile',                 embedSlug: 'nps',       investorTab: true },
+  { label: 'Operativo',       href: '/dashboard/operativo',      iconName: 'Gauge' },
 ];
