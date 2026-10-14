@@ -5,6 +5,10 @@
       "schedule": "0 7 * * *"
     },
     {
+      "path": "/api/cron/kpi-daily",
+      "schedule": "10 15 * * *"
+    },
+    {
       "path": "/api/cron/daily-brief",
       "schedule": "30 15 * * *"
     },
