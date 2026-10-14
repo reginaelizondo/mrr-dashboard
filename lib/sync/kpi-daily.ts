@@ -79,9 +79,17 @@ export async function verifyKpiDaily(start: string, end: string): Promise<{ days
     params: { start, end },
   });
   const supabase = createServerClient();
-  const { data: repRows, error } = await supabase.from('v_kpi_daily_totals').select('*').gte('date', start).lte('date', end);
-  if (error) throw new Error(`v_kpi_daily_totals: ${error.message}`);
-  const rep = new Map((repRows ?? []).map((r) => [String(r.date), r as Record<string, unknown>]));
+  // PostgREST caps responses at 1000 rows: page through so ranges longer than ~2.7 years still verify.
+  const repRows: Record<string, unknown>[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase.from('v_kpi_daily_totals').select('*')
+      .gte('date', start).lte('date', end).order('date').range(from, from + PAGE - 1);
+    if (error) throw new Error(`v_kpi_daily_totals: ${error.message}`);
+    repRows.push(...((data ?? []) as Record<string, unknown>[]));
+    if (!data || data.length < PAGE) break;
+  }
+  const rep = new Map(repRows.map((r) => [String(r.date), r]));
   const mismatches: Array<{ date: string; field: string; bq: number; replica: number }> = [];
   let days = 0;
   for (const r of bqRows as Record<string, unknown>[]) {
