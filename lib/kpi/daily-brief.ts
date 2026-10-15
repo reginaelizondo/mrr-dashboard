@@ -681,6 +681,15 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   // Main message = the executive view: headline, a six-KPI traffic light, top-3
   // causes, actions. Everything else (full tables, breakdown, trend, notes) goes
   // into a Slack thread under it, so the channel stays readable.
+  // Enlaces a la sección Operativo del dashboard (réplica del Looker): cada uno abre el periodo,
+  // la granularidad y la pestaña exactos. def=fixed porque el brief usa la definición corregida.
+  const dashBase = (process.env.DASHBOARD_URL ?? 'https://mrr-dashboard-phi.vercel.app').replace(/\/$/, '') + '/dashboard/operativo';
+  const dash = (start: string, end: string, grain: string, tab: string) =>
+    `${dashBase}?preset=custom&start=${start}&end=${end}&grain=${grain}&tab=${tab}&def=fixed`;
+  const linkAyer = dash(addDays(y, -29), y, 'day', 'funnel');
+  const linkSemana = week ? dash(lwStart, lwEnd, 'day', 'funnel') : dash(wtdStart, y, 'day', 'funnel');
+  const linkTendencia = dash(addDays(lwStart, -77), lwEnd, 'week', 'graphs');
+  const linkDesglose = weekly ? dash(lwStart, lwEnd, 'day', 'breakdown') : dash(y, y, 'day', 'breakdown');
   const title = `Morning brief KPIs — Kinedu — ${dayLabelEs(today)}${opts.preview ? ' · vista previa' : ''}`;
   const textParts: string[] = [title, ''];
   const sec = (md: string): SlackBlock => { textParts.push(md, ''); return { type: 'section', text: { type: 'mrkdwn', text: md.slice(0, 2900) } }; };
@@ -706,6 +715,7 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
     mainBlocks.push(sec(`*Por qué se movió*\n` + causas.slice(0, 3).map((c) => `• *${KPI_LABELS[c.key]}*${c.scope === 'semana' ? ' (semana)' : ''}: ${c.text}.`).join('\n')));
   }
   mainBlocks.push(sec(`*Qué revisaría hoy*\n` + narrative.queRevisariaHoy.map((a, i) => `${i + 1}. ${a}`).join('\n')));
+  mainBlocks.push(ctx(`📊 Abrir en el dashboard: <${linkAyer}|últimos 30 días> · <${linkSemana}|${week ? 'semana pasada' : 'semana en curso'}> · <${linkTendencia}|tendencia 12 semanas> · <${linkDesglose}|desglose>`));
   mainBlocks.push(ctx(`🧵 Detalle en el hilo: ayer completo · semana · desglose por plataforma, idioma y país · tendencia 4 semanas · 🟢/🔴 mejor/peor que la base · ⚪ sin cambio · ‼️ fuera de la banda de 28 días · 🤖 KPI Bot${narrativeSource === 'fallback' ? ' · narrativa automática' : ''}`));
 
   // --- thread
@@ -722,6 +732,7 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   if (wtd) semanaBlocks.push(sec(`*Semana en curso — ${rangeShortEs(wtdStart, y)} (${wtdDays} días)*  _(vs mismos días de la semana pasada)_\n` + wtd.map((c) => renderComparisonLine(c, 'vs sem. pasada')).join('\n')));
   if (week) semanaBlocks.push(sec(`*Semana pasada — ${rangeShortEs(lwStart, lwEnd)}*  _(vs ${rangeShortEs(addDays(lwStart, -7), addDays(lwEnd, -7))})_\n` + week.map((c) => renderComparisonLine(c, 'vs sem. anterior')).join('\n')));
   semanaBlocks.push(sec(`*Tendencia — últimas 4 semanas completas*  _(${rangeShortEs(addDays(lwStart, -21), addDays(lwEnd, -21))} → ${rangeShortEs(lwStart, lwEnd)}; color = última vs promedio de las 3 previas)_\n` + trend.map((t) => `• *${KPI_LABELS[t.key]}*: ${t.line}  ${t.mark}`).join('\n')));
+  semanaBlocks.push(ctx(`📊 <${linkTendencia}|Ver tendencia de 12 semanas en el dashboard>`));
   thread.push({ text: 'Semana y tendencia', blocks: semanaBlocks });
   const bdTitle = weekly ? 'semana pasada vs anterior' : 'ayer vs prom. 7d';
   thread.push({
@@ -729,6 +740,7 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
     blocks: [
       sec(`*Desglose — ${bdTitle}*  _(subs · NS Sales · CAC · conv)_\n` + (narrative.comentarioDesglose ? `${narrative.comentarioDesglose}\n` : '') + `_Plataforma_\n${osRows.map((r) => renderSegmentLine(r)).join('\n')}\n_Idioma_\n${langRows.map((r) => renderSegmentLine(r)).join('\n')}`),
       sec(`_País (US · BR · MX${picked.extras.size ? ' + movimientos relevantes' : ''})_\n` + countryRows.map((r) => renderSegmentLine(r, picked.extras.has(r.segment) ? '  ← entra por movimiento' : '')).join('\n')),
+      ctx(`📊 <${linkDesglose}|Ver el desglose completo en el dashboard> (todas las regiones, idiomas y países)`),
     ],
   });
   const notasBlocks: SlackBlock[] = [];
@@ -736,6 +748,7 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   const tcDisc = discrepancies.find((d) => d.label === KPI_LABELS.totalContribution);
   if (tcDisc && weekly) notasBlocks.push(sec(`_Nota: Total Contribution usa la definición corregida (Stripe a su comisión, sin doble conteo). Looker hoy, ${discPeriodLabel}: ${tcDisc.looker}._`));
   notasBlocks.push(ctx(`Fuente: \`an_operational_dash\` (BigQuery) · ${notas[0] ?? ''}`));
+  notasBlocks.push(ctx(`📊 Mismos números con filtros por país, idioma, OS y región: <${dashBase}|dashboard Operativo> (réplica del Looker, verificada contra BigQuery cada mañana)`));
   thread.push({ text: 'Notas y fuente', blocks: notasBlocks });
 
   return {

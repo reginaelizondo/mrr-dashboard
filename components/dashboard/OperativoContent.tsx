@@ -117,9 +117,20 @@ const DIM_PARAM: Record<DimKey, string> = { kinedu_region: 'region', country: 'c
 const BLUE = '#0086D8', NAVY = '#0E3687', GREEN = '#45C94E', ROSE = '#DA4D7A', GRAY = '#94A3B8', AMBER = '#F59E0B';
 const PALETTE = [BLUE, GREEN, NAVY, ROSE, AMBER, '#8B5CF6', '#14B8A6', '#F97316', '#64748B', '#A3E635'];
 
+const TABS = ['funnel', 'sales', 'graphs', 'margin', 'conversion', 'breakdown', 'audit'];
+
 export function OperativoContent({ data }: { data: OperativoData }) {
   const router = useRouter(); const pathname = usePathname(); const sp = useSearchParams();
-  const [def, setDef] = useState<Definition>('looker');
+  const [def, setDefState] = useState<Definition>(sp.get('def') === 'fixed' ? 'fixed' : 'looker');
+  const [tab, setTabState] = useState<string>(TABS.includes(sp.get('tab') ?? '') ? (sp.get('tab') as string) : 'funnel');
+  // Pestaña y definición viven en la URL (sin recargar) para que los enlaces del brief abran la vista exacta.
+  function syncUrl(patch: Record<string, string>) {
+    const next = new URLSearchParams(window.location.search);
+    for (const [k, v] of Object.entries(patch)) next.set(k, v);
+    window.history.replaceState(null, '', `${pathname}?${next.toString()}`);
+  }
+  const setDef = (d: Definition) => { setDefState(d); syncUrl({ def: d }); };
+  const setTab = (t: string) => { setTabState(t); syncUrl({ tab: t }); };
   const [customStart, setCustomStart] = useState(data.start);
   const [customEnd, setCustomEnd] = useState(data.end);
 
@@ -218,7 +229,7 @@ export function OperativoContent({ data }: { data: OperativoData }) {
         })}
       </div>
 
-      <Tabs defaultValue="funnel">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="funnel">Funnel</TabsTrigger>
           <TabsTrigger value="sales">Sales Metrics</TabsTrigger>
