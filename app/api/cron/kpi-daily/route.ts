@@ -18,7 +18,8 @@ export async function GET(request: NextRequest) {
   const sp = request.nextUrl.searchParams;
   const from = sp.get('from'); const to = sp.get('to');
   const supabase = createServerClient();
-  const { data: log } = await supabase.from('sync_log').insert({ source: 'kpi_daily', sync_type: from ? 'manual' : 'daily', status: 'running' }).select().single();
+  const { data: log, error: logErr } = await supabase.from('sync_log').insert({ source: 'kpi_daily', sync_type: from ? 'manual' : 'daily', status: 'running' }).select().single();
+  if (logErr) console.error('[kpi-daily] sync_log insert failed (¿falta la migración 034?):', logErr.message);
   try {
     const result = from && to ? await syncKpiDaily(from, to) : await runDailyKpiSync(todayMx());
     const rows = 'rows' in result ? result.rows : result.window.rows;

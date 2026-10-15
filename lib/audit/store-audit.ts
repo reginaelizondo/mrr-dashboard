@@ -239,7 +239,15 @@ async function replicaCheck(today: string): Promise<Check> {
   const { data } = await sb.from('sync_log').select('status,completed_at,started_at,details').eq('source', 'kpi_daily').eq('sync_type', 'daily')
     .order('started_at', { ascending: false }).limit(1);
   const last = (data ?? [])[0] as { status: string; completed_at: string | null; started_at: string; details: { heal?: HealDetails; error?: string } | null } | undefined;
-  if (!last) return { store: 'Réplica', status: 'warn', line: 'Réplica dashboard: sin corridas del sync diario registradas' };
+  if (!last) {
+    // Sin bitácora (p. ej. antes de la migración 034): al menos reportar la frescura de la tabla.
+    const { data: st } = await sb.rpc('kpi_daily_status');
+    const synced = ((st ?? []) as Array<{ last_synced_at: string | null }>)[0]?.last_synced_at;
+    if (!synced) return { store: 'Réplica', status: 'warn', line: 'Réplica dashboard: sin corridas del sync diario registradas' };
+    const sMx = new Date(Date.parse(synced) - 6 * 3.6e6).toISOString();
+    const ok = sMx.slice(0, 10) === today;
+    return { store: 'Réplica', status: ok ? 'ok' : 'warn', line: `Réplica dashboard: sync ${sMx.slice(5, 16).replace('T', ' ')} MX${ok ? '' : ' (no es de hoy)'} · sin detalle de verificación (bitácora no disponible) ${icon(ok ? 'ok' : 'warn')}` };
+  }
   const when = last.completed_at ?? last.started_at;
   const whenMx = new Date(Date.parse(when) - 6 * 3.6e6).toISOString().slice(5, 16).replace('T', ' ');
   const isToday = new Date(Date.parse(when) - 6 * 3.6e6).toISOString().slice(0, 10) === today;
