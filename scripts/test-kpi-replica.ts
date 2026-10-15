@@ -38,6 +38,8 @@ const DEFAULT_CASES: Case[] = [
   { name: '2026 YTD · pt', start: '2026-01-01', end: '2026-10-13', language: ['pt'] },
   { name: 'ago 2025 · US & CA', start: '2025-08-01', end: '2025-08-31', region: ['US & CA'] },
   { name: 'feb 2024 (todo)', start: '2024-02-01', end: '2024-02-29' },
+  { name: '17 ago → 12 oct 2026 (orillas a media semana/mes)', start: '2026-08-17', end: '2026-10-12' },
+  { name: 'todo el historial 2024 → ayer', start: '2024-01-01', end: '__YESTERDAY__' },
 ];
 
 // KPI_SQL key → [definición, campo de KpiValues]
@@ -62,7 +64,7 @@ const MAP: Record<string, ['looker' | 'fixed', string]> = {
 
   const cases: Case[] = opt('--from')
     ? [{ name: 'custom', start: opt('--from')!, end: opt('--to') ?? opt('--from')!, region: list('--region'), country: list('--country'), os: list('--os'), language: list('--language') }]
-    : DEFAULT_CASES;
+    : DEFAULT_CASES.map((c) => ({ ...c, end: c.end === '__YESTERDAY__' ? new Date(Date.now() - 30 * 3.6e6).toISOString().slice(0, 10) : c.end }));
 
   let failures = 0;
   for (const c of cases) {
@@ -87,6 +89,23 @@ const MAP: Record<string, ['looker' | 'fixed', string]> = {
     }
     if (diffs.length) { failures++; console.log(`❌ ${c.name}\n${diffs.join('\n')}`); }
     else console.log(`✅ ${c.name} — ${Object.keys(MAP).length} KPIs iguales (TC fixed $${Math.round(rep.fixed.totalContribution).toLocaleString('en-US')} · Looker $${Math.round(rep.looker.totalContribution).toLocaleString('en-US')})`);
+  }
+  // Serie semanal (camino del rollup semanal + orillas diarias): spend, NS Sales, Net Sales y TC por semana ISO.
+  if (!opt('--from')) {
+    const ws = '2026-07-30', we = '2026-10-11'; // empieza en jueves → la 1ª semana sale del diario
+    const [bqw] = await bq.query({ query: `SELECT CAST(DATE_TRUNC(date, WEEK(MONDAY)) AS STRING) AS wk, ${KPI_SQL.spend} AS spend, ${KPI_SQL.nsSales} AS nsSales, ${KPI_SQL.netSales} AS netSales, ${KPI_SQL.totalContributionLooker} AS tcLooker FROM ${KINEDU_OPERATIONAL_TABLE} WHERE date BETWEEN @s AND @e GROUP BY wk ORDER BY wk`, params: { s: ws, e: we } });
+    const weeks = await fetchAgg({ start: ws, end: we }, 'week');
+    const byWk = new Map(weeks.map((w) => [w.period, w]));
+    const bad: string[] = [];
+    for (const r of bqw as Record<string, unknown>[]) {
+      const w = byWk.get(String(r.wk));
+      if (!w) { bad.push(`${r.wk}: falta en réplica`); continue; }
+      const f = computeKpis(w, 'fixed'), l = computeKpis(w, 'looker');
+      for (const [name, a, b] of [['spend', r.spend, f.spend], ['nsSales', r.nsSales, f.nsSales], ['netSales', r.netSales, f.netSales], ['tcLooker', r.tcLooker, l.totalContribution]] as const)
+        if (Math.abs(Number(a) - Number(b)) > 0.02) bad.push(`${r.wk} ${name}: BQ ${a} · réplica ${b}`);
+    }
+    if (bad.length) { failures++; console.log(`❌ serie semanal ${ws} → ${we}\n   ${bad.join('\n   ')}`); }
+    else console.log(`✅ serie semanal ${ws} → ${we} — ${(bqw as unknown[]).length} semanas iguales (spend, NS Sales, Net Sales, TC Looker)`);
   }
   if (failures) process.exit(1);
 })().catch((e) => { console.error('❌', e instanceof Error ? e.stack ?? e.message : e); process.exit(1); });

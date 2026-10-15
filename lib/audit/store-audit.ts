@@ -232,6 +232,27 @@ function streak(storeDays: Record<string, DayAgg>, lookerDays: Record<string, Lo
   return bad.length ? `desvíos > 30 % dos días seguidos en la misma dirección: ${bad.map((d) => dayShortEs(d)).join(', ')}` : null;
 }
 
+// ---- Réplica kpi_daily (sección Operativo del dashboard) ------------------------------
+interface HealDetails { checkedDays?: number; badDays?: number; healedDays?: number; skipped?: string }
+async function replicaCheck(today: string): Promise<Check> {
+  const sb = createServerClient();
+  const { data } = await sb.from('sync_log').select('status,completed_at,started_at,details').eq('source', 'kpi_daily').eq('sync_type', 'daily')
+    .order('started_at', { ascending: false }).limit(1);
+  const last = (data ?? [])[0] as { status: string; completed_at: string | null; started_at: string; details: { heal?: HealDetails; error?: string } | null } | undefined;
+  if (!last) return { store: 'Réplica', status: 'warn', line: 'Réplica dashboard: sin corridas del sync diario registradas' };
+  const when = last.completed_at ?? last.started_at;
+  const whenMx = new Date(Date.parse(when) - 6 * 3.6e6).toISOString().slice(5, 16).replace('T', ' ');
+  const isToday = new Date(Date.parse(when) - 6 * 3.6e6).toISOString().slice(0, 10) === today;
+  if (last.status !== 'success') return { store: 'Réplica', status: 'alarm', line: `Réplica dashboard: el sync de ${whenMx} MX falló — ${String(last.details?.error ?? last.status).slice(0, 160)}` };
+  const h = last.details?.heal ?? {};
+  const pending = Math.max(0, (h.badDays ?? 0) - (h.healedDays ?? 0));
+  const st: Status = !isToday ? 'warn' : pending > 0 || h.skipped ? 'warn' : 'ok';
+  const healTxt = h.checkedDays
+    ? `${h.checkedDays} días comparados con BigQuery · ${h.healedDays ?? 0} reparados · ${pending} pendientes`
+    : `verificación omitida${h.skipped ? ` (${h.skipped})` : ''}`;
+  return { store: 'Réplica', status: st, line: `Réplica dashboard: sync ${whenMx} MX${isToday ? '' : ' (no es de hoy)'} · ${healTxt} ${icon(st)}` };
+}
+
 export async function runStoreAudit(opts: { today?: string } = {}): Promise<AuditResult> {
   const today = opts.today ?? todayMx();
   const end = addDays(today, -1), start = addDays(end, -6);
@@ -297,6 +318,9 @@ export async function runStoreAudit(opts: { today?: string } = {}): Promise<Audi
   const dc: Status = factor === null ? 'warn' : factor < DOUBLE_COUNT_FIXED_BELOW ? 'ok' : 'info';
   checks.push({ store: 'Looker', status: worst([fresh, dc]), line: `Looker: tabla actualizada ${freshTxt} ${icon(fresh)} · Stripe en Total Contribution ${factor === null ? 'n/d' : `${factor.toFixed(2)}×`} ${dc === 'ok' ? '✅ fix aplicado (una sola vez)' : '⏳ doble conteo, fix pendiente en tech'}` });
 
+  // Réplica del dashboard (kpi_daily): último job diario y su auto-reparación contra BigQuery.
+  checks.push(await replicaCheck(today));
+
   const status = worst(checks.map((c) => c.status));
   const alarms = checks.filter((c) => c.status === 'alarm').length, warns = checks.filter((c) => c.status === 'warn').length;
   const pending = checks.filter((c) => c.status === 'info').length;
@@ -308,7 +332,7 @@ export async function runStoreAudit(opts: { today?: string } = {}): Promise<Audi
   const headline = parts.join(' · ');
   const title = `🔎 Auditoría tiendas vs Looker — ${dayShortEs(today)} · ${headline}`;
   const lines = checks.map((c) => `• ${c.line}${c.detail ? `\n   ↳ ${c.detail}` : ''}`);
-  const footer = `_Ventana: 7 días hasta ${dayShortEs(end)} (Apple hasta su último día publicado). Apple = App Store Connect · Google = Play ventas estimadas, FX de Google · Stripe = API · Looker = an_operational_dash. Umbrales: Apple ±4/8 %, Stripe ±5/10 %, Google banda +3–22 %, conteos ±10 %. Método: docs/KPI-SOURCES.md_`;
+  const footer = `_Ventana: 7 días hasta ${dayShortEs(end)} (Apple hasta su último día publicado). Apple = App Store Connect · Google = Play ventas estimadas, FX de Google · Stripe = API · Looker = an_operational_dash · Réplica = kpi_daily vs BigQuery. Umbrales: Apple ±4/8 %, Stripe ±5/10 %, Google banda +3–22 %, conteos ±10 %. Método: docs/KPI-SOURCES.md_`;
   const message: SlackMessage = {
     text: title,
     blocks: [

@@ -43,7 +43,9 @@ function resolveRange(p: PageParams): { preset: Preset; start: string; end: stri
   }
   const days = Math.round((Date.parse(end) - Date.parse(start)) / 86400000) + 1;
   const autoGrain: Grain = days <= 100 ? 'day' : days <= 400 ? 'week' : 'month';
-  const grain = (GRAINS.includes(p.grain as Grain) ? p.grain : autoGrain) as Grain;
+  let grain = (GRAINS.includes(p.grain as Grain) ? p.grain : autoGrain) as Grain;
+  // Diario sobre más de ~13 meses son >400 columnas ilegibles y una consulta pesada: sube a semana.
+  if (grain === 'day' && days > 400) grain = 'week';
   return { preset, start, end, grain };
 }
 

@@ -1,7 +1,9 @@
 /**
- * Backfill kpi_daily from BigQuery in monthly chunks.
- *   npx tsx scripts/backfill-kpi-daily.ts --from 2024-01-01 --to 2026-10-13
- *   npx tsx scripts/backfill-kpi-daily.ts --verify --from 2026-10-01 --to 2026-10-13   # compare replica vs BigQuery
+ * Backfill kpi_daily from BigQuery (monthly chunks) and refresh kpi_rollup.
+ *   npx tsx scripts/backfill-kpi-daily.ts --from 2024-01-01 --to 2026-10-13            # carga + rollup
+ *   npx tsx scripts/backfill-kpi-daily.ts --verify --from 2024-01-01 --to 2026-10-15   # compara contra BigQuery
+ *   npx tsx scripts/backfill-kpi-daily.ts --rollup --from 2024-01-01 --to 2026-10-15   # solo recalcula kpi_rollup
+ *   npx tsx scripts/backfill-kpi-daily.ts --daily [--today 2026-10-15]                 # job diario completo (95 d + rotación + reparación)
  */
 import fs from 'fs';
 import path from 'path';
@@ -18,27 +20,30 @@ import path from 'path';
 })();
 const args = process.argv.slice(2);
 const opt = (f: string) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : undefined; };
+const flag = (f: string) => args.includes(f);
 (async () => {
-  const { syncKpiDaily, verifyKpiDaily } = await import('../lib/sync/kpi-daily');
-  const { addDays } = await import('../lib/kpi/period');
-  const from = opt('--from') ?? '2024-01-01';
-  const to = opt('--to') ?? new Date().toISOString().slice(0, 10);
-  if (args.includes('--verify')) {
+  const { syncKpiDaily, verifyKpiDaily, refreshKpiRollup, runDailyKpiSync } = await import('../lib/sync/kpi-daily');
+  const { todayMx } = await import('../lib/kpi/period');
+  if (flag('--daily')) {
+    const r = await runDailyKpiSync(opt('--today') ?? todayMx(), { budgetMs: 1_800_000 });
+    console.log(JSON.stringify(r, null, 2));
+    return;
+  }
+  const from = opt('--from'); const to = opt('--to');
+  if (!from || !to) throw new Error('usa --from YYYY-MM-DD --to YYYY-MM-DD (o --daily)');
+  if (flag('--verify')) {
     const r = await verifyKpiDaily(from, to);
-    console.log(`verify ${from} → ${to}: ${r.days} días, ${r.mismatches.length} diferencias`);
+    console.log(`verify ${from} → ${to}: ${r.days} días, ${r.badDates.length} días con diferencias (${r.mismatches.length} campos)`);
     for (const m of r.mismatches.slice(0, 20)) console.log('  ', m);
     return;
   }
-  let start = from; let total = 0;
-  while (start <= to) {
-    const [y, m] = start.split('-').map(Number);
-    const monthEnd = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10); // last day of month
-    const end = monthEnd < to ? monthEnd : to;
+  if (flag('--rollup')) {
     const t0 = Date.now();
-    const r = await syncKpiDaily(start, end);
-    total += r.rows;
-    console.log(`${start} → ${end}: ${r.rows} filas, ${r.days} días (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
-    start = addDays(end, 1);
+    const n = await refreshKpiRollup(from, to);
+    console.log(`rollup ${from} → ${to}: ${n} filas (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+    return;
   }
-  console.log(`total ${total} filas`);
+  const t0 = Date.now();
+  const r = await syncKpiDaily(from, to);
+  console.log(`${from} → ${to}: ${r.rows} filas, ${r.days} días (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
 })().catch((e) => { console.error('❌', e instanceof Error ? e.stack ?? e.message : e); process.exit(1); });
