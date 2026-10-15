@@ -3,7 +3,7 @@ import { unzipSync } from 'fflate';
 import Stripe from 'stripe';
 import { createServerClient } from '@/lib/supabase/server';
 import { getBigQueryClient, KINEDU_OPERATIONAL_TABLE } from '@/lib/bigquery/client';
-import { KPI_SQL } from '@/lib/kpi/formulas';
+import { STRIPE_REFUND_GAP_SQL } from '@/lib/kpi/formulas';
 import { addDays, todayMx, dayShortEs, rangeShortEs } from '@/lib/kpi/period';
 import type { SlackMessage } from '@/lib/slack/post';
 
@@ -170,7 +170,7 @@ export async function fetchStripeDaily(start: string, end: string): Promise<Reco
 
 // ---- Looker / BigQuery ----------------------------------------------------------------
 interface LookerDay { gross: number; n: number; refunds: number; refundN: number }
-interface LookerDaily { byPp: Record<string, Record<string, LookerDay>>; tc: Record<string, { tc: number; stripeNetted: number; stripeTerm: number }>; freshness: string | null }
+interface LookerDaily { byPp: Record<string, Record<string, LookerDay>>; tc: Record<string, { stripeTerm: number; refundGap: number }>; freshness: string | null }
 
 export async function fetchLookerDaily(start: string, end: string): Promise<LookerDaily> {
   const bq = getBigQueryClient();
@@ -188,21 +188,22 @@ export async function fetchLookerDaily(start: string, end: string): Promise<Look
   const byPp: LookerDaily['byPp'] = { apple: {}, google: {}, stripe: {} };
   for (const r of rows as Record<string, unknown>[]) byPp[String(r.pp)][String(r.d)] = { gross: num(r.gross), n: num(r.n), refunds: num(r.refunds), refundN: num(r.refund_n) };
 
+  // Stripe dentro de Net Sales (Variante 2, en el Looker desde 2026-10-15): un solo término al 0.965.
+  // refund_gap = reembolsos de Stripe por fecha de venta × 0.965 que el Looker resta dos veces.
   const [tcRows] = await bq.query({
     query: `
       SELECT CAST(date AS STRING) d,
-        ${KPI_SQL.totalContributionLooker} AS tc,
-        (SUM(IF(payment_processor = "stripe" AND os = "iOS", new_subscriptions_sales, 0)) + SUM(IF(payment_processor = "stripe" AND os = "iOS", renewals_sales, 0))) * 0.64
-        + (SUM(IF(payment_processor = "stripe" AND os = "Android", new_subscriptions_sales, 0)) + SUM(IF(payment_processor = "stripe" AND os = "Android", renewals_sales, 0))) * 0.79
-        + (SUM(IF(payment_processor = "stripe" AND (os IS NULL OR os NOT IN ("iOS","Android")), new_subscriptions_sales, 0)) + SUM(IF(payment_processor = "stripe" AND (os IS NULL OR os NOT IN ("iOS","Android")), renewals_sales, 0))) * 0.98 AS stripe_netted,
-        (SUM(IF(payment_processor = "stripe", new_subscriptions_sales, 0)) + SUM(IF(payment_processor = "stripe", renewals_sales, 0))) * 0.965 AS stripe_term
+        (SUM(IF(payment_processor = "stripe", new_subscriptions_sales, 0)) + SUM(IF(payment_processor = "stripe", renewals_sales, 0))) * 0.965
+          + SUM(IF(payment_processor = "stripe", other_sales, 0)) * 0.97
+          + SUM(IF(payment_processor = "stripe", renewals_sales_yearly_ios, 0)) * 0.85 AS stripe_term,
+        ${STRIPE_REFUND_GAP_SQL} AS refund_gap
       FROM ${KINEDU_OPERATIONAL_TABLE}
       WHERE date BETWEEN @start AND @end
       GROUP BY d`,
     params: { start, end },
   });
   const tc: LookerDaily['tc'] = {};
-  for (const r of tcRows as Record<string, unknown>[]) tc[String(r.d)] = { tc: num(r.tc), stripeNetted: num(r.stripe_netted), stripeTerm: num(r.stripe_term) };
+  for (const r of tcRows as Record<string, unknown>[]) tc[String(r.d)] = { stripeTerm: num(r.stripe_term), refundGap: num(r.refund_gap) };
 
   let freshness: string | null = null;
   try {
@@ -320,11 +321,14 @@ export async function runStoreAudit(opts: { today?: string } = {}): Promise<Audi
   const ageH = looker.freshness ? (Date.now() - Date.parse(looker.freshness)) / 3.6e6 : null;
   const fresh: Status = ageH === null ? 'warn' : ageH > FRESH_MAX_HOURS ? 'alarm' : 'ok';
   const freshTxt = looker.freshness ? `${new Date(Date.parse(looker.freshness) - 6 * 3.6e6).toISOString().slice(5, 16).replace('T', ' ')} MX` : 'desconocida';
-  let counted = 0, real = 0;
-  for (let d = start; d <= end; d = addDays(d, 1)) { const t = looker.tc[d]; const s = stripe[d]; if (t) counted += t.stripeNetted + t.stripeTerm; if (s) real += s.gross - s.fee; }
-  const factor = real ? counted / real : null;
-  const dc: Status = factor === null ? 'warn' : factor < DOUBLE_COUNT_FIXED_BELOW ? 'ok' : 'info';
-  checks.push({ store: 'Looker', status: worst([fresh, dc]), line: `Looker: tabla actualizada ${freshTxt} ${icon(fresh)} · Stripe en Total Contribution ${factor === null ? 'n/d' : `${factor.toFixed(2)}×`} ${dc === 'ok' ? '✅ fix aplicado (una sola vez)' : '⏳ doble conteo, fix pendiente en tech'}` });
+  let counted = 0, real = 0, gap = 0;
+  for (let d = start; d <= end; d = addDays(d, 1)) { const t = looker.tc[d]; const s = stripe[d]; if (t) { counted += t.stripeTerm; gap += t.refundGap; } if (s) real += s.gross - s.fee; }
+  // Stripe en Net Sales/TC (base bruta: término al 0.965 + sus reembolsos) vs Stripe API neto de
+  // comisión: ~1.0× = contado una vez (Variante 2, desde 2026-10-15; antes 1.46× por doble conteo).
+  const factor = real ? (counted + gap) / real : null;
+  const dc: Status = factor === null ? 'warn' : factor < DOUBLE_COUNT_FIXED_BELOW && factor > 0.9 ? 'ok' : 'warn';
+  const gapSt: Status = gap > 1 ? 'info' : 'ok';
+  checks.push({ store: 'Looker', status: worst([fresh, dc, gapSt]), line: `Looker: tabla actualizada ${freshTxt} ${icon(fresh)} · Stripe en Total Contribution ${factor === null ? 'n/d' : `${factor.toFixed(2)}× vs API`} ${dc === 'ok' ? '✅ contado una vez' : '⚠️ revisar'} · reembolsos de Stripe restados dos veces: −${money(gap)} en la semana ${gapSt === 'ok' ? '✅' : '⏳ fix pendiente en tech'}` });
 
   // Réplica del dashboard (kpi_daily): último job diario y su auto-reparación contra BigQuery.
   checks.push(await replicaCheck(today));

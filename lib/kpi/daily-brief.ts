@@ -89,8 +89,8 @@ const EXTRA_COUNTRIES_MAX = 2;
  * "Discrepancias vs Looker" block so the team can reconcile against the dashboard.
  */
 const LOOKER_PAIRS: Array<{ real: KPIKey; looker: KPIKey; why: string }> = [
-  { real: 'totalContribution', looker: 'totalContributionLooker', why: 'Looker netea Stripe como Apple/Google dentro de Net Sales y lo vuelve a sumar al 0.965 (doble conteo)' },
-  { real: 'netSales', looker: 'netSalesLooker', why: 'Looker netea Stripe con la comisión de Apple/Google (por os) en vez de la de Stripe (0.965)' },
+  { real: 'totalContribution', looker: 'totalContributionLooker', why: 'Looker resta dos veces los reembolsos de Stripe (las ventas netas ya los excluyen y el término de reembolsos los vuelve a restar)' },
+  { real: 'netSales', looker: 'netSalesLooker', why: 'Looker resta dos veces los reembolsos de Stripe (las ventas netas ya los excluyen y el término de reembolsos los vuelve a restar)' },
   { real: 'mobileCm', looker: 'mobileCmLooker', why: 'misma causa que Net Sales (Mobile CM = Net Sales − spend)' },
   { real: 'purchasesNonFt', looker: 'purchasesNonFtLooker', why: 'Looker resta sobre new subs netas de refunds; el bot sobre brutas' },
 ];
@@ -746,7 +746,7 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   const notasBlocks: SlackBlock[] = [];
   if (causas.length > 3) notasBlocks.push(sec(`*Por qué se movió — completo*\n` + causas.map((c) => `• *${KPI_LABELS[c.key]}*${c.scope === 'semana' ? ' (semana)' : ''}: ${c.text}.`).join('\n')));
   const tcDisc = discrepancies.find((d) => d.label === KPI_LABELS.totalContribution);
-  if (tcDisc && weekly) notasBlocks.push(sec(`_Nota: Total Contribution usa la definición corregida (Stripe a su comisión, sin doble conteo). Looker hoy, ${discPeriodLabel}: ${tcDisc.looker}._`));
+  if (tcDisc && weekly) notasBlocks.push(sec(`_Nota: Total Contribution usa la definición corregida (Stripe a su comisión y sus reembolsos restados una vez). Looker hoy, ${discPeriodLabel}: ${tcDisc.looker}._`));
   notasBlocks.push(ctx(`Fuente: \`an_operational_dash\` (BigQuery) · ${notas[0] ?? ''}`));
   notasBlocks.push(ctx(`📊 Mismos números con filtros por país, idioma, OS y región: <${dashBase}|dashboard Operativo> (réplica del Looker, verificada contra BigQuery cada mañana)`));
   thread.push({ text: 'Notas y fuente', blocks: notasBlocks });

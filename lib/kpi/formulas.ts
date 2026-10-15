@@ -52,21 +52,29 @@ const STRIPE_SUBS = `(SUM(IF(payment_processor = "stripe", new_subscriptions_sal
 // Stripe 0.97 / Shopify 0.98, minus 6 % tax on the store buckets, minus refund-date
 // refunds at the blended net ratio.
 //
-// BUG in Looker (found 2026-10-12, confirmed against the Stripe API): Stripe charges
-// carry the buyer's os, so they fall into the iOS/Android buckets and get Apple's
-// 0.7 (−6 %) instead of Stripe's ~3.8 % fee — and TOTAL CONTRIBUTION then adds them
-// AGAIN at 0.965. Fix agreed with Pepis (2026-10-12, "Variante 2"): keep Stripe inside
-// Net Sales but at its own rate — exclude it from the os buckets and add
-// `+ STRIPE_SUBS × 0.965` inside Net Sales (both halves of the refund ratio) — and drop
-// the Stripe term from TOTAL CONTRIBUTION, which becomes Net Sales − spend.
-// Looker's current (buggy) version is kept as `…Looker` for the discrepancy block.
-function netSalesByOs(fixed: boolean): string {
-  const x = fixed ? ` AND COALESCE(payment_processor, "") != "stripe"` : '';
+// History of the Stripe term:
+//  - until 2026-10-15 the Looker netted Stripe charges inside the iOS/Android buckets (they carry
+//    the buyer's os) AND added them again at 0.965 in TOTAL CONTRIBUTION (double count, ~1.5×).
+//  - "Variante 2" (agreed 2026-10-12, applied by tech in the ORIGINAL Looker 2026-10-15, verified
+//    wk 5–11 oct TC $21,411): Stripe excluded from the os buckets and added inside Net Sales as
+//    `(stripe new subs + renewals) × 0.965`; TOTAL CONTRIBUTION = Net Sales − spend. This is the
+//    `…Looker` definition below — what the Looker shows today.
+//  - Still wrong in Variante 2 (found 2026-10-15, pending with tech): new_subscriptions_sales and
+//    renewals_sales are NET of refunds, so the Stripe term already excludes its refunds — and the
+//    refund-date term subtracts them again. The os buckets avoid this by adding back
+//    refunds_total_amount_sale_date. FIXED adds the Stripe refunds by sale date to the Stripe term
+//    in the first half only (not in the ratio half). Expected wk 5–11 oct: NS ≈ $66,077,
+//    TC ≈ $22,122, CM/Sales ≈ 23.28 % (data of 2026-10-15).
+type NetSalesMode = 'looker' | 'fixed';
+const STRIPE_RSD = `SUM(IF(payment_processor = "stripe", refunds_total_amount_sale_date, 0))`;
+function netSalesByOs(mode: NetSalesMode): string {
+  const x = ` AND COALESCE(payment_processor, "") != "stripe"`;
   const bucket = (cond: string, col: string) => `SUM(IF(${cond}${x}, ${col}, 0))`;
   const gross = (cond: string, withRefunds: boolean) =>
     `(${bucket(cond, 'renewals_sales')} + ${bucket(cond, 'new_subscriptions_sales')}${withRefunds ? ` + ${bucket(cond, 'refunds_total_amount_sale_date')}` : ''})`;
   const yearly = `SUM(renewals_sales_yearly_ios)`;
-  const stripeTerm = fixed ? `\n    + ${STRIPE_SUBS} * 0.965` : '';
+  const stripe = (withRefunds: boolean) =>
+    mode === 'fixed' && withRefunds ? `(${STRIPE_SUBS} + ${STRIPE_RSD}) * 0.965` : `${STRIPE_SUBS} * 0.965`;
   const body = (withRefunds: boolean) => `(
     SUM(IF(network = "stripe", other_sales, 0)) * 0.97
     + SUM(IF(network = "shopify", other_sales, 0)) * 0.98
@@ -74,29 +82,22 @@ function netSalesByOs(fixed: boolean): string {
     + ${yearly} * 0.85
     + ${gross('os = "Android"', withRefunds)} * 0.85
     + ${gross('os = "Unknown"', withRefunds)} * 0.98
-    + ${gross('os = "Web"', withRefunds)} * 0.98${stripeTerm}
+    + ${gross('os = "Web"', withRefunds)} * 0.98
+    + ${stripe(withRefunds)}
     - (${gross('(os = "Android" OR os = "iOS")', withRefunds)} + ${yearly}) * 0.06
   )`;
   return `(${body(true)} - SUM(refunds_total_amount_refund_date) * SAFE_DIVIDE(${body(false)}, ${GROSS_TOTAL}))`;
 }
 
-const NET_SALES_LOOKER = netSalesByOs(false);
-const NET_SALES_FIXED = netSalesByOs(true);
+const NET_SALES_LOOKER = netSalesByOs('looker');
+const NET_SALES_FIXED = netSalesByOs('fixed');
 
-// Looker today: Mobile CM = Net Sales − spend; TOTAL CONTRIBUTION = Mobile CM + Stripe
-// (+ an `other_sales` processor term that is always 0 — that bucket keeps its revenue
-// in the other_sales COLUMN; kept verbatim to match Looker).
-const STRIPE_TERM_LOOKER = `(
-    ${STRIPE_SUBS}
-    + SUM(IF(payment_processor = "other_sales", new_subscriptions_sales, 0))
-    + SUM(IF(payment_processor = "other_sales", renewals_sales, 0))
-  ) * 0.965`;
-const MOBILE_CM_LOOKER = `(${NET_SALES_LOOKER} - SUM(spend))`;
-const TOTAL_CONTRIBUTION_LOOKER = `(${MOBILE_CM_LOOKER} + ${STRIPE_TERM_LOOKER})`;
-
-// Fixed: Stripe already sits inside Net Sales at 0.965, so contribution is simply
-// Net Sales − spend. Mobile CM and TOTAL CONTRIBUTION coincide under this definition.
+// Both definitions: contribution = Net Sales − spend (Mobile CM and TOTAL CONTRIBUTION coincide).
+const CONTRIBUTION_LOOKER = `(${NET_SALES_LOOKER} - SUM(spend))`;
 const CONTRIBUTION_FIXED = `(${NET_SALES_FIXED} - SUM(spend))`;
+
+// Stripe refunds (sale date) × 0.965 = how much the Looker's Variante 2 under-states Net Sales/TC.
+export const STRIPE_REFUND_GAP_SQL = `(${STRIPE_RSD} * 0.965)`;
 
 // --- Public registry ----------------------------------------------------------
 
@@ -132,7 +133,7 @@ export const KPI_SQL = {
   totalRenewalSales: `(SUM(renewals_sales_yearly_ios) + SUM(renewals_sales))`,
   renewals: `(SUM(renewals) + SUM(renewals_yearly_ios))`,
   totalSales: TOTAL_SALES,
-  // Net Sales — FIXED definition (Stripe inside, at 0.965). See netSalesByOs.
+  // Net Sales — FIXED definition (Stripe inside at 0.965, its refunds deducted once). See netSalesByOs.
   netSales: NET_SALES_FIXED,
   // Refunds issued in the period (refund-date attribution = point-in-time cash impact)
   refundsAmount: `SUM(refunds_total_amount_refund_date)`,
@@ -145,12 +146,12 @@ export const KPI_SQL = {
   // Looker "New Subs Margin": uses NET new-sub sales (raw column), not gross NS Sales.
   newSubsMargin: `SAFE_DIVIDE(SUM(new_subscriptions_sales) * 0.7 - SUM(spend), SUM(new_subscriptions_sales))`,
 
-  // Looker's current definitions, reproduced to the cent — shown as discrepancies until
-  // the dashboard is fixed, then they will equal the fixed ones and the block disappears.
+  // Looker's current definitions (Variante 2 since 2026-10-15), reproduced to the cent — shown as
+  // discrepancies until tech applies the Stripe refund add-back, then they equal the fixed ones.
   netSalesLooker: NET_SALES_LOOKER,
-  mobileCmLooker: MOBILE_CM_LOOKER,
-  totalContributionLooker: TOTAL_CONTRIBUTION_LOOKER,
-  contributionMarginPctLooker: `SAFE_DIVIDE(${TOTAL_CONTRIBUTION_LOOKER}, ${TOTAL_SALES})`,
+  mobileCmLooker: CONTRIBUTION_LOOKER,
+  totalContributionLooker: CONTRIBUTION_LOOKER,
+  contributionMarginPctLooker: `SAFE_DIVIDE(${CONTRIBUTION_LOOKER}, ${TOTAL_SALES})`,
   // Looker daily chart "Purchases (non FT's)": subtracts from the NET new-subs count.
   purchasesNonFtLooker: `(SUM(new_subscriptions) - SUM(fts_converted))`,
 } as const;

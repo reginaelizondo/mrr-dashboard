@@ -7,9 +7,10 @@
  * en TypeScript; scripts/test-kpi-replica.ts la verifica contra BigQuery.
  *
  * Dos definiciones conviven (ver formulas.ts para la historia completa):
- *   'looker' — lo que el Looker muestra hoy (Stripe neteado como Apple/Google dentro de
- *              Net Sales y sumado otra vez al 0.965 en TOTAL CONTRIBUTION).
- *   'fixed'  — Variante 2 acordada: Stripe al 0.965 dentro de Net Sales, TC = Net Sales − spend.
+ *   'looker' — lo que el Looker muestra hoy: Variante 2 (aplicada por tech el 15-oct-2026):
+ *              Stripe fuera de los buckets de OS y dentro de Net Sales al 0.965; TC = Net Sales − spend.
+ *   'fixed'  — Variante 2 + reembolsos de Stripe restados UNA vez (el Looker los resta dos: las
+ *              ventas netas ya los excluyen y el término de refund-date los vuelve a restar).
  */
 import { createServerClient } from '@/lib/supabase/server';
 
@@ -77,17 +78,18 @@ export function sumAgg(rows: AggRow[], period = 'total', grp = ''): AggRow {
 
 type Bucket = 'ios' | 'and' | 'web' | 'unk';
 
-/** Suma de un bucket de OS: no-Stripe siempre; + Stripe si definition === 'looker'. */
-function bucket(r: AggRow, b: Bucket, col: 'ren' | 'ns' | 'rsd', def: Definition): number {
-  const base = r[`${b}_${col}` as AggNumericKey];
-  return def === 'looker' ? base + r[`${b}_${col}_s` as AggNumericKey] : base;
+/** Suma de un bucket de OS sin Stripe (ambas definiciones excluyen Stripe de los buckets). */
+function bucket(r: AggRow, b: Bucket, col: 'ren' | 'ns' | 'rsd'): number {
+  return r[`${b}_${col}` as AggNumericKey];
 }
+/** Reembolsos de Stripe por fecha de venta (las filas de Stripe siempre traen uno de los 4 OS). */
+const stripeRsd = (r: AggRow) => r.ios_rsd_s + r.and_rsd_s + r.web_rsd_s + r.unk_rsd_s;
 
 function netSales(r: AggRow, def: Definition): number {
   const gross = (b: Bucket, withRefunds: boolean) =>
-    bucket(r, b, 'ren', def) + bucket(r, b, 'ns', def) + (withRefunds ? bucket(r, b, 'rsd', def) : 0);
+    bucket(r, b, 'ren') + bucket(r, b, 'ns') + (withRefunds ? bucket(r, b, 'rsd') : 0);
   const yearly = r.renewals_sales_yearly_ios;
-  const stripeTerm = def === 'fixed' ? stripeSubs(r) * 0.965 : 0;
+  const stripeTerm = (withRefunds: boolean) => (def === 'fixed' && withRefunds ? stripeSubs(r) + stripeRsd(r) : stripeSubs(r)) * 0.965;
   const body = (withRefunds: boolean) =>
     r.other_sales_stripe_net * 0.97
     + r.other_sales_shopify_net * 0.98
@@ -96,7 +98,7 @@ function netSales(r: AggRow, def: Definition): number {
     + gross('and', withRefunds) * 0.85
     + gross('unk', withRefunds) * 0.98
     + gross('web', withRefunds) * 0.98
-    + stripeTerm
+    + stripeTerm(withRefunds)
     - (gross('and', withRefunds) + gross('ios', withRefunds) + yearly) * 0.06;
   const grossTotal = r.renewals_sales + r.renewals_sales_yearly_ios + r.new_subscriptions_sales + r.other_sales;
   const ratio = safeDiv(body(false), grossTotal) ?? 0;
@@ -135,8 +137,8 @@ export function computeKpis(r: AggRow, def: Definition): KpiValues {
   const cac = safeDiv(r.spend, newSubs);
   const ns = netSales(r, def);
   const mobileCm = ns - r.spend;
-  // Looker: TC = Mobile CM + Stripe (el término payment_processor = "other_sales" es siempre 0).
-  const totalContribution = def === 'looker' ? mobileCm + stripeSubs(r) * 0.965 : mobileCm;
+  // Ambas definiciones: TOTAL CONTRIBUTION = MOBILE CONTRIBUTION MARGIN = Net Sales − spend.
+  const totalContribution = mobileCm;
   const purchasesNonFt = newSubs - r.fts_converted;
   return {
     spend: r.spend, signups: r.signups, downloads: r.downloads, ftsStarted: r.fts_started, ftsConverted: r.fts_converted,
