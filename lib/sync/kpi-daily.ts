@@ -82,26 +82,51 @@ export async function refreshKpiRollup(start: string, end: string): Promise<numb
   return rows;
 }
 
+/** True once migration 035 (kpi_daily_stage + kpi_daily_swap) is in place. Also purges stale stage rows. */
+async function atomicSwapAvailable(): Promise<boolean> {
+  const { error } = await createServerClient().rpc('kpi_daily_stage_cleanup');
+  return !error;
+}
+
 /**
- * Replace the rows of [start, end] in Supabase with a fresh pull, one calendar month at a
- * time (a failure leaves at most one month to re-run, not the whole window), then refresh
- * the rollup for the same range.
+ * Replace the rows of [start, end] in Supabase with a fresh pull, one calendar month at a time.
+ *
+ * With migration 035: rows go to kpi_daily_stage under a run id (invisible to readers) and
+ * kpi_daily_swap() replaces the month and refreshes its rollup in ONE transaction, so the dashboard
+ * never shows a half-written month. Without it (fallback): delete + insert in batches, as before.
  */
-export async function syncKpiDaily(start: string, end: string, opts: { rollup?: boolean } = {}): Promise<{ start: string; end: string; rows: number; days: number }> {
+export async function syncKpiDaily(start: string, end: string, opts: { rollup?: boolean } = {}): Promise<{ start: string; end: string; rows: number; days: number; atomic: boolean }> {
   const supabase = createServerClient();
+  const atomic = await atomicSwapAvailable();
+  const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   let rows = 0; let days = 0;
   for (const c of monthChunks(start, end)) {
     const chunk = await fetchKpiDailyFromBigQuery(c.start, c.end);
-    const { error: delErr } = await supabase.from('kpi_daily').delete().gte('date', c.start).lte('date', c.end);
-    if (delErr) throw new Error(`kpi_daily delete ${c.start}→${c.end}: ${delErr.message}`);
-    for (let i = 0; i < chunk.length; i += 1000) {
-      const { error } = await supabase.from('kpi_daily').insert(chunk.slice(i, i + 1000));
-      if (error) throw new Error(`kpi_daily insert ${c.start}→${c.end} (batch ${i / 1000}): ${error.message}`);
+    if (atomic) {
+      try {
+        for (let i = 0; i < chunk.length; i += 1000) {
+          const { error } = await supabase.from('kpi_daily_stage').insert(chunk.slice(i, i + 1000).map((r) => ({ ...r, run_id: runId })));
+          if (error) throw new Error(`kpi_daily_stage insert ${c.start}→${c.end} (batch ${i / 1000}): ${error.message}`);
+        }
+        const { error } = await supabase.rpc('kpi_daily_swap', { p_run_id: runId, p_start: c.start, p_end: c.end });
+        if (error) throw new Error(`kpi_daily_swap ${c.start}→${c.end}: ${error.message}`);
+      } catch (e) {
+        await supabase.from('kpi_daily_stage').delete().eq('run_id', runId);
+        throw e;
+      }
+    } else {
+      const { error: delErr } = await supabase.from('kpi_daily').delete().gte('date', c.start).lte('date', c.end);
+      if (delErr) throw new Error(`kpi_daily delete ${c.start}→${c.end}: ${delErr.message}`);
+      for (let i = 0; i < chunk.length; i += 1000) {
+        const { error } = await supabase.from('kpi_daily').insert(chunk.slice(i, i + 1000));
+        if (error) throw new Error(`kpi_daily insert ${c.start}→${c.end} (batch ${i / 1000}): ${error.message}`);
+      }
     }
     rows += chunk.length; days += new Set(chunk.map((r) => r.date)).size;
   }
-  if (opts.rollup !== false) await refreshKpiRollup(start, end);
-  return { start, end, rows, days };
+  // The atomic swap already refreshed the rollup per month.
+  if (!atomic && opts.rollup !== false) await refreshKpiRollup(start, end);
+  return { start, end, rows, days, atomic };
 }
 
 // Compared replica vs BigQuery per DAY × OS. Per-OS matters: BigQuery sometimes re-attributes a

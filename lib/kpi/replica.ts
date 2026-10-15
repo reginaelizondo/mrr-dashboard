@@ -115,7 +115,7 @@ export interface KpiValues {
   // Tasas y unit economics (null cuando el denominador es 0)
   conversionRate: number | null; convFromFt: number | null; convFromPurchases: number | null;
   ftStartRate: number | null; ftConversionRate: number | null; ftShare: number | null;
-  cac: number | null; cacFromPurchases: number | null; cacFromFt: number | null;
+  cac: number | null; cacFromPurchases: number | null; cacFromFt: number | null; cacCalculated: number | null;
   cpnu: number | null; cpft: number | null; cpi: number | null; signupsPerDownload: number | null;
   arpu: number | null; firstTicketCac: number | null; arpuMinusCac: number | null;
   usersPerPurchase: number | null; usersPerFtConverted: number | null;
@@ -124,7 +124,7 @@ export interface KpiValues {
   totalSales: number; netSales: number; refundsAmount: number;
   // Márgenes
   mobileCm: number; totalContribution: number; contributionMarginPct: number | null; newSubsMargin: number | null;
-  salesOverSpend: number | null; newSalesOverSpend: number | null; contributionOverSpend: number | null;
+  salesOverSpend: number | null; newSalesOverSpend: number | null; newSalesOverSpendNet: number | null; contributionOverSpend: number | null;
 }
 
 /** Calcula todos los KPIs de una fila agregada bajo una definición. */
@@ -139,19 +139,26 @@ export function computeKpis(r: AggRow, def: Definition): KpiValues {
   const mobileCm = ns - r.spend;
   // Ambas definiciones: TOTAL CONTRIBUTION = MOBILE CONTRIBUTION MARGIN = Net Sales − spend.
   const totalContribution = mobileCm;
-  const purchasesNonFt = newSubs - r.fts_converted;
+  // El Looker no es consistente con el conteo de compras: las tablas (CAC, C.R., Conv. from Purchases)
+  // usan New Subs BRUTAS (+ reembolsos por fecha de venta), pero las gráficas de "Purchases (non FT's)",
+  // "CAC from Purchases" y "CAC calculated" usan la columna NETA (verificado 2026-10-15 contra las
+  // etiquetas de la página Daily Purchases and Free Trial). 'looker' copia eso; 'fixed' usa brutas en todo.
+  const purchasesNonFtGross = newSubs - r.fts_converted;
+  const purchasesNonFtNet = r.new_subscriptions - r.fts_converted;
+  const purchasesNonFt = def === 'looker' ? purchasesNonFtNet : purchasesNonFtGross;
   return {
     spend: r.spend, signups: r.signups, downloads: r.downloads, ftsStarted: r.fts_started, ftsConverted: r.fts_converted,
-    newSubs, purchasesNonFt, purchasesNonFtLooker: r.new_subscriptions - r.fts_converted,
+    newSubs, purchasesNonFt, purchasesNonFtLooker: purchasesNonFtNet,
     renewals: r.renewals + r.renewals_yearly_ios, renewalsYearlyIos: r.renewals_yearly_ios,
     refundsCount: r.num_of_refunds_refund_date,
     conversionRate: safeDiv(newSubs, r.signups),
     convFromFt: safeDiv(r.fts_converted, r.signups),
-    convFromPurchases: safeDiv(purchasesNonFt, r.signups),
+    convFromPurchases: safeDiv(purchasesNonFtGross, r.signups),
     ftStartRate: safeDiv(r.fts_started, r.signups),
     ftConversionRate: safeDiv(r.fts_converted, r.fts_started),
     ftShare: safeDiv(r.fts_converted, newSubs),
     cac, cacFromPurchases: safeDiv(r.spend, purchasesNonFt), cacFromFt: safeDiv(r.spend, r.fts_converted),
+    cacCalculated: def === 'looker' ? safeDiv(r.spend, r.new_subscriptions) : cac,
     cpnu: safeDiv(r.spend, r.signups), cpft: safeDiv(r.spend, r.fts_started),
     cpi: safeDiv(r.spend, r.downloads), signupsPerDownload: safeDiv(r.signups, r.downloads),
     arpu, firstTicketCac: arpu !== null && cac !== null ? safeDiv(arpu, cac) : null,
@@ -165,6 +172,9 @@ export function computeKpis(r: AggRow, def: Definition): KpiValues {
     // Looker "New Subs Margin": usa la columna NETA de ventas de new subs.
     newSubsMargin: safeDiv(r.new_subscriptions_sales * 0.7 - r.spend, r.new_subscriptions_sales),
     salesOverSpend: safeDiv(totalSales, r.spend), newSalesOverSpend: safeDiv(nsSales, r.spend),
+    // La gráfica MENSUAL "New Sales / Spend" del Looker (Monthly Sales & Margin) usa ventas netas de
+    // reembolsos; la semanal usa NS Sales. Mismo nombre, dos campos (verificado 13/13 meses).
+    newSalesOverSpendNet: safeDiv(r.new_subscriptions_sales, r.spend),
     contributionOverSpend: safeDiv(totalContribution, r.spend),
   };
 }
@@ -184,12 +194,22 @@ const arr = (v?: string[]) => (v && v.length ? v : null);
 /** Sumas base por periodo (y por grupo si se pide), ya filtradas. */
 export async function fetchAgg(f: ReplicaFilters, grain: Grain, group: GroupDim = 'none'): Promise<AggRow[]> {
   const supabase = createServerClient();
-  const { data, error } = await supabase.rpc('kpi_daily_agg', {
+  const args = {
     p_start: f.start, p_end: f.end, p_grain: grain, p_group: group,
     p_region: arr(f.region), p_country: arr(f.country), p_os: arr(f.os), p_lang: arr(f.language),
-  });
-  if (error) throw new Error(`kpi_daily_agg: ${error.message}`);
-  return ((data ?? []) as Record<string, unknown>[]).map(parseAgg);
+  };
+  // PostgREST corta cada respuesta en 1,000 filas: diario × país (o diario de todo el historial) pasa
+  // de eso fácilmente. La función ordena por (period, grp), así que paginar con range es estable.
+  const out: AggRow[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase.rpc('kpi_daily_agg', args).range(from, from + PAGE - 1);
+    if (error) throw new Error(`kpi_daily_agg: ${error.message}`);
+    const rows = (data ?? []) as Record<string, unknown>[];
+    out.push(...rows.map(parseAgg));
+    if (rows.length < PAGE) break;
+  }
+  return out;
 }
 
 export interface PeriodKpis { period: string; grp: string; agg: AggRow; looker: KpiValues; fixed: KpiValues }

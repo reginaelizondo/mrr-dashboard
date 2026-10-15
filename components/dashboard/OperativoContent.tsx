@@ -148,7 +148,12 @@ export function OperativoContent({ data }: { data: OperativoData }) {
 
   const cur = data.totals.current[def]; const prev = data.totals.previous[def];
   const rows = data.series;
-  const chartData = useMemo(() => rows.map((r) => ({ label: periodLabel(r.period, data.grain), ...r[def] })), [rows, def, data.grain]);
+  // Vista Looker a granularidad mensual o mayor: "New Sales / Spend" usa ventas netas, como su gráfica mensual.
+  const monthlyLooker = def === 'looker' && ['month', 'quarter', 'year'].includes(data.grain);
+  const chartData = useMemo(() => rows.map((r) => ({
+    label: periodLabel(r.period, data.grain), ...r[def],
+    ...(monthlyLooker ? { newSalesOverSpend: r[def].newSalesOverSpendNet } : {}),
+  })), [rows, def, data.grain, monthlyLooker]);
 
   const activeFilters = (Object.keys(DIM_LABELS) as DimKey[]).filter((k) => data.filters[k === 'kinedu_region' ? 'region' : k === 'kinedu_language' ? 'language' : k].length > 0);
 
@@ -271,7 +276,7 @@ export function OperativoContent({ data }: { data: OperativoData }) {
           <div className="space-y-4">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <KpiChart title="Conv. from FT · Conv. from Purchases" data={chartData} series={[{ key: 'convFromFt', label: 'Conv. from FT', type: 'bar', fmt: 'pct', color: GREEN, stack: 'v' }, { key: 'convFromPurchases', label: 'Conv. from Purchases', type: 'bar', fmt: 'pct', color: BLUE, stack: 'v' }]} />
-              <KpiChart title="CAC from Purchases · CAC from Free Trials · CAC" data={chartData} series={[{ key: 'cacFromPurchases', label: 'CAC from Purchases', type: 'line', fmt: 'usd2', color: BLUE }, { key: 'cacFromFt', label: 'CAC from Free Trials', type: 'line', fmt: 'usd2', color: ROSE }, { key: 'cac', label: 'CAC', type: 'line', fmt: 'usd2', color: NAVY }]} />
+              <KpiChart title="CAC from Purchases · CAC from Free Trials · CAC" data={chartData} series={[{ key: 'cacFromPurchases', label: 'CAC from Purchases', type: 'line', fmt: 'usd2', color: BLUE }, { key: 'cacFromFt', label: 'CAC from Free Trials', type: 'line', fmt: 'usd2', color: ROSE }, { key: 'cacCalculated', label: 'CAC calculated', type: 'line', fmt: 'usd2', color: NAVY }]} note={def === 'looker' ? 'Como en el Looker: estas tres series cuentan las compras con New Subs netas de reembolsos; el CAC de las tablas usa brutas.' : undefined} />
               <KpiChart title="Users per purchase · Users per Trial converted" data={chartData} series={[{ key: 'usersPerPurchase', label: 'Users per purchase', type: 'line', fmt: 'num1', color: BLUE }, { key: 'usersPerFtConverted', label: 'Users per Trial converted', type: 'line', fmt: 'num1', color: GREEN }]} />
               <KpiChart title="signups · downloads · signups/downloads" data={chartData} series={[{ key: 'signups', label: 'signups', type: 'bar', fmt: 'int', color: BLUE }, { key: 'downloads', label: 'downloads', type: 'bar', fmt: 'int', color: GRAY }, { key: 'signupsPerDownload', label: 'signups/downloads', type: 'line', fmt: 'num1', axis: 'right', color: ROSE }]} note="downloads llega en 0 muchos días desde sep-2026 (pendiente con tech): CPI y signups/downloads no son confiables esos días." />
             </div>
