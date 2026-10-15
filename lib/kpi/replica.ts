@@ -217,17 +217,28 @@ export interface ReplicaStatus { minDate: string | null; maxDate: string | null;
 
 export async function fetchReplicaStatus(): Promise<ReplicaStatus> {
   const supabase = createServerClient();
-  const { data, error } = await supabase.rpc('kpi_daily_status');
-  if (error) throw new Error(`kpi_daily_status: ${error.message}`);
-  const r = ((data ?? []) as Record<string, unknown>[])[0] ?? {};
-  const { data: logs } = await supabase.from('sync_log').select('status,completed_at,started_at,details')
-    .eq('source', 'kpi_daily').eq('sync_type', 'daily').order('started_at', { ascending: false }).limit(1);
-  const log = ((logs ?? []) as Array<{ status: string; completed_at: string | null; started_at: string; details: Record<string, unknown> | null }>)[0];
+  // Barato a propósito: MIN/MAX por el índice de fecha y conteo estimado del planner. La función
+  // kpi_daily_status() recorre las 661 K filas y en producción rebasaba el timeout de 8 s cuando
+  // corría junto con el resto de las consultas de la página (2026-10-15).
+  const [first, last, count, logs] = await Promise.all([
+    supabase.from('kpi_daily').select('date').order('date', { ascending: true }).limit(1),
+    supabase.from('kpi_daily').select('date,synced_at').order('date', { ascending: false }).limit(1),
+    supabase.from('kpi_daily').select('date', { count: 'estimated', head: true }),
+    supabase.from('sync_log').select('status,completed_at,started_at,details')
+      .eq('source', 'kpi_daily').eq('sync_type', 'daily').order('started_at', { ascending: false }).limit(1),
+  ]);
+  const minRow = (first.data ?? [])[0] as { date: string } | undefined;
+  const maxRow = (last.data ?? [])[0] as { date: string; synced_at: string } | undefined;
+  const log = ((logs.data ?? []) as Array<{ status: string; completed_at: string | null; started_at: string; details: Record<string, unknown> | null }>)[0];
   const d = log?.details ?? {};
   const lastJob: ReplicaJob | null = log ? {
     status: log.status, finishedAt: log.completed_at ?? log.started_at,
     heal: (d.heal as ReplicaJob['heal']) ?? null, rotated: (d.rotated as ReplicaJob['rotated']) ?? null,
     error: typeof d.error === 'string' ? d.error : undefined,
   } : null;
-  return { minDate: r.min_date ? String(r.min_date) : null, maxDate: r.max_date ? String(r.max_date) : null, rows: num(r.rows_n), lastSyncedAt: r.last_synced_at ? String(r.last_synced_at) : null, lastJob };
+  return {
+    minDate: minRow?.date ?? null, maxDate: maxRow?.date ?? null, rows: count.count ?? 0,
+    // El día más reciente se re-sincroniza en cada job, así que su synced_at = hora del último sync.
+    lastSyncedAt: log?.completed_at ?? maxRow?.synced_at ?? null, lastJob,
+  };
 }

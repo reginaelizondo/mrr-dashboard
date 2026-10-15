@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
 import { OperativoContent, type OperativoData, type PeriodRow, type GroupRow } from '@/components/dashboard/OperativoContent';
-import { fetchAgg, fetchDimValues, fetchReplicaStatus, computeKpis, sumAgg, type Grain, type ReplicaFilters, type AggRow } from '@/lib/kpi/replica';
+import { fetchAgg, fetchDimValues, fetchReplicaStatus, computeKpis, sumAgg, type Grain, type ReplicaFilters, type AggRow, type ReplicaStatus } from '@/lib/kpi/replica';
 import { todayMx, addDays, mondayOf } from '@/lib/kpi/period';
 
 /**
@@ -84,7 +84,8 @@ export default async function OperativoPage({ searchParams }: { searchParams: Pr
       fetchAgg(filters, range.grain, 'kinedu_region'),
       fetchAgg(filters, range.grain, 'country'),
       fetchDimValues(),
-      fetchReplicaStatus(),
+      // El estado de la réplica es informativo: si falla, la página carga igual.
+      fetchReplicaStatus().catch((): ReplicaStatus => ({ minDate: null, maxDate: null, rows: 0, lastSyncedAt: null, lastJob: null })),
     ]);
     const cur = sumAgg(current, 'total'); const prev = sumAgg(previous, 'total');
     data = {
