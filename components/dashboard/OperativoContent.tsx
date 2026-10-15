@@ -440,7 +440,17 @@ function AuditPanel({ status, cur, generatedAt }: { status: ReplicaStatus; cur: 
         <CardContent className="text-sm space-y-1.5">
           <p>{fresh ? '✅' : '⚠️'} Última sincronización: {syncedAt ? syncedAt.toLocaleString('es-MX', { timeZone: 'America/Mexico_City' }) : '—'}{ageH !== null ? ` (hace ${ageH.toFixed(1)} h)` : ''}</p>
           <p>Cobertura: {status.minDate ?? '—'} → {status.maxDate ?? '—'} · {nf0.format(status.rows)} filas</p>
-          <p className="text-muted-foreground text-xs">Fuente: BigQuery `an_operational_dash` (dbt, ≈09:01 MX). Sync diario 09:10 MX con ventana de 21 días; verificación de totales por día contra BigQuery con `scripts/backfill-kpi-daily.ts --verify` (última corrida: 14-oct-2026, 1,018 días, 0 diferencias).</p>
+          {status.lastJob?.heal ? (
+            <p>
+              {status.lastJob.heal.badDays - status.lastJob.heal.healedDays > 0 ? '⚠️' : '✅'} Último job: {status.lastJob.heal.checkedDays.toLocaleString('en-US')} días comparados con BigQuery · {status.lastJob.heal.badDays} con diferencias · {status.lastJob.heal.healedDays} reparados
+              {status.lastJob.rotated ? ` · mes re-sincronizado en rotación: ${status.lastJob.rotated.start.slice(0, 7)}` : ''}
+            </p>
+          ) : status.lastJob?.error ? (
+            <p>🔴 El último job falló: {status.lastJob.error.slice(0, 200)}</p>
+          ) : (
+            <p className="text-muted-foreground">Aún no corre el job con verificación completa (empieza con el próximo sync diario).</p>
+          )}
+          <p className="text-muted-foreground text-xs">Fuente: BigQuery `an_operational_dash` (dbt, ≈09:01 MX). Job diario 09:10 MX: re-sincroniza los últimos 95 días (reembolsos y re-atribuciones llegan semanas después), un mes viejo en rotación, y compara los totales por día de todo el historial contra BigQuery reparando los días que difieran.</p>
         </CardContent>
       </Card>
       <Card>

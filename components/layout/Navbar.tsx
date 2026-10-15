@@ -28,7 +28,7 @@ export function Navbar() {
     <header className="bg-gradient-to-r from-[#0E3687] to-[#0A2A6B] shadow-lg">
       <div className="flex h-16 items-center px-6 max-w-[1400px] mx-auto">
         {/* Logo */}
-        <div className="flex items-center gap-3 mr-10">
+        <div className="flex items-center gap-3 mr-6 shrink-0 whitespace-nowrap">
           <div className="h-9 w-9 rounded-lg bg-white/15 flex items-center justify-center">
             <BarChart3 className="h-5 w-5 text-white" />
           </div>
@@ -39,7 +39,7 @@ export function Navbar() {
         </div>
 
         {/* Navigation */}
-        <nav className="flex items-center gap-1">
+        <nav className="flex items-center gap-0.5 min-w-0 overflow-x-auto">
           {navItems.map((item) => {
             const Icon = item.icon;
             return (
@@ -47,7 +47,7 @@ export function Navbar() {
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  'flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg transition-all duration-200',
+                  'flex items-center gap-1.5 px-3 py-2 text-sm whitespace-nowrap rounded-lg transition-all duration-200',
                   pathname === item.href
                     ? 'bg-white/15 text-white font-medium shadow-sm'
                     : 'text-white/60 hover:text-white hover:bg-white/10'

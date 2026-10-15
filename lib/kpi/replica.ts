@@ -207,12 +207,27 @@ export async function fetchDimValues(fromDate?: string): Promise<DimValue[]> {
   return ((data ?? []) as Record<string, unknown>[]).map((r) => ({ dim: String(r.dim), value: String(r.value), signups: num(r.signups), spend: num(r.spend) }));
 }
 
-export interface ReplicaStatus { minDate: string | null; maxDate: string | null; rows: number; lastSyncedAt: string | null }
+export interface ReplicaJob {
+  status: string; finishedAt: string | null;
+  heal: { checkedDays: number; badDays: number; healedDays: number; skipped?: string } | null;
+  rotated: { start: string; end: string } | null;
+  error?: string;
+}
+export interface ReplicaStatus { minDate: string | null; maxDate: string | null; rows: number; lastSyncedAt: string | null; lastJob: ReplicaJob | null }
 
 export async function fetchReplicaStatus(): Promise<ReplicaStatus> {
   const supabase = createServerClient();
   const { data, error } = await supabase.rpc('kpi_daily_status');
   if (error) throw new Error(`kpi_daily_status: ${error.message}`);
   const r = ((data ?? []) as Record<string, unknown>[])[0] ?? {};
-  return { minDate: r.min_date ? String(r.min_date) : null, maxDate: r.max_date ? String(r.max_date) : null, rows: num(r.rows_n), lastSyncedAt: r.last_synced_at ? String(r.last_synced_at) : null };
+  const { data: logs } = await supabase.from('sync_log').select('status,completed_at,started_at,details')
+    .eq('source', 'kpi_daily').eq('sync_type', 'daily').order('started_at', { ascending: false }).limit(1);
+  const log = ((logs ?? []) as Array<{ status: string; completed_at: string | null; started_at: string; details: Record<string, unknown> | null }>)[0];
+  const d = log?.details ?? {};
+  const lastJob: ReplicaJob | null = log ? {
+    status: log.status, finishedAt: log.completed_at ?? log.started_at,
+    heal: (d.heal as ReplicaJob['heal']) ?? null, rotated: (d.rotated as ReplicaJob['rotated']) ?? null,
+    error: typeof d.error === 'string' ? d.error : undefined,
+  } : null;
+  return { minDate: r.min_date ? String(r.min_date) : null, maxDate: r.max_date ? String(r.max_date) : null, rows: num(r.rows_n), lastSyncedAt: r.last_synced_at ? String(r.last_synced_at) : null, lastJob };
 }
