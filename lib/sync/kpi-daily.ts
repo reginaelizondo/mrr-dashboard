@@ -104,45 +104,76 @@ export async function syncKpiDaily(start: string, end: string, opts: { rollup?: 
   return { start, end, rows, days };
 }
 
-// Day totals compared replica vs BigQuery. Includes the fields that change after the fact
-// (FT conversions refunded, refunds attributed to the sale date) — they drift for weeks.
+// Compared replica vs BigQuery per DAY × OS. Per-OS matters: BigQuery sometimes re-attributes a
+// sale to another os after the fact — totals stay equal but Net Sales changes (different store
+// commission). Seen 2026-10-15 in Aug-2025, Nov-2025 and Feb-2026. The fields include the ones
+// that drift for weeks (FT conversions refunded, refunds attributed to the sale date) and the
+// Stripe / other_sales splits that Net Sales depends on.
 const VERIFY_FIELDS = [
   'signups', 'spend', 'fts_started', 'fts_converted', 'new_subscriptions', 'new_subscriptions_sales', 'renewals', 'renewals_sales',
   'renewals_sales_yearly_ios', 'other_sales', 'refunds_total_amount_refund_date', 'refunds_total_amount_sale_date', 'num_of_refunds_sale_date',
+  'stripe_ns_sales', 'stripe_ren_sales', 'other_sales_stripe_net',
 ] as const;
+const VERIFY_BQ_EXPR: Record<(typeof VERIFY_FIELDS)[number], string> = {
+  signups: 'SUM(signups)', spend: 'SUM(spend)', fts_started: 'SUM(fts_started)', fts_converted: 'SUM(fts_converted)',
+  new_subscriptions: 'SUM(new_subscriptions)', new_subscriptions_sales: 'SUM(new_subscriptions_sales)', renewals: 'SUM(renewals)',
+  renewals_sales: 'SUM(renewals_sales)', renewals_sales_yearly_ios: 'SUM(renewals_sales_yearly_ios)', other_sales: 'SUM(other_sales)',
+  refunds_total_amount_refund_date: 'SUM(refunds_total_amount_refund_date)', refunds_total_amount_sale_date: 'SUM(refunds_total_amount_sale_date)',
+  num_of_refunds_sale_date: 'SUM(num_of_refunds_sale_date)',
+  stripe_ns_sales: 'SUM(IF(payment_processor = "stripe", new_subscriptions_sales, 0))',
+  stripe_ren_sales: 'SUM(IF(payment_processor = "stripe", renewals_sales, 0))',
+  other_sales_stripe_net: 'SUM(IF(network = "stripe", other_sales, 0))',
+};
 
-export interface VerifyResult { days: number; mismatches: Array<{ date: string; field: string; bq: number; replica: number }>; badDates: string[] }
+export interface VerifyResult { days: number; mismatches: Array<{ date: string; os: string; field: string; bq: number; replica: number }>; badDates: string[] }
 
-/** Compare replica vs BigQuery day totals over [start, end]. Missing days on either side count as mismatches. */
+/** Quarter-aligned chunks (each kpi_daily_agg call stays far below Supabase's 8 s timeout). */
+function quarterChunks(start: string, end: string): Array<{ start: string; end: string }> {
+  const out: Array<{ start: string; end: string }> = [];
+  let s = start;
+  while (s <= end) {
+    const [y, m] = s.split('-').map(Number);
+    const qEndMonth = Math.floor((m - 1) / 3) * 3 + 3;
+    const qEnd = new Date(Date.UTC(y, qEndMonth, 0)).toISOString().slice(0, 10);
+    const e = qEnd < end ? qEnd : end;
+    out.push({ start: s, end: e });
+    s = addDays(e, 1);
+  }
+  return out;
+}
+
+/** Compare replica vs BigQuery per day × os over [start, end]. Missing cells on either side count as mismatches. */
 export async function verifyKpiDaily(start: string, end: string): Promise<VerifyResult> {
+  const { fetchAgg } = await import('@/lib/kpi/replica');
   const bq = getBigQueryClient();
   const [bqRows] = await bq.query({
-    query: `SELECT CAST(date AS STRING) AS date, ${VERIFY_FIELDS.map((f) => `SUM(${f}) AS ${f}`).join(', ')} FROM ${KINEDU_OPERATIONAL_TABLE} WHERE date BETWEEN @start AND @end GROUP BY date`,
+    query: `SELECT CAST(date AS STRING) AS date, COALESCE(os, "null") AS os, ${VERIFY_FIELDS.map((f) => `${VERIFY_BQ_EXPR[f]} AS ${f}`).join(', ')}
+            FROM ${KINEDU_OPERATIONAL_TABLE} WHERE date BETWEEN @start AND @end GROUP BY date, os`,
     params: { start, end },
   });
-  const supabase = createServerClient();
   const rep = new Map<string, Record<string, unknown>>();
-  // One RPC per calendar year: each aggregates ≤ ~250 K rows, far below the statement timeout.
-  for (let y = Number(start.slice(0, 4)); y <= Number(end.slice(0, 4)); y++) {
-    const s = `${y}-01-01` < start ? start : `${y}-01-01`;
-    const e = `${y}-12-31` > end ? end : `${y}-12-31`;
-    const { data, error } = await supabase.rpc('kpi_daily_day_totals', { p_start: s, p_end: e });
-    if (error) throw new Error(`kpi_daily_day_totals ${s}→${e}: ${error.message}`);
-    for (const r of (data ?? []) as Record<string, unknown>[]) rep.set(String(r.date), r);
+  for (const c of quarterChunks(start, end)) {
+    for (const r of await fetchAgg({ start: c.start, end: c.end }, 'day', 'os')) rep.set(`${r.period}|${r.grp}`, r as unknown as Record<string, unknown>);
   }
   const mismatches: VerifyResult['mismatches'] = [];
-  const bad = new Set<string>();
-  const seen = new Set<string>();
+  const bad = new Set<string>(); const seen = new Set<string>(); const days = new Set<string>();
+  const isZero = (r: Record<string, unknown>) => VERIFY_FIELDS.every((f) => Math.abs(toNum(r[f])) <= 0.01);
   for (const r of bqRows as Record<string, unknown>[]) {
-    const d = String(r.date); seen.add(d);
-    const rr = rep.get(d);
+    const d = String(r.date); const os = String(r.os); const key = `${d}|${os}`;
+    seen.add(key); days.add(d);
+    const rr = rep.get(key);
+    if (!rr && isZero(r)) continue;
     for (const f of VERIFY_FIELDS) {
       const a = toNum(r[f]); const b = rr ? toNum(rr[f]) : 0;
-      if (!rr || Math.abs(a - b) > 0.01) { mismatches.push({ date: d, field: f, bq: a, replica: b }); bad.add(d); }
+      if (!rr || Math.abs(a - b) > 0.01) { mismatches.push({ date: d, os, field: f, bq: a, replica: b }); bad.add(d); }
     }
   }
-  for (const d of rep.keys()) if (!seen.has(d)) { mismatches.push({ date: d, field: '(día no existe en BigQuery)', bq: 0, replica: 1 }); bad.add(d); }
-  return { days: seen.size, mismatches, badDates: [...bad].sort() };
+  for (const [key, rr] of rep) {
+    if (seen.has(key) || isZero(rr)) continue;
+    const [d, os] = key.split('|');
+    mismatches.push({ date: d, os, field: '(no existe en BigQuery)', bq: 0, replica: 1 }); bad.add(d);
+  }
+  return { days: days.size, mismatches, badDates: [...bad].sort() };
 }
 
 /** Group sorted YYYY-MM-DD dates into contiguous inclusive ranges. */

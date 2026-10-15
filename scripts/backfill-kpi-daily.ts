@@ -33,7 +33,7 @@ const flag = (f: string) => args.includes(f);
   if (!from || !to) throw new Error('usa --from YYYY-MM-DD --to YYYY-MM-DD (o --daily)');
   if (flag('--verify')) {
     const r = await verifyKpiDaily(from, to);
-    console.log(`verify ${from} → ${to}: ${r.days} días, ${r.badDates.length} días con diferencias (${r.mismatches.length} campos)`);
+    console.log(`verify ${from} → ${to}: ${r.days} días, ${r.badDates.length} días con diferencias (${r.mismatches.length} celdas día×OS×campo)`);
     for (const m of r.mismatches.slice(0, 20)) console.log('  ', m);
     return;
   }
