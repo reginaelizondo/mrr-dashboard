@@ -187,6 +187,14 @@ export function toRanges(dates: string[]): Array<{ start: string; end: string }>
 }
 
 export const KPI_DAILY_HISTORY_START = '2024-01-01';
+
+/** Last rebuild of an_operational_dash (dbt runs several times a day: ≈09:01 and 11:02 MX, …). */
+export async function fetchBigQueryModified(): Promise<string | null> {
+  const [rows] = await getBigQueryClient().query({ query: `SELECT TIMESTAMP_MILLIS(last_modified_time) AS lm FROM \`celtic-music-240111.dbt_prod_analytics.__TABLES__\` WHERE table_id = 'an_operational_dash'` });
+  const lm = (rows as Record<string, unknown>[])[0]?.lm;
+  const v = typeof lm === 'object' && lm !== null && 'value' in lm ? (lm as { value: string }).value : lm;
+  return v ? new Date(String(v)).toISOString() : null;
+}
 export const KPI_DAILY_WINDOW_DAYS = 95; // refunds and late re-attributions keep landing for weeks
 
 /**
@@ -200,6 +208,7 @@ export const KPI_DAILY_WINDOW_DAYS = 95; // refunds and late re-attributions kee
  */
 export async function runDailyKpiSync(today: string, opts: { budgetMs?: number; maxHealDays?: number } = {}) {
   const t0 = Date.now();
+  const bqModified = await fetchBigQueryModified();
   const budgetMs = opts.budgetMs ?? 220_000;
   const maxHealDays = opts.maxHealDays ?? 62;
   const windowStart = addDays(today, -KPI_DAILY_WINDOW_DAYS);
@@ -231,5 +240,5 @@ export async function runDailyKpiSync(today: string, opts: { budgetMs?: number; 
   } else {
     heal.skipped = 'presupuesto de tiempo agotado antes de verificar';
   }
-  return { window: { start: window.start, end: window.end, rows: window.rows }, rotated, heal, seconds: Math.round((Date.now() - t0) / 1000) };
+  return { bqModified, window: { start: window.start, end: window.end, rows: window.rows }, rotated, heal, seconds: Math.round((Date.now() - t0) / 1000) };
 }
