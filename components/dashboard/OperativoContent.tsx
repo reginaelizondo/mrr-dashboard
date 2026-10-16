@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import {
   ResponsiveContainer, ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -10,7 +10,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
 import { MultiSelect } from '@/components/ui/multi-select';
 import { cn } from '@/lib/utils';
-import type { KpiValues, Grain, ReplicaStatus, Definition } from '@/lib/kpi/replica';
+import type { KpiValues, Grain, ReplicaStatus, Definition, StoreCoverage, GuardSnapshot } from '@/lib/kpi/replica';
+import { LOOKER_DIFFERENCES } from '@/lib/kpi/looker-differences';
 import type { Preset } from '@/app/(dashboard)/dashboard/operativo/page';
 
 // ─── Tipos que recibe del servidor ───────────────────────────────────────────
@@ -26,6 +27,8 @@ export interface OperativoData {
   groupSeries: Record<'os' | 'country' | 'kinedu_language' | 'kinedu_region', { period: string; grp: string; spend: number }[]>;
   dims: { dim: string; value: string; signups: number }[];
   status: ReplicaStatus;
+  storeCoverage: StoreCoverage[];
+  guard: GuardSnapshot | null;
   generatedAt: string; // ISO, hora del servidor al generar la página
 }
 
@@ -214,6 +217,8 @@ export function OperativoContent({ data }: { data: OperativoData }) {
         </CardContent>
       </Card>
 
+      {def === 'fixed' && <CalibrationBanner coverage={data.storeCoverage} kpis={cur} />}
+
       {/* Scorecards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {SCORECARDS.map((c) => {
@@ -299,6 +304,8 @@ export function OperativoContent({ data }: { data: OperativoData }) {
 
         <TabsContent value="audit">
           <AuditPanel status={data.status} cur={data.totals.current} generatedAt={data.generatedAt} />
+          <GuardPanel guard={data.guard} />
+          <DifferencesPanel />
         </TabsContent>
       </Tabs>
     </div>
@@ -322,7 +329,9 @@ function KpiTable({ rows, grain, def, cols, total }: { rows: PeriodRow[]; grain:
           <TableBody>
             {ordered.map((r) => (
               <TableRow key={r.period}>
-                <TableCell className="whitespace-nowrap font-medium">{periodLabel(r.period, grain)}</TableCell>
+                <TableCell className="whitespace-nowrap font-medium" title={def === 'fixed' && r.fixed.calibration.estimatedShare > 0.0005 ? `${(r.fixed.calibration.estimatedShare * 100).toFixed(0)} % de las ventas de este periodo es estimado (tienda sin reporte definitivo)` : undefined}>
+                  {def === 'fixed' && r.fixed.calibration.estimatedShare > 0.0005 ? <span className="text-amber-600 mr-1">≈</span> : null}{periodLabel(r.period, grain)}
+                </TableCell>
                 {cols.map((c) => <TableCell key={c.key} className="text-right tabular-nums">{fmt(r[def][c.key] as number | null, c.fmt)}</TableCell>)}
               </TableRow>
             ))}
@@ -332,7 +341,7 @@ function KpiTable({ rows, grain, def, cols, total }: { rows: PeriodRow[]; grain:
             </TableRow>
           </TableBody>
         </Table>
-        <p className="text-[11px] text-muted-foreground mt-2">La fila Total recalcula cada KPI sobre las sumas del periodo completo (como el Looker), no promedia las filas.</p>
+        <p className="text-[11px] text-muted-foreground mt-2">La fila Total recalcula cada KPI sobre las sumas del periodo completo (como el Looker), no promedia las filas.{def === 'fixed' ? ' ≈ = el periodo incluye ventas estimadas (la tienda aún no publica su reporte definitivo).' : ''}</p>
       </CardContent>
     </Card>
   );
@@ -481,3 +490,115 @@ function AuditPanel({ status, cur, generatedAt }: { status: ReplicaStatus; cur: 
     </div>
   );
 }
+
+// ─── Aviso de calibración (Corregido) ─────────────────────────────────────────
+
+const STORE_LABEL: Record<StoreCoverage['store'], string> = { apple: 'Apple', google: 'Google', stripe: 'Stripe' };
+const shortDay = (d: string) => { const x = new Date(d + 'T00:00:00Z'); return `${x.getUTCDate()} ${MONTHS[x.getUTCMonth()].toLowerCase()}`; };
+function dayRanges(days: string[]): string {
+  const out: string[] = []; let s: string | null = null; let prev: string | null = null;
+  const next = (d: string) => new Date(Date.parse(d + 'T00:00:00Z') + 86_400_000).toISOString().slice(0, 10);
+  for (const d of [...days].sort()) {
+    if (s && prev && next(prev) === d) { prev = d; continue; }
+    if (s) out.push(s === prev ? shortDay(s) : `${shortDay(s)}–${shortDay(prev!)}`);
+    s = d; prev = d;
+  }
+  if (s) out.push(s === prev ? shortDay(s) : `${shortDay(s)}–${shortDay(prev!)}`);
+  return out.join(', ');
+}
+
+function CalibrationBanner({ coverage, kpis }: { coverage: StoreCoverage[]; kpis: KpiValues }) {
+  if (!kpis.calibration.calibrated) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900">
+        Corregido con tasas fijas: la calibración con datos de tienda (migración 037) todavía no está activa.
+      </div>
+    );
+  }
+  const items = coverage.map((c) => {
+    // Solo días recientes sin reporte (después del último definitivo); los anteriores a la cobertura van como "sin calibrar".
+    const recentMissing = c.lastFinal ? c.missingDays.filter((d) => d > c.lastFinal!) : [];
+    return { c, recentMissing };
+  });
+  const est = items.filter((x) => x.c.estimatedDays.length || x.recentMissing.length);
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-900 space-y-1">
+      <p>
+        <b>Corregido calibrado con tienda.</b> Real hasta: {items.map(({ c }) => `${STORE_LABEL[c.store]} ${c.lastFinal ? shortDay(c.lastFinal) : '—'}`).join(' · ')}.
+        {kpis.calibration.estimatedShare > 0.0005 ? ` ${(kpis.calibration.estimatedShare * 100).toFixed(1)} % de las ventas de este periodo es estimado.` : ' Todo el periodo usa reportes definitivos.'}
+        {kpis.calibration.uncalibratedShare > 0.0005 ? ` ${(kpis.calibration.uncalibratedShare * 100).toFixed(1)} % sin calibrar (antes de la cobertura de tienda o procesadores sin reporte: tasas fijas).` : ''}
+      </p>
+      {est.length > 0 && (
+        <p>
+          <b>Días estimados:</b>{' '}
+          {est.map(({ c, recentMissing }) => [
+            recentMissing.length ? `${STORE_LABEL[c.store]} ${dayRanges(recentMissing)} (aún no publica: factor de los 7 días previos)` : null,
+            c.estimatedDays.length ? `${STORE_LABEL[c.store]} ${dayRanges(c.estimatedDays)} (${c.store === 'google' ? 'mes en curso: reporte diario + FX y comisión del último earnings' : 'reporte preliminar'})` : null,
+          ].filter(Boolean).join(' · ')).join(' · ')}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ─── Guardia de KPIs y registro de diferencias (pestaña Auditoría) ───────────
+
+const gIcon = (s: 'ok' | 'warn' | 'alarm') => (s === 'ok' ? '✅' : s === 'warn' ? '⚠️' : '🔴');
+
+function GuardPanel({ guard }: { guard: GuardSnapshot | null }) {
+  return (
+    <Card className="mt-4">
+      <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold text-[#0E3687]">Guardia de KPIs (auditor automático, cada hora)</CardTitle></CardHeader>
+      <CardContent className="text-sm space-y-1">
+        {!guard ? <p className="text-muted-foreground">Aún no hay corridas registradas (la tabla se crea con la migración 037).</p> : (
+          <>
+            <p className="text-xs text-muted-foreground">Última corrida: {new Date(guard.ranAt).toLocaleString('es-MX', { timeZone: 'America/Mexico_City' })} · {gIcon(guard.status)} {guard.checks.filter((c) => c.status === 'ok').length}/{guard.checks.length} chequeos en verde · avisa a Slack solo cuando algo cambia de estado</p>
+            {guard.checks.map((c) => <p key={c.id}>{gIcon(c.status)} <span className="text-muted-foreground">[{c.area}]</span> {c.line}</p>)}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+const STATUS_LABEL: Record<string, string> = { 'resuelto-en-looker': '✅ resuelto en el Looker', 'pendiente-tech': '⏳ pendiente de tech', 'solo-corregido': '🟦 solo en el Corregido', 'pendiente-decision': '❓ pendiente de decisión', documentado: '📄 documentado' };
+const KIND_LABEL: Record<string, string> = { correccion: 'Corrección', inconsistencia: 'Inconsistencia del Looker', alcance: 'Por diseño', dato: 'Fuente de datos' };
+
+function DifferencesPanel() {
+  const [open, setOpen] = useState<string | null>(null);
+  return (
+    <Card className="mt-4">
+      <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold text-[#0E3687]">Diferencias vs Looker ({LOOKER_DIFFERENCES.length}) — registro completo, también en docs/DIFERENCIAS-LOOKER.md</CardTitle></CardHeader>
+      <CardContent className="overflow-x-auto">
+        <Table>
+          <TableHeader><TableRow><TableHead>Diferencia</TableHead><TableHead>Tipo</TableHead><TableHead>Estado</TableHead><TableHead>KPIs</TableHead><TableHead>Impacto</TableHead></TableRow></TableHeader>
+          <TableBody>
+            {LOOKER_DIFFERENCES.map((d) => (
+              <Fragment key={d.id}>
+                <TableRow className="cursor-pointer hover:bg-muted/40" onClick={() => setOpen(open === d.id ? null : d.id)}>
+                  <TableCell className="font-medium">{open === d.id ? '▾' : '▸'} {d.title}</TableCell>
+                  <TableCell className="whitespace-nowrap text-xs">{KIND_LABEL[d.kind]}</TableCell>
+                  <TableCell className="whitespace-nowrap text-xs">{STATUS_LABEL[d.status]}</TableCell>
+                  <TableCell className="text-xs">{d.kpis.join(', ')}</TableCell>
+                  <TableCell className="text-xs">{d.impact}</TableCell>
+                </TableRow>
+                {open === d.id && (
+                  <TableRow className="bg-muted/20">
+                    <TableCell colSpan={5} className="text-xs space-y-1.5 whitespace-normal">
+                      <p><b>Looker:</b> {d.looker}</p>
+                      <p><b>Dashboard (Corregido):</b> {d.corregido}</p>
+                      <p><b>Evidencia:</b> {d.evidence}</p>
+                      {d.decision && <p><b>Decisión:</b> {d.decision}</p>}
+                      <p className="text-muted-foreground">Encontrado: {d.found}{d.code ? ` · código: ${d.code}` : ''}</p>
+                    </TableCell>
+                  </TableRow>
+                )}
+              </Fragment>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  );
+}
+

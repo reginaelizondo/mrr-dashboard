@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
 import { OperativoContent, type OperativoData, type PeriodRow, type GroupRow } from '@/components/dashboard/OperativoContent';
-import { fetchAgg, fetchDimValues, fetchReplicaStatus, computeKpis, sumAgg, type Grain, type ReplicaFilters, type AggRow, type ReplicaStatus } from '@/lib/kpi/replica';
+import { fetchAgg, fetchDimValues, fetchReplicaStatus, fetchStoreCoverage, fetchLastGuard, computeKpis, sumAgg, type Grain, type ReplicaFilters, type AggRow, type ReplicaStatus } from '@/lib/kpi/replica';
 import { todayMx, addDays, mondayOf } from '@/lib/kpi/period';
 
 /**
@@ -71,7 +71,7 @@ export default async function OperativoPage({ searchParams }: { searchParams: Pr
   let error: string | null = null;
   let data: OperativoData | null = null;
   try {
-    const [series, current, previous, byOs, byCountry, byLang, byRegion, seriesOs, seriesLang, seriesRegion, seriesCountry, dims, status] = await Promise.all([
+    const [series, current, previous, byOs, byCountry, byLang, byRegion, seriesOs, seriesLang, seriesRegion, seriesCountry, dims, status, storeCoverage, guard] = await Promise.all([
       fetchAgg(filters, range.grain),
       fetchAgg(filters, 'total'),
       fetchAgg(prior, 'total'),
@@ -86,6 +86,8 @@ export default async function OperativoPage({ searchParams }: { searchParams: Pr
       fetchDimValues(),
       // El estado de la réplica es informativo: si falla, la página carga igual.
       fetchReplicaStatus().catch((): ReplicaStatus => ({ minDate: null, maxDate: null, rows: 0, lastSyncedAt: null, lastJob: null })),
+      fetchStoreCoverage(range.start, range.end).catch(() => []),
+      fetchLastGuard().catch(() => null),
     ]);
     const cur = sumAgg(current, 'total'); const prev = sumAgg(previous, 'total');
     data = {
@@ -102,6 +104,8 @@ export default async function OperativoPage({ searchParams }: { searchParams: Pr
       },
       dims: dims.map((d) => ({ dim: d.dim, value: d.value, signups: d.signups })),
       status,
+      storeCoverage,
+      guard,
       generatedAt: new Date().toISOString(),
     };
   } catch (e) {

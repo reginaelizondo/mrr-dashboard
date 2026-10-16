@@ -80,7 +80,11 @@ const MAP: Record<string, ['looker' | 'fixed', string]> = {
     const rep = { looker: computeKpis(agg, 'looker'), fixed: computeKpis(agg, 'fixed') };
 
     const diffs: string[] = [];
+    // Con la calibración activa (migración 037) los montos del Corregido salen de las tiendas, no de la fórmula
+    // de BigQuery: se validan en scripts/audit-kpis.ts (calibrado vs store_daily), no aquí.
+    const CAL_MONEY = new Set(['nsSales', 'totalSales', 'netSales', 'mobileCm', 'totalContribution', 'contributionMarginPct', 'arpu', 'firstTicketCac']);
     for (const [k, [def, field]] of Object.entries(MAP)) {
+      if (def === 'fixed' && rep.fixed.calibration.calibrated && CAL_MONEY.has(k)) continue;
       const a = Number(bqRow[k] ?? 0);
       const bRaw = (rep[def] as unknown as Record<string, number | null>)[field];
       const b = bRaw ?? 0;

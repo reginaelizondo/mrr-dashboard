@@ -43,7 +43,7 @@ const fpct = (p: number | null) => (p === null ? 'n/d' : `${p >= 0 ? '+' : '−'
 const icon = (s: Status) => (s === 'ok' ? '✅' : s === 'warn' ? '⚠️' : s === 'alarm' ? '🔴' : 'ℹ️');
 const worst = (xs: Status[]): Status => (xs.includes('alarm') ? 'alarm' : xs.includes('warn') ? 'warn' : xs.includes('info') ? 'info' : 'ok');
 
-function parseCsv(txt: string): string[][] {
+export function parseCsv(txt: string): string[][] {
   const rows: string[][] = []; let row: string[] = [], f = '', q = false;
   for (let i = 0; i < txt.length; i++) {
     const c = txt[i];
@@ -61,7 +61,7 @@ function parseCsv(txt: string): string[][] {
 interface DayAgg { gross: number; n: number; refunds: number; refundN: number }
 const empty = (): DayAgg => ({ gross: 0, n: 0, refunds: 0, refundN: 0 });
 
-async function fetchAppleFx(): Promise<(cur: string, ym: string) => number> {
+export async function fetchAppleFx(): Promise<(cur: string, ym: string) => number> {
   const sb = createServerClient();
   const { data } = await sb.from('apple_fx_rates').select('year_month,currency,rate');
   const map = new Map<string, number>();
@@ -95,12 +95,12 @@ export async function fetchAppleDaily(start: string, end: string): Promise<{ day
 }
 
 // ---- Google ---------------------------------------------------------------------------
-function gcs() {
+export function gcs() {
   const creds = JSON.parse(Buffer.from(process.env.GCP_SERVICE_ACCOUNT_KEY_B64!, 'base64').toString('utf-8'));
   return new Storage({ credentials: creds }).bucket(process.env.GOOGLE_PLAY_BUCKET!);
 }
 
-async function downloadCsvFromZip(name: string): Promise<string[][]> {
+export async function downloadCsvFromZip(name: string): Promise<string[][]> {
   const [buf] = await gcs().file(name).download();
   const entries = unzipSync(new Uint8Array(buf));
   const csv = Object.keys(entries).find((n) => n.toLowerCase().endsWith('.csv'));
@@ -332,6 +332,12 @@ export async function runStoreAudit(opts: { today?: string } = {}): Promise<Audi
 
   // Réplica del dashboard (kpi_daily): último job diario y su auto-reparación contra BigQuery.
   checks.push(await replicaCheck(today));
+  // Guardia de KPIs (auditor automático horario): resumen de su última corrida.
+  try {
+    const { lastGuardSummary } = await import('@/lib/audit/kpi-guard');
+    const g = await lastGuardSummary();
+    if (g) checks.push({ store: 'Guardia', status: g.includes('✅') ? 'ok' : g.includes('🔴') ? 'alarm' : 'warn', line: g });
+  } catch { /* tabla aún no creada (migración 037) */ }
 
   const status = worst(checks.map((c) => c.status));
   const alarms = checks.filter((c) => c.status === 'alarm').length, warns = checks.filter((c) => c.status === 'warn').length;

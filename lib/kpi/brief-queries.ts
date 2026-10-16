@@ -35,6 +35,28 @@ export function toNumber(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// ---- Corregido calibrado con tienda (mismo número que el dashboard Operativo) --------------------
+// Los montos del Corregido salen de la réplica calibrada (migración 037) cuando está activa; el resto de
+// los KPIs (conteos, tasas, CAC, versiones "…Looker") siguen viniendo de BigQuery con formulas.ts.
+const CALIBRATED_KEYS: KPIKey[] = ['nsSales', 'totalSales', 'netSales', 'mobileCm', 'totalContribution', 'contributionMarginPct', 'arpu', 'firstTicketCac'];
+type Replica = typeof import('./replica');
+let replicaMod: Replica | null = null;
+const replica = async () => (replicaMod ??= await import('./replica'));
+
+function overlay(values: KPIValues, k: import('./replica').KpiValues): KPIValues {
+  if (!k.calibration.calibrated) return values;
+  const out = { ...values };
+  for (const key of CALIBRATED_KEYS) out[key] = (k as unknown as Record<string, number | null>)[key] ?? null;
+  return out;
+}
+
+async function overlayPeriods(out: Record<string, KPIValues>, periods: NamedPeriod[]): Promise<void> {
+  try {
+    const r = await replica();
+    await Promise.all(periods.map(async (p) => { out[p.key] = overlay(out[p.key], r.computeKpis(r.sumAgg(await r.fetchAgg({ start: p.start, end: p.end }, 'total')), 'fixed')); }));
+  } catch (e) { console.error('[brief] calibración no disponible, se usa BigQuery:', e instanceof Error ? e.message : e); }
+}
+
 export function emptyValues(): KPIValues {
   const out = {} as KPIValues;
   for (const k of KPI_KEYS) out[k] = null;
@@ -82,6 +104,7 @@ ${SELECT_KPIS}
   for (const row of rows as Record<string, unknown>[]) {
     out[String(row.period_key)] = rowToValues(row);
   }
+  await overlayPeriods(out, periods);
   return out;
 }
 
@@ -110,6 +133,15 @@ ${SELECT_KPIS}
     out[pk] ??= {};
     out[pk][String(row.dimension)] = rowToValues(row);
   }
+  try {
+    const r = await replica();
+    await Promise.all(periods.map(async (p) => {
+      for (const a of await r.fetchAgg({ start: p.start, end: p.end }, 'total', dimension)) {
+        const seg = a.grp === 'null' ? '(null)' : a.grp;
+        if (out[p.key][seg]) out[p.key][seg] = overlay(out[p.key][seg], r.computeKpis(a, 'fixed'));
+      }
+    }));
+  } catch (e) { console.error('[brief] calibración por dimensión no disponible:', e instanceof Error ? e.message : e); }
   return out;
 }
 
@@ -129,10 +161,15 @@ ${SELECT_KPIS}
     ORDER BY day
   `;
   const [rows] = await bq.query({ query, params: { start, end } });
-  return (rows as Record<string, unknown>[]).map((row) => ({
+  const series = (rows as Record<string, unknown>[]).map((row) => ({
     date: String(row.day),
     ...rowToValues(row),
   }));
+  try {
+    const r = await replica();
+    const byDay = new Map((await r.fetchAgg({ start, end }, 'day')).map((a) => [a.period, a]));
+    return series.map((d) => { const a = byDay.get(d.date); return a ? { ...overlay(d, r.computeKpis(a, 'fixed')), date: d.date } : d; });
+  } catch { return series; }
 }
 
 /** When dbt last rebuilt the table (ISO UTC string), or null if unavailable. */

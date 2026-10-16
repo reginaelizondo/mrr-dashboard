@@ -1,5 +1,10 @@
 # Fuentes de los KPIs operativos — auditoría del 12 de octubre de 2026
 
+> **Documentación relacionada (2026-10-16):** `docs/DIFERENCIAS-LOOKER.md` (todas las diferencias Looker vs
+> dashboard, generado desde `lib/kpi/looker-differences.ts`) · `docs/OPERATIVO.md` (arquitectura del dashboard
+> Operativo, tablas, crons, calibración con tiendas) · `docs/AUDITORIA.md` (auditor automático y semanal).
+
+
 Qué tabla alimenta cada indicador del brief diario, con qué fórmula, y cómo se
 validó contra los dashboards de Looker Studio que usa el equipo.
 

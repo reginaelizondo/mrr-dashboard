@@ -43,6 +43,9 @@ export interface AggRow {
   web_ren: number; web_ns: number; web_rsd: number; web_ren_s: number; web_ns_s: number; web_rsd_s: number;
   unk_ren: number; unk_ns: number; unk_rsd: number; unk_ren_s: number; unk_ns_s: number; unk_rsd_s: number;
   stripe_yr_sales: number; // migración 036; 0 si aún no existe
+  // Corregido calibrado con tienda (migración 037; 0 si aún no existe)
+  cal_gross: number; cal_ns: number; cal_other: number; cal_net: number; cal_ref_gross: number; cal_ref_net: number;
+  cal_est_gross: number; cal_uncal_gross: number;
 }
 
 const AGG_NUMERIC_KEYS = [
@@ -55,6 +58,7 @@ const AGG_NUMERIC_KEYS = [
   'web_ren', 'web_ns', 'web_rsd', 'web_ren_s', 'web_ns_s', 'web_rsd_s',
   'unk_ren', 'unk_ns', 'unk_rsd', 'unk_ren_s', 'unk_ns_s', 'unk_rsd_s',
   'stripe_yr_sales',
+  'cal_gross', 'cal_ns', 'cal_other', 'cal_net', 'cal_ref_gross', 'cal_ref_net', 'cal_est_gross', 'cal_uncal_gross',
 ] as const;
 type AggNumericKey = (typeof AGG_NUMERIC_KEYS)[number];
 
@@ -130,17 +134,23 @@ export interface KpiValues {
   // Márgenes
   mobileCm: number; totalContribution: number; contributionMarginPct: number | null; newSubsMargin: number | null;
   salesOverSpend: number | null; newSalesOverSpend: number | null; newSalesOverSpendNet: number | null; contributionOverSpend: number | null;
+  // Calidad del Corregido: qué parte de las ventas brutas usa factores de tienda reales, estimados o ninguno.
+  calibration: { calibrated: boolean; estimatedShare: number; uncalibratedShare: number };
 }
 
 /** Calcula todos los KPIs de una fila agregada bajo una definición. */
 export function computeKpis(r: AggRow, def: Definition): KpiValues {
   const newSubs = r.new_subscriptions + r.num_of_refunds_sale_date;
-  const nsSales = r.new_subscriptions_sales + r.refunds_total_amount_sale_date;
-  const totalSales = r.renewals_sales + r.renewals_sales_yearly_ios + r.new_subscriptions_sales + r.other_sales
-    + r.refunds_total_amount_sale_date - r.refunds_total_amount_refund_date;
-  const arpu = safeDiv(nsSales + r.other_sales, newSubs + r.other_purchases);
+  const grossSaleDate = r.renewals_sales + r.renewals_sales_yearly_ios + r.new_subscriptions_sales + r.other_sales + r.refunds_total_amount_sale_date;
+  // Corregido calibrado (migración 037): ventas en la base de cada tienda (lo que pagó el cliente y lo que
+  // depositó la tienda, a su tipo de cambio). Sin la 037 (cal_gross = 0) cae al modelo de tasas fijas.
+  const calibrated = def === 'fixed' && r.cal_gross !== 0;
+  const nsSales = calibrated ? r.cal_ns : r.new_subscriptions_sales + r.refunds_total_amount_sale_date;
+  const otherSales = calibrated ? r.cal_other : r.other_sales;
+  const totalSales = calibrated ? r.cal_gross - r.cal_ref_gross : grossSaleDate - r.refunds_total_amount_refund_date;
+  const arpu = safeDiv(nsSales + otherSales, newSubs + r.other_purchases);
   const cac = safeDiv(r.spend, newSubs);
-  const ns = netSales(r, def);
+  const ns = calibrated ? r.cal_net - r.cal_ref_net : netSales(r, def);
   const mobileCm = ns - r.spend;
   // Ambas definiciones: TOTAL CONTRIBUTION = MOBILE CONTRIBUTION MARGIN = Net Sales − spend.
   const totalContribution = mobileCm;
@@ -170,7 +180,7 @@ export function computeKpis(r: AggRow, def: Definition): KpiValues {
     arpuMinusCac: arpu !== null && cac !== null ? arpu - cac : null,
     usersPerPurchase: safeDiv(r.signups, purchasesNonFt), usersPerFtConverted: safeDiv(r.signups, r.fts_converted),
     nsSales, renewalsSales: r.renewals_sales, renewalsSalesYearlyIos: r.renewals_sales_yearly_ios,
-    totalRenewalSales: r.renewals_sales + r.renewals_sales_yearly_ios, otherSales: r.other_sales,
+    totalRenewalSales: r.renewals_sales + r.renewals_sales_yearly_ios, otherSales,
     totalSales, netSales: ns, refundsAmount: r.refunds_total_amount_refund_date,
     mobileCm, totalContribution,
     contributionMarginPct: safeDiv(totalContribution, totalSales),
@@ -181,6 +191,11 @@ export function computeKpis(r: AggRow, def: Definition): KpiValues {
     // reembolsos; la semanal usa NS Sales. Mismo nombre, dos campos (verificado 13/13 meses).
     newSalesOverSpendNet: safeDiv(r.new_subscriptions_sales, r.spend),
     contributionOverSpend: safeDiv(totalContribution, r.spend),
+    calibration: {
+      calibrated,
+      estimatedShare: calibrated && grossSaleDate ? r.cal_est_gross / grossSaleDate : 0,
+      uncalibratedShare: calibrated && grossSaleDate ? r.cal_uncal_gross / grossSaleDate : def === 'fixed' ? 1 : 0,
+    },
   };
 }
 
@@ -269,3 +284,45 @@ export async function fetchReplicaStatus(): Promise<ReplicaStatus> {
     lastSyncedAt: log?.completed_at ?? maxRow?.synced_at ?? null, lastJob,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Cobertura de tienda (qué días del Corregido son reales y cuáles estimados)
+// ---------------------------------------------------------------------------
+
+export interface StoreCoverage {
+  store: 'apple' | 'google' | 'stripe';
+  lastFinal: string | null;          // último día con reporte definitivo
+  estimatedDays: string[];           // días con reporte estimado (p. ej. Google del mes en curso)
+  missingDays: string[];             // días sin reporte todavía (el Corregido usa el factor de días previos)
+}
+
+/** Para [start, end]: por tienda, días reales, estimados y sin reporte. Vacío si no existe la migración 037. */
+export async function fetchStoreCoverage(start: string, end: string): Promise<StoreCoverage[]> {
+  const supabase = createServerClient();
+  const { data, error } = await supabase.rpc('store_coverage', { p_from: start });
+  if (error) return [];
+  const rows = (data ?? []) as Array<{ store: StoreCoverage['store']; date: string; status: string }>;
+  const out: StoreCoverage[] = [];
+  for (const store of ['apple', 'google', 'stripe'] as const) {
+    const mine = rows.filter((r) => r.store === store && r.date <= end);
+    const byDate = new Map(mine.map((r) => [String(r.date), r.status]));
+    const finals = mine.filter((r) => r.status === 'final').map((r) => String(r.date)).sort();
+    const estimatedDays: string[] = []; const missingDays: string[] = [];
+    for (let d = start; d <= end; d = new Date(Date.parse(d + 'T00:00:00Z') + 86_400_000).toISOString().slice(0, 10)) {
+      const st = byDate.get(d);
+      if (st === 'estimado') estimatedDays.push(d); else if (!st) missingDays.push(d);
+    }
+    out.push({ store, lastFinal: finals.length ? finals[finals.length - 1] : null, estimatedDays, missingDays });
+  }
+  return out;
+}
+
+export interface GuardSnapshot { ranAt: string; status: 'ok' | 'warn' | 'alarm'; checks: Array<{ id: string; area: string; status: 'ok' | 'warn' | 'alarm'; line: string }> }
+
+/** Última corrida de la Guardia de KPIs (null si la tabla aún no existe). */
+export async function fetchLastGuard(): Promise<GuardSnapshot | null> {
+  const { data, error } = await createServerClient().from('kpi_guard_runs').select('ran_at,status,checks').order('ran_at', { ascending: false }).limit(1);
+  if (error || !data?.length) return null;
+  return { ranAt: String(data[0].ran_at), status: data[0].status, checks: data[0].checks };
+}
+
