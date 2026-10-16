@@ -13,7 +13,7 @@ BigQuery an_operational_dash (dbt, ≈09:01 · 11:02 · 13:01 MX)
    ▼
 Supabase kpi_daily  ── cambio atómico por mes (kpi_daily_stage → kpi_daily_swap) ──┐
                                                                                    │ recalcula
-Apple apple_sales_daily · Google GCS earnings/sales · Stripe API                   │
+Apple apple_sales_daily · Google transactions + GCS earnings/sales · Stripe API                   │
    │  cron store-daily cada hora (10 días) + diario 15:40 UTC (75 días)            ▼
    ▼                                                                kpi_calibration (factores tienda/BigQuery)
 Supabase store_daily (día × tienda × país, USD de la propia tienda) ─────────────▶ │
@@ -83,5 +83,7 @@ Supabase store_daily (día × tienda × país, USD de la propia tienda) ──�
   las filas de BigQuery, que conservan el OS, país, idioma, red y plan.
 - **Días estimados:** si la tienda aún no publica (Apple 1–2 días) o el dato es preliminar (Google del mes en
   curso), el dashboard lo dice explícitamente: aviso con los días por tienda y "≈" en las filas afectadas.
-- **Sin calibrar:** antes de la cobertura (Apple < 2025-04-07, Google < 2026-01) y procesadores sin reporte
+- **Google:** cobros desde `transactions` del MRR (une las cuentas SAPI-MXN e INC-USD de la migración ene–feb 2026);
+  reembolsos del earnings o del reporte diario del mes en curso.
+- **Sin calibrar:** antes de la cobertura (Apple < 2025-04-07) y procesadores sin reporte
   (PayPal, other_sales, LearnWorlds ≈ 0.4 %): tasas fijas del Corregido; el aviso muestra el porcentaje.

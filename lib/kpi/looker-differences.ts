@@ -78,7 +78,7 @@ export const LOOKER_DIFFERENCES: LookerDifference[] = [
     kind: 'correccion', status: 'pendiente-tech',
     kpis: ['Total Sales', 'NS Sales', 'Net Sales', 'TOTAL CONTRIBUTION', 'ARPU'],
     looker: 'Registra el monto cobrado (con impuesto) y lo convierte a USD con un tipo de cambio ≈ 8–10 % más fuerte que el de Google (MX 15.5 vs 17.17; BR 4.74 vs 5.14). Desde 2026 Google retiene y entera el IVA.',
-    corregido: 'Calibrado con los reportes de Google: earnings mensual (exacto: cobro, comisión e impuesto ya en USD al FX de Google) y, en el mes en curso, reporte de ventas diario × FX y neto/cobrado del último earnings (marcado como estimado). Total Sales se mantiene CON impuesto (misma base que el Looker usa para Apple); Net Sales = lo que deposita Google.',
+    corregido: 'Calibrado con los cobros de Google de la tabla transactions del MRR (une la cuenta vieja de SAPI en MXN y la nueva de INC en USD de la migración ene–feb 2026; bruto, comisión y neto por cobro) y reembolsos del earnings mensual o, en el mes en curso, del reporte diario (marcado como estimado). Total Sales se mantiene CON impuesto (misma base que el Looker usa para Apple); Net Sales = lo que deposita Google.',
     impact: 'Looker ≈ +8 % sobre lo cobrado por Google y ≈ +15 % sobre el precio sin impuesto (8–14 oct).',
     evidence: 'Auditoría diaria tiendas vs Looker (Google en banda 3–22 %); análisis por país y SKU con el FX de Google (2026-10-13).',
     found: '2026-10-13', decision: 'Base de Total Sales con impuesto: se mantiene la del Looker (2026-10-16). Corrección del Looker pendiente con tech/Finanzas.', code: 'lib/sync/store-daily.ts fetchGoogleCells · migración 037',
@@ -91,7 +91,7 @@ export const LOOKER_DIFFERENCES: LookerDifference[] = [
     looker: 'Montos con el FX de la tabla de BigQuery y comisiones fijas por OS: iOS 0.7, Android 0.85, Web/Unknown 0.98, renovaciones anuales iOS 0.85, menos 6 % de impuesto en iOS/Android.',
     corregido: 'Por día × procesador × país, factor = lo que reporta la tienda / BigQuery (ventana de 7 días; si el país tiene < $50 se usa el del procesador). Apple: Customer Price y Developer Proceeds del reporte diario; Google: earnings/reporte de ventas; Stripe: API (monto y neto después de comisión). Mantiene la atribución por OS del usuario (decisión de negocio) y todos los desgloses (país, idioma, OS, red). Días sin reporte definitivo se marcan "estimado" en el dashboard.',
     impact: 'Se mide en la Guardia (calibración vs tiendas, 4 semanas, ±3 %).',
-    evidence: 'Cobertura: Apple desde 2025-04-07, Google desde 2026-01, Stripe completo. Antes de eso o en procesadores sin reporte (PayPal, other_sales, LearnWorlds ≈ 0.4 % de ventas): tasas fijas del Corregido.',
+    evidence: 'Cobertura: Apple desde 2025-04-07 (reporte diario), Google desde 2022 (transactions del MRR; el bucket GCS solo tiene la cuenta nueva: enero 2026 salía con $3K en vez de $46K), Stripe completo (API). Antes de eso o en procesadores sin reporte (PayPal, other_sales, LearnWorlds ≈ 0.4 % de ventas): tasas fijas del Corregido.',
     found: '2026-10-15', decision: 'Pepis: calibración y días recientes como estimado, marcados explícitamente (2026-10-16); atribución por OS se mantiene.', code: 'migración 037 · lib/sync/store-daily.ts · lib/kpi/replica.ts computeKpis',
   },
   {

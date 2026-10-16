@@ -90,7 +90,7 @@ El dashboard tiene dos vistas:
 
 **Qué hace el Looker.** Registra el monto cobrado (con impuesto) y lo convierte a USD con un tipo de cambio ≈ 8–10 % más fuerte que el de Google (MX 15.5 vs 17.17; BR 4.74 vs 5.14). Desde 2026 Google retiene y entera el IVA.
 
-**Qué hace el dashboard (Corregido).** Calibrado con los reportes de Google: earnings mensual (exacto: cobro, comisión e impuesto ya en USD al FX de Google) y, en el mes en curso, reporte de ventas diario × FX y neto/cobrado del último earnings (marcado como estimado). Total Sales se mantiene CON impuesto (misma base que el Looker usa para Apple); Net Sales = lo que deposita Google.
+**Qué hace el dashboard (Corregido).** Calibrado con los cobros de Google de la tabla transactions del MRR (une la cuenta vieja de SAPI en MXN y la nueva de INC en USD de la migración ene–feb 2026; bruto, comisión y neto por cobro) y reembolsos del earnings mensual o, en el mes en curso, del reporte diario (marcado como estimado). Total Sales se mantiene CON impuesto (misma base que el Looker usa para Apple); Net Sales = lo que deposita Google.
 
 **Impacto.** Looker ≈ +8 % sobre lo cobrado por Google y ≈ +15 % sobre el precio sin impuesto (8–14 oct).
 
@@ -112,7 +112,7 @@ El dashboard tiene dos vistas:
 
 **Impacto.** Se mide en la Guardia (calibración vs tiendas, 4 semanas, ±3 %).
 
-**Evidencia.** Cobertura: Apple desde 2025-04-07, Google desde 2026-01, Stripe completo. Antes de eso o en procesadores sin reporte (PayPal, other_sales, LearnWorlds ≈ 0.4 % de ventas): tasas fijas del Corregido.
+**Evidencia.** Cobertura: Apple desde 2025-04-07 (reporte diario), Google desde 2022 (transactions del MRR; el bucket GCS solo tiene la cuenta nueva: enero 2026 salía con $3K en vez de $46K), Stripe completo (API). Antes de eso o en procesadores sin reporte (PayPal, other_sales, LearnWorlds ≈ 0.4 % de ventas): tasas fijas del Corregido.
 
 **Decisión.** Pepis: calibración y días recientes como estimado, marcados explícitamente (2026-10-16); atribución por OS se mantiene.
 

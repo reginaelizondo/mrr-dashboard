@@ -2,17 +2,21 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { BarChart3, LogOut, LayoutDashboard, PieChart, UserMinus, RotateCcw, MessageSquare, MessageSquareWarning, Smile, Boxes, Gauge } from 'lucide-react';
+import { Archive, ChevronDown, BarChart3, LogOut, LayoutDashboard, PieChart, UserMinus, RotateCcw, MessageSquare, MessageSquareWarning, Smile, Boxes, Gauge } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { navItems as navConfig } from '@/lib/nav-config';
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel } from '@/components/ui/dropdown-menu';
 
 const ICONS: Record<string, LucideIcon> = {
   LayoutDashboard, PieChart, UserMinus, RotateCcw, MessageSquare, MessageSquareWarning, Smile, Boxes, Gauge,
 };
 
-const navItems = navConfig.map(item => ({ ...item, icon: ICONS[item.iconName] }));
+const allItems = navConfig.map(item => ({ ...item, icon: ICONS[item.iconName] }));
+// Vistas archivadas: fuera de la barra (siguen disponibles en el menú "Archivadas" y por URL).
+const navItems = allItems.filter(item => !item.archived);
+const archivedItems = allItems.filter(item => item.archived);
 
 export function Navbar() {
   const pathname = usePathname();
@@ -59,6 +63,38 @@ export function Navbar() {
             );
           })}
         </nav>
+
+        {archivedItems.length > 0 && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-2 text-sm whitespace-nowrap rounded-lg transition-all duration-200 ml-1',
+                  archivedItems.some((i) => i.href === pathname) ? 'bg-white/15 text-white font-medium' : 'text-white/50 hover:text-white hover:bg-white/10'
+                )}
+              >
+                <Archive className="h-4 w-4" />
+                Archivadas
+                <ChevronDown className="h-3.5 w-3.5" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuLabel className="text-xs text-muted-foreground">Vistas archivadas</DropdownMenuLabel>
+              {archivedItems.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <DropdownMenuItem key={item.href} asChild>
+                    <Link href={item.href} prefetch={false} className="flex items-center gap-2">
+                      <Icon className="h-4 w-4" />
+                      {item.label}
+                    </Link>
+                  </DropdownMenuItem>
+                );
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
 
         {/* Right side */}
         <div className="ml-auto flex items-center gap-3">

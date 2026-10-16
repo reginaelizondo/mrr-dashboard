@@ -15,9 +15,9 @@ import { monthChunks } from '@/lib/sync/kpi-daily';
  * Fuentes y exactitud:
  *   Apple   apple_sales_daily (reporte diario de App Store Connect, desde 2025-04-07). Customer Price ×
  *           unidades y Developer Proceeds × unidades, a USD con apple_fx_rates. status 'final'.
- *   Google  earnings_YYYYMM (mensual, exacto: cada cobro, comisión e impuesto ya en USD al tipo de cambio
- *           de Google) → 'final'. Mes sin earnings todavía: reporte de ventas diario × FX del último earnings,
- *           y neto = cobrado × (neto/cobrado del último earnings por país) → 'estimado'.
+ *   Google  cobros: tabla `transactions` del sync del MRR (une las cuentas SAPI-MXN e INC-USD de la migración
+ *           ene–feb 2026; desde 2022). Reembolsos: earnings_YYYYMM (exacto) o reporte de ventas del mes en
+ *           curso (estimado). 'final' hasta el último mes con earnings, 'estimado' después.
  *   Stripe  API balance transactions: monto y neto (después de comisión) ya en USD → 'final'.
  *           Día = día de México (UTC−6), igual que la auditoría.
  */
@@ -126,21 +126,53 @@ async function googleSalesCells(file: string, start: string, end: string, fxUsd:
   return [...m.values()];
 }
 
+/**
+ * Google. Cobros desde la tabla `transactions` del MRR (sync de Google: une la cuenta vieja de SAPI, que
+ * liquidaba en MXN, y la nueva de INC en USD desde la migración de ene–feb 2026; bruto, comisión y neto por
+ * cobro en USD, desde 2022). El bucket GCS solo tiene la cuenta nueva: enero 2026 salía con $3K en vez de
+ * $46K. Reembolsos desde el earnings (exacto) o, en el mes en curso, del reporte de ventas (estimado).
+ * Estado: 'final' hasta el último mes con earnings, 'estimado' después.
+ */
 export async function fetchGoogleCells(start: string, end: string): Promise<StoreCell[]> {
+  const sb = createServerClient();
   const earnings = await googleFiles('earnings/', /earnings_(\d{6})/);
   const sales = await googleFiles('sales/', /salesreport_(\d{6})/);
+  const latest = Object.keys(earnings).sort().pop() ?? '000000';
+  const statusOf = (d: string) => (d.slice(0, 7).replace('-', '') <= latest ? 'final' : 'estimado') as 'final' | 'estimado';
+  const m = new Map<string, StoreCell>();
+  const get = (date: string, country: string) => {
+    const k = key(date, country || 'null');
+    let c = m.get(k);
+    if (!c) { c = { date, store: 'google', country: country || 'null', paid_usd: 0, net_usd: 0, refunds_paid_usd: 0, refunds_net_usd: 0, charges: 0, refunds_n: 0, status: statusOf(date), source: 'transactions' }; m.set(k, c); }
+    return c;
+  };
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb.from('transactions').select('transaction_date,country_code,transaction_type,amount_gross,amount_net')
+      .eq('source', 'google').gte('transaction_date', start).lte('transaction_date', end).order('id').range(from, from + 999);
+    if (error) throw new Error(`transactions google: ${error.message}`);
+    for (const r of data ?? []) {
+      const c = get(String(r.transaction_date).slice(0, 10), String(r.country_code || 'null'));
+      if (r.transaction_type === 'charge') { c.paid_usd += Number(r.amount_gross) || 0; c.net_usd += Number(r.amount_net) || 0; c.charges++; }
+      else { c.refunds_paid_usd += Math.abs(Number(r.amount_gross) || 0); c.refunds_net_usd += Math.abs(Number(r.amount_net) || 0); c.refunds_n++; }
+    }
+    if (!data || data.length < 1000) break;
+  }
+  // Reembolsos: la tabla de transacciones solo trae cobros.
   const fxUsd = await fetchGoogleFx();
   const appleFx = await fetchAppleFx();
-  const latest = Object.keys(earnings).sort().pop();
   let lastRatio: Record<string, number> = { '*': 0.85 };
-  if (latest) lastRatio = (await googleEarningsCells(earnings[latest], '9999-01-01', '9999-01-01')).netRatio;
-  const out: StoreCell[] = [];
-  for (const c of monthChunks(start, end)) {
-    const ym = c.start.slice(0, 7).replace('-', '');
-    if (earnings[ym]) out.push(...(await googleEarningsCells(earnings[ym], c.start, c.end)).cells);
-    else if (sales[ym]) out.push(...(await googleSalesCells(sales[ym], c.start, c.end, fxUsd, lastRatio, appleFx)));
+  if (earnings[latest]) lastRatio = (await googleEarningsCells(earnings[latest], '9999-01-01', '9999-01-01')).netRatio;
+  for (const ch of monthChunks(start, end)) {
+    const ym = ch.start.slice(0, 7).replace('-', '');
+    const src = earnings[ym] ? (await googleEarningsCells(earnings[ym], ch.start, ch.end)).cells
+      : sales[ym] ? await googleSalesCells(sales[ym], ch.start, ch.end, fxUsd, lastRatio, appleFx) : [];
+    for (const r of src) {
+      if (!r.refunds_n && !r.refunds_paid_usd) continue;
+      const c = get(r.date, r.country);
+      c.refunds_paid_usd += r.refunds_paid_usd; c.refunds_net_usd += r.refunds_net_usd; c.refunds_n += r.refunds_n;
+    }
   }
-  return out;
+  return [...m.values()];
 }
 
 // ---- Stripe -----------------------------------------------------------------------------
