@@ -2,7 +2,7 @@ import Stripe from 'stripe';
 import { createServerClient } from '@/lib/supabase/server';
 import { addDays } from '@/lib/kpi/period';
 import { gcs, downloadCsvFromZip, fetchAppleFx, fetchGoogleFx } from '@/lib/audit/store-audit';
-import { monthChunks } from '@/lib/sync/kpi-daily';
+import { monthChunks, dayChunks } from '@/lib/sync/kpi-daily';
 
 /**
  * store_daily — lo que cada tienda reporta por día y país, en USD al tipo de cambio de la propia tienda
@@ -204,6 +204,16 @@ export async function fetchStripeCells(start: string, end: string): Promise<Stor
 }
 
 // ---- Escritura + recalibración ---------------------------------------------------------
+
+/** RPC con reintentos: si coincide con otro sync (crons), Supabase puede cortar por statement timeout. */
+export async function rpcWithRetry(fn: string, args: Record<string, unknown>, tries = 3): Promise<void> {
+  for (let i = 1; ; i++) {
+    const { error } = await createServerClient().rpc(fn, args);
+    if (!error) return;
+    if (i >= tries || !/timeout|canceling statement/i.test(error.message)) throw new Error(`${fn} ${JSON.stringify(args)}: ${error.message}`);
+    await new Promise((r) => setTimeout(r, 3000 * i));
+  }
+}
 const FETCH: Record<Store, (s: string, e: string) => Promise<StoreCell[]>> = { apple: fetchAppleCells, google: fetchGoogleCells, stripe: fetchStripeCells };
 const round = (v: number) => Math.round(v * 1e4) / 1e4;
 
@@ -222,10 +232,7 @@ export async function syncStoreDaily(start: string, end: string, stores: Store[]
     }
     result[store] = { cells: rows.length, paid: Math.round(cells.reduce((s, c) => s + c.paid_usd, 0)), net: Math.round(cells.reduce((s, c) => s + c.net_usd, 0)), estimado: cells.filter((c) => c.status === 'estimado').length };
   }
-  for (const c of monthChunks(start, end)) {
-    const { error } = await sb.rpc('refresh_store_calibration', { p_start: c.start, p_end: c.end });
-    if (error) throw new Error(`refresh_store_calibration ${c.start}→${c.end}: ${error.message}`);
-  }
+  for (const c of dayChunks(start, end)) await rpcWithRetry('refresh_store_calibration', { p_start: c.start, p_end: c.end });
   return { start, end, stores: result };
 }
 

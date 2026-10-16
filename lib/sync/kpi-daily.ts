@@ -69,6 +69,19 @@ export function monthChunks(start: string, end: string): Array<{ start: string; 
   return out;
 }
 
+/**
+ * Tramos de ≤ `days` días que no cruzan de mes. El cambio atómico (kpi_daily_swap) recalcula calibración y
+ * rollup dentro de la misma transacción: con meses completos rozaba el timeout de 8 s de Supabase.
+ */
+export function dayChunks(start: string, end: string, days = 10): Array<{ start: string; end: string }> {
+  const out: Array<{ start: string; end: string }> = [];
+  for (const m of monthChunks(start, end)) {
+    let s = m.start;
+    while (s <= m.end) { const e0 = addDays(s, days - 1); const e = e0 < m.end ? e0 : m.end; out.push({ start: s, end: e }); s = addDays(e, 1); }
+  }
+  return out;
+}
+
 /** Recompute the weekly/monthly rollup (kpi_rollup) for the weeks and months touching [start, end]. */
 export async function refreshKpiRollup(start: string, end: string): Promise<number> {
   const supabase = createServerClient();
@@ -100,7 +113,7 @@ export async function syncKpiDaily(start: string, end: string, opts: { rollup?: 
   const atomic = await atomicSwapAvailable();
   const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   let rows = 0; let days = 0;
-  for (const c of monthChunks(start, end)) {
+  for (const c of atomic ? dayChunks(start, end) : monthChunks(start, end)) {
     const chunk = await fetchKpiDailyFromBigQuery(c.start, c.end);
     if (atomic) {
       try {
@@ -108,8 +121,13 @@ export async function syncKpiDaily(start: string, end: string, opts: { rollup?: 
           const { error } = await supabase.from('kpi_daily_stage').insert(chunk.slice(i, i + 1000).map((r) => ({ ...r, run_id: runId })));
           if (error) throw new Error(`kpi_daily_stage insert ${c.start}→${c.end} (batch ${i / 1000}): ${error.message}`);
         }
-        const { error } = await supabase.rpc('kpi_daily_swap', { p_run_id: runId, p_start: c.start, p_end: c.end });
-        if (error) throw new Error(`kpi_daily_swap ${c.start}→${c.end}: ${error.message}`);
+        // Reintento si choca con otro sync (statement timeout): las filas siguen en stage con el mismo run_id.
+        for (let i = 1; ; i++) {
+          const { error } = await supabase.rpc('kpi_daily_swap', { p_run_id: runId, p_start: c.start, p_end: c.end });
+          if (!error) break;
+          if (i >= 3 || !/timeout|canceling statement/i.test(error.message)) throw new Error(`kpi_daily_swap ${c.start}→${c.end}: ${error.message}`);
+          await new Promise((r) => setTimeout(r, 3000 * i));
+        }
       } catch (e) {
         await supabase.from('kpi_daily_stage').delete().eq('run_id', runId);
         throw e;

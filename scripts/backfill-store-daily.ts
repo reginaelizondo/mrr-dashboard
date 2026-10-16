@@ -21,16 +21,14 @@ const args = process.argv.slice(2);
 const opt = (f: string) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : undefined; };
 (async () => {
   const { syncStoreDaily } = await import('../lib/sync/store-daily');
-  const { monthChunks } = await import('../lib/sync/kpi-daily');
+  const { monthChunks, dayChunks } = await import('../lib/sync/kpi-daily');
   const from = opt('--from'); const to = opt('--to');
   if (!from || !to) throw new Error('usa --from YYYY-MM-DD --to YYYY-MM-DD');
   if (args.includes('--recalibrate')) {
-    const { createServerClient } = await import('../lib/supabase/server');
-    const sb = createServerClient();
-    for (const c of monthChunks(from, to)) {
+    const { rpcWithRetry } = await import('../lib/sync/store-daily');
+    for (const c of dayChunks(from, to)) {
       const t0 = Date.now();
-      const { error } = await sb.rpc('refresh_store_calibration', { p_start: c.start, p_end: c.end });
-      if (error) throw new Error(`${c.start}: ${error.message}`);
+      await rpcWithRetry('refresh_store_calibration', { p_start: c.start, p_end: c.end });
       console.log(`recalibrado ${c.start} → ${c.end} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
     }
     return;
