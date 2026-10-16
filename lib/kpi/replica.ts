@@ -42,6 +42,7 @@ export interface AggRow {
   and_ren: number; and_ns: number; and_rsd: number; and_ren_s: number; and_ns_s: number; and_rsd_s: number;
   web_ren: number; web_ns: number; web_rsd: number; web_ren_s: number; web_ns_s: number; web_rsd_s: number;
   unk_ren: number; unk_ns: number; unk_rsd: number; unk_ren_s: number; unk_ns_s: number; unk_rsd_s: number;
+  stripe_yr_sales: number; // migración 036; 0 si aún no existe
 }
 
 const AGG_NUMERIC_KEYS = [
@@ -53,6 +54,7 @@ const AGG_NUMERIC_KEYS = [
   'and_ren', 'and_ns', 'and_rsd', 'and_ren_s', 'and_ns_s', 'and_rsd_s',
   'web_ren', 'web_ns', 'web_rsd', 'web_ren_s', 'web_ns_s', 'web_rsd_s',
   'unk_ren', 'unk_ns', 'unk_rsd', 'unk_ren_s', 'unk_ns_s', 'unk_rsd_s',
+  'stripe_yr_sales',
 ] as const;
 type AggNumericKey = (typeof AGG_NUMERIC_KEYS)[number];
 
@@ -88,8 +90,11 @@ const stripeRsd = (r: AggRow) => r.ios_rsd_s + r.and_rsd_s + r.web_rsd_s + r.unk
 function netSales(r: AggRow, def: Definition): number {
   const gross = (b: Bucket, withRefunds: boolean) =>
     bucket(r, b, 'ren') + bucket(r, b, 'ns') + (withRefunds ? bucket(r, b, 'rsd') : 0);
-  const yearly = r.renewals_sales_yearly_ios;
-  const stripeTerm = (withRefunds: boolean) => (def === 'fixed' && withRefunds ? stripeSubs(r) + stripeRsd(r) : stripeSubs(r)) * 0.965;
+  // Corregido: las renovaciones anuales de iOS cobradas por Stripe salen del término "yearly" (0.85 − 6 %)
+  // y entran al de Stripe (0.965), igual que en formulas.ts.
+  const yearly = def === 'fixed' ? r.renewals_sales_yearly_ios - r.stripe_yr_sales : r.renewals_sales_yearly_ios;
+  const stripeTerm = (withRefunds: boolean) =>
+    (def === 'fixed' ? stripeSubs(r) + r.stripe_yr_sales + (withRefunds ? stripeRsd(r) : 0) : stripeSubs(r)) * 0.965;
   const body = (withRefunds: boolean) =>
     r.other_sales_stripe_net * 0.97
     + r.other_sales_shopify_net * 0.98

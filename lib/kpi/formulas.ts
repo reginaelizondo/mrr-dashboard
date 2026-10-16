@@ -67,14 +67,19 @@ const STRIPE_SUBS = `(SUM(IF(payment_processor = "stripe", new_subscriptions_sal
 //    TC ≈ $22,122, CM/Sales ≈ 23.28 % (data of 2026-10-15).
 type NetSalesMode = 'looker' | 'fixed';
 const STRIPE_RSD = `SUM(IF(payment_processor = "stripe", refunds_total_amount_sale_date, 0))`;
+// Yearly iOS renewals CHARGED BY STRIPE ($55,285 in 2026 YTD). The Looker nets the whole
+// renewals_sales_yearly_ios column at Apple's 0.85 − 6 %; FIXED moves the Stripe part to the Stripe
+// term at 0.965 (Pepis 2026-10-15). PayPal/Google yearly stay as in the Looker (small; Google's
+// 0.85 − 6 % equals its own Android bucket).
+const STRIPE_YR = `SUM(IF(payment_processor = "stripe", renewals_sales_yearly_ios, 0))`;
 function netSalesByOs(mode: NetSalesMode): string {
   const x = ` AND COALESCE(payment_processor, "") != "stripe"`;
   const bucket = (cond: string, col: string) => `SUM(IF(${cond}${x}, ${col}, 0))`;
   const gross = (cond: string, withRefunds: boolean) =>
     `(${bucket(cond, 'renewals_sales')} + ${bucket(cond, 'new_subscriptions_sales')}${withRefunds ? ` + ${bucket(cond, 'refunds_total_amount_sale_date')}` : ''})`;
-  const yearly = `SUM(renewals_sales_yearly_ios)`;
+  const yearly = mode === 'fixed' ? `SUM(IF(COALESCE(payment_processor, "") != "stripe", renewals_sales_yearly_ios, 0))` : `SUM(renewals_sales_yearly_ios)`;
   const stripe = (withRefunds: boolean) =>
-    mode === 'fixed' && withRefunds ? `(${STRIPE_SUBS} + ${STRIPE_RSD}) * 0.965` : `${STRIPE_SUBS} * 0.965`;
+    mode === 'fixed' ? `(${STRIPE_SUBS} + ${STRIPE_YR}${withRefunds ? ` + ${STRIPE_RSD}` : ''}) * 0.965` : `${STRIPE_SUBS} * 0.965`;
   const body = (withRefunds: boolean) => `(
     SUM(IF(network = "stripe", other_sales, 0)) * 0.97
     + SUM(IF(network = "shopify", other_sales, 0)) * 0.98
