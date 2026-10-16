@@ -214,6 +214,17 @@ export async function runKpiGuard(): Promise<GuardRun> {
     safe('datos.invariantes', 'Datos', dataInvariants),
     safe('pagina.salud', 'Página', pageHealth),
   ]);
+  // Si la réplica va atrás de BigQuery (dbt reconstruyó y el sync de cada 30 min aún no corre), las diferencias
+  // de réplica y fórmulas son de frescura, no de fórmula: quedan en aviso con esa explicación, nunca en alarma.
+  const fresh = checks.find((c) => c.id === 'frescura.bigquery');
+  if (fresh && /min atrás/.test(fresh.line)) {
+    for (const c of checks) {
+      if ((c.id === 'replica.dias' || c.id === 'formulas.paridad') && c.status !== 'ok') {
+        c.status = 'warn';
+        c.line += ' — la réplica va atrás de BigQuery (rebuild reciente de dbt): se reevalúa después del siguiente sync';
+      }
+    }
+  }
   return { ranAt: new Date().toISOString(), status: worst(checks.map((c) => c.status)), checks, seconds: Math.round((Date.now() - t0) / 100) / 10 };
 }
 

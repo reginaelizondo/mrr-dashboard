@@ -20,6 +20,9 @@ auditoría diaria de tiendas (10:00 MX).
 | `datos.invariantes` | 30 días con spend, signups y new subs > 0; CAC, C.R., CM/Sales en rangos posibles; downloads en cero (conocido) | normal | KPI fuera de rango | día sin datos |
 | `pagina.salud` | carga de la vista por default del Operativo sin caché (peor caso) | < 4 s | 4–10 s | > 10 s o error |
 
+Si la réplica va atrás de BigQuery (dbt reconstruyó y el sync de cada 30 min aún no corre), las diferencias de
+`replica.dias` y `formulas.paridad` son de frescura: quedan en ⚠️ con esa nota y nunca escalan a 🔴.
+
 Lo que la Guardia no puede ver: el Looker original (no tiene API). Si tech cambia una fórmula en el Looker, se
 detecta en la capa 3.
 
