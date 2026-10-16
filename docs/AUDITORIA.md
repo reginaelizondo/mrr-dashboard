@@ -18,7 +18,7 @@ auditoría diaria de tiendas (10:00 MX).
 | `calibracion.tiendas` | Corregido calibrado vs lo que reportó cada tienda, 4 semanas completas, cobrado y neto | ±3 % | 3–8 % | > 8 % |
 | `tiendas.looker` | BigQuery en base Looker vs tiendas, 7 días hasta D-3 | Apple ±4 %, Stripe ±5 %, Google en su banda conocida (+3 a +22 %) | fuera | Apple > 8 %, Stripe > 10 % |
 | `datos.invariantes` | 30 días con spend, signups y new subs > 0; CAC, C.R., CM/Sales en rangos posibles; downloads en cero (conocido) | normal | KPI fuera de rango | día sin datos |
-| `pagina.salud` | las 11 consultas de la vista por default del dashboard | < 6 s | 6–15 s | > 15 s o error |
+| `pagina.salud` | carga de la vista por default del Operativo sin caché (peor caso) | < 4 s | 4–10 s | > 10 s o error |
 
 Lo que la Guardia no puede ver: el Looker original (no tiene API). Si tech cambia una fórmula en el Looker, se
 detecta en la capa 3.

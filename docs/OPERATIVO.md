@@ -53,6 +53,15 @@ Supabase store_daily (día × tienda × país, USD de la propia tienda) ──�
 | `/api/cron/store-audit` | 16:00 | Auditoría tiendas vs Looker a Slack (incluye línea de la Réplica y de la Guardia). |
 | `/api/cron/kpi-guard` | :45 cada hora | Auditor automático; avisa a Slack solo cuando algo cambia de estado. |
 
+## Rendimiento
+
+- La página hace 6 consultas (antes 14): series por OS, idioma y región (de ellas salen los totales), total por
+  país, serie de los 9 países con más spend (el resto como "Other") y el periodo previo.
+- Caché por combinación de filtros (`unstable_cache`, etiqueta `operativo`): los crons `kpi-daily` y
+  `store-daily` la invalidan al terminar (`revalidateTag('operativo', { expire: 0 })`). Valores de filtros:
+  24 h; estado de réplica/tiendas/guardia: 5 min.
+- Sin caché ≈ 1.6–2.1 s (antes ≈ 3.9 s); con caché, inmediato. La Guardia mide el peor caso cada hora.
+
 ## Fórmulas
 
 - BigQuery (brief, auditoría, verificación): `lib/kpi/formulas.ts` — `KPI_SQL` (definición Corregida) y `…Looker`.

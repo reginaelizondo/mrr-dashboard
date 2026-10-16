@@ -188,11 +188,18 @@ async function dataInvariants(): Promise<Omit<GuardCheck, 'id' | 'area'>> {
 }
 
 async function pageHealth(): Promise<Omit<GuardCheck, 'id' | 'area'>> {
+  // Mismas consultas que la página Operativo sin caché (peor caso: primera vez que se abre esa combinación).
   const t0 = Date.now(); const today = todayMx();
   const f = { start: addDays(today, -30), end: addDays(today, -1) };
-  await Promise.all([fetchAgg(f, 'day'), fetchAgg(f, 'total'), ...(['os', 'country', 'kinedu_language', 'kinedu_region'] as const).flatMap((g) => [fetchAgg(f, 'total', g), fetchAgg(f, 'day', g)]), fetchReplicaStatus()]);
+  const prior = { start: addDays(today, -60), end: addDays(today, -31) };
+  const core = (async () => {
+    const [, , , tc] = await Promise.all([fetchAgg(f, 'day', 'os'), fetchAgg(f, 'day', 'kinedu_language'), fetchAgg(f, 'day', 'kinedu_region'), fetchAgg(f, 'total', 'country'), fetchAgg(prior, 'total')]);
+    const top = tc.filter((x) => x.grp !== 'null').sort((a, b) => b.spend - a.spend).slice(0, 9).map((x) => x.grp);
+    await fetchAgg({ ...f, country: top }, 'day', 'country');
+  })();
+  await Promise.all([core, fetchReplicaStatus()]);
   const s = (Date.now() - t0) / 1000;
-  return { status: s > 15 ? 'alarm' : s > 6 ? 'warn' : 'ok', line: `Dashboard: las 11 consultas de la vista por default responden en ${s.toFixed(1)} s` };
+  return { status: s > 10 ? 'alarm' : s > 4 ? 'warn' : 'ok', line: `Dashboard: carga de la vista por default sin caché en ${s.toFixed(1)} s (con caché es inmediata)` };
 }
 
 export async function runKpiGuard(): Promise<GuardRun> {

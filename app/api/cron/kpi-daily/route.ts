@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { revalidateTag } from 'next/cache';
 import { runDailyKpiSync, syncKpiDaily, fetchBigQueryModified, KPI_DAILY_WINDOW_DAYS } from '@/lib/sync/kpi-daily';
 import { createServerClient } from '@/lib/supabase/server';
 import { todayMx, addDays } from '@/lib/kpi/period';
@@ -45,6 +46,8 @@ export async function GET(request: NextRequest) {
       result = { ...r, rows: r.window.rows };
     }
     if (log) await supabase.from('sync_log').update({ status: 'success', completed_at: new Date().toISOString(), records_synced: result.rows ?? 0, details: result }).eq('id', log.id);
+    // La réplica cambió: invalida la caché del dashboard Operativo (expira ya, no "stale-while-revalidate").
+    revalidateTag('operativo', { expire: 0 });
     return NextResponse.json({ ok: true, ...result });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

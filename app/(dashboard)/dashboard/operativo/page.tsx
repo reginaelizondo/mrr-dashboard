@@ -4,6 +4,56 @@ export const maxDuration = 30;
 import { OperativoContent, type OperativoData, type PeriodRow, type GroupRow } from '@/components/dashboard/OperativoContent';
 import { fetchAgg, fetchDimValues, fetchReplicaStatus, fetchStoreCoverage, fetchLastGuard, computeKpis, sumAgg, type Grain, type ReplicaFilters, type AggRow, type ReplicaStatus } from '@/lib/kpi/replica';
 import { todayMx, addDays, mondayOf } from '@/lib/kpi/period';
+import { unstable_cache } from 'next/cache';
+
+// ─── Carga de datos (optimizada 2026-10-16) ──────────────────────────────────
+// Antes: 14 llamadas por carga (≈ 4 s), la serie diaria × país paginaba 4 veces (≈ 2.6 s). Ahora:
+//  · los totales (periodo, OS, idioma, región) se derivan de las series por dimensión — sin llamadas extra;
+//  · la serie × país solo trae los 9 países con más spend (el resto va como "Other", que es lo que grafica);
+//  · todo se cachea por combinación de filtros con la etiqueta 'operativo'; los syncs de la réplica y de
+//    tiendas la invalidan al terminar (revalidateTag), así que nunca se sirve un dato más viejo que el sync.
+const TOP_COUNTRIES = 9;
+
+const loadCore = unstable_cache(
+  async (f: ReplicaFilters, grain: Grain, prior: ReplicaFilters) => {
+    const [seriesOs, seriesLang, seriesRegion, totalCountry, prev] = await Promise.all([
+      fetchAgg(f, grain, 'os'), fetchAgg(f, grain, 'kinedu_language'), fetchAgg(f, grain, 'kinedu_region'),
+      fetchAgg(f, 'total', 'country'), fetchAgg(prior, 'total'),
+    ]);
+    const top = [...totalCountry].filter((r) => r.grp !== 'null').sort((a, b) => b.spend - a.spend).slice(0, TOP_COUNTRIES).map((r) => r.grp);
+    const countrySeries = top.length ? await fetchAgg({ ...f, country: top }, grain, 'country') : [];
+    return { seriesOs, seriesLang, seriesRegion, totalCountry, prev, countrySeries };
+  },
+  ['operativo-core', 'v1'],
+  { revalidate: 1800, tags: ['operativo'] },
+);
+const loadDims = unstable_cache(async () => fetchDimValues(), ['operativo-dims', 'v1'], { revalidate: 86400, tags: ['operativo'] });
+const loadMeta = unstable_cache(
+  async (start: string, end: string) => {
+    const [status, storeCoverage, guard] = await Promise.all([
+      // Informativo: si falla, la página carga igual.
+      fetchReplicaStatus().catch((): ReplicaStatus => ({ minDate: null, maxDate: null, rows: 0, lastSyncedAt: null, lastJob: null })),
+      fetchStoreCoverage(start, end).catch(() => []),
+      fetchLastGuard().catch(() => null),
+    ]);
+    return { status, storeCoverage, guard };
+  },
+  ['operativo-meta', 'v1'],
+  { revalidate: 300, tags: ['operativo'] },
+);
+
+/** Suma filas por periodo (todas las filas de una dimensión cubren el total del periodo). */
+function byPeriod(rows: AggRow[]): AggRow[] {
+  const m = new Map<string, AggRow[]>();
+  for (const r of rows) (m.get(r.period) ?? m.set(r.period, []).get(r.period)!).push(r);
+  return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([p, rs]) => sumAgg(rs, p, ''));
+}
+/** Suma filas por grupo (total del rango por valor de la dimensión). */
+function byGroup(rows: AggRow[]): AggRow[] {
+  const m = new Map<string, AggRow[]>();
+  for (const r of rows) (m.get(r.grp) ?? m.set(r.grp, []).get(r.grp)!).push(r);
+  return [...m.entries()].map(([g, rs]) => sumAgg(rs, 'total', g));
+}
 
 /**
  * "Operativo" — réplica del Looker Operational Dashboard sobre kpi_daily (Supabase).
@@ -71,37 +121,26 @@ export default async function OperativoPage({ searchParams }: { searchParams: Pr
   let error: string | null = null;
   let data: OperativoData | null = null;
   try {
-    const [series, current, previous, byOs, byCountry, byLang, byRegion, seriesOs, seriesLang, seriesRegion, seriesCountry, dims, status, storeCoverage, guard] = await Promise.all([
-      fetchAgg(filters, range.grain),
-      fetchAgg(filters, 'total'),
-      fetchAgg(prior, 'total'),
-      fetchAgg(filters, 'total', 'os'),
-      fetchAgg(filters, 'total', 'country'),
-      fetchAgg(filters, 'total', 'kinedu_language'),
-      fetchAgg(filters, 'total', 'kinedu_region'),
-      fetchAgg(filters, range.grain, 'os'),
-      fetchAgg(filters, range.grain, 'kinedu_language'),
-      fetchAgg(filters, range.grain, 'kinedu_region'),
-      fetchAgg(filters, range.grain, 'country'),
-      fetchDimValues(),
-      // El estado de la réplica es informativo: si falla, la página carga igual.
-      fetchReplicaStatus().catch((): ReplicaStatus => ({ minDate: null, maxDate: null, rows: 0, lastSyncedAt: null, lastJob: null })),
-      fetchStoreCoverage(range.start, range.end).catch(() => []),
-      fetchLastGuard().catch(() => null),
-    ]);
-    const cur = sumAgg(current, 'total'); const prev = sumAgg(previous, 'total');
+    const [core, dims, meta] = await Promise.all([loadCore(filters, range.grain, prior), loadDims(), loadMeta(range.start, range.end)]);
+    const { seriesOs, seriesLang, seriesRegion, totalCountry, prev: previous, countrySeries } = core;
+    const { status, storeCoverage, guard } = meta;
+    const series = byPeriod(seriesOs);
+    const cur = sumAgg(seriesOs, 'total'); const prev = sumAgg(previous, 'total');
+    // Serie × país: los 9 con más spend + "Other" = total del periodo − esos 9 (solo se usa el spend).
+    const topSpend = new Map<string, number>();
+    for (const r of countrySeries) topSpend.set(r.period, (topSpend.get(r.period) ?? 0) + r.spend);
+    const countryGroupSeries = [
+      ...countrySeries.map((a) => ({ period: a.period, grp: a.grp, spend: a.spend })),
+      ...series.map((p) => ({ period: p.period, grp: 'Other', spend: Math.max(0, p.spend - (topSpend.get(p.period) ?? 0)) })).filter((x) => x.spend > 0.005),
+    ];
+    const spendSeries = (rows: AggRow[]) => rows.map((a) => ({ period: a.period, grp: a.grp, spend: a.spend }));
     data = {
       preset: range.preset, start: range.start, end: range.end, grain: range.grain, days,
       filters: { region: filters.region ?? [], country: filters.country ?? [], os: filters.os ?? [], language: filters.language ?? [] },
       totals: { current: { looker: computeKpis(cur, 'looker'), fixed: computeKpis(cur, 'fixed') }, previous: { looker: computeKpis(prev, 'looker'), fixed: computeKpis(prev, 'fixed') }, priorStart: prior.start, priorEnd: prior.end },
       series: toPeriodRows(series),
-      breakdown: { os: toGroupRows(byOs), country: toGroupRows(byCountry), kinedu_language: toGroupRows(byLang), kinedu_region: toGroupRows(byRegion) },
-      groupSeries: {
-        os: seriesOs.map((a) => ({ period: a.period, grp: a.grp, spend: a.spend })),
-        kinedu_language: seriesLang.map((a) => ({ period: a.period, grp: a.grp, spend: a.spend })),
-        kinedu_region: seriesRegion.map((a) => ({ period: a.period, grp: a.grp, spend: a.spend })),
-        country: seriesCountry.map((a) => ({ period: a.period, grp: a.grp, spend: a.spend })),
-      },
+      breakdown: { os: toGroupRows(byGroup(seriesOs)), country: toGroupRows(totalCountry), kinedu_language: toGroupRows(byGroup(seriesLang)), kinedu_region: toGroupRows(byGroup(seriesRegion)) },
+      groupSeries: { os: spendSeries(seriesOs), kinedu_language: spendSeries(seriesLang), kinedu_region: spendSeries(seriesRegion), country: countryGroupSeries },
       dims: dims.map((d) => ({ dim: d.dim, value: d.value, signups: d.signups })),
       status,
       storeCoverage,

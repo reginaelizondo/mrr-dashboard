@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { revalidateTag } from 'next/cache';
 import { runStoreDailySync, syncStoreDaily } from '@/lib/sync/store-daily';
 import { todayMx } from '@/lib/kpi/period';
 
@@ -18,6 +19,7 @@ export async function GET(request: NextRequest) {
   try {
     const from = sp.get('from'); const to = sp.get('to');
     const result = from && to ? await syncStoreDaily(from, to) : await runStoreDailySync(todayMx(), Math.min(120, Number(sp.get('days') ?? 10)));
+    revalidateTag('operativo', { expire: 0 });   // nuevos factores de calibración → caché del Operativo
     return NextResponse.json({ ok: true, ...result });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
