@@ -223,7 +223,12 @@ export async function fetchAgg(f: ReplicaFilters, grain: Grain, group: GroupDim 
   const out: AggRow[] = [];
   const PAGE = 1000;
   for (let from = 0; ; from += PAGE) {
-    const { data, error } = await supabase.rpc('kpi_daily_agg', args).range(from, from + PAGE - 1);
+    // Reintento ante cortes de red pasajeros ("fetch failed") o choque con un sync (statement timeout).
+    let { data, error } = await supabase.rpc('kpi_daily_agg', args).range(from, from + PAGE - 1);
+    for (let i = 1; error && i <= 2 && /fetch failed|timeout|canceling statement|ECONNRESET/i.test(error.message); i++) {
+      await new Promise((r) => setTimeout(r, 500 * i));
+      ({ data, error } = await supabase.rpc('kpi_daily_agg', args).range(from, from + PAGE - 1));
+    }
     if (error) throw new Error(`kpi_daily_agg: ${error.message}`);
     const rows = (data ?? []) as Record<string, unknown>[];
     out.push(...rows.map(parseAgg));

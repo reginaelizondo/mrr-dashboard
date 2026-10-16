@@ -52,6 +52,7 @@ Supabase store_daily (día × tienda × país, USD de la propia tienda) ──�
 | `/api/cron/daily-brief` | 15:30 | Brief diario a Slack (enlaza al dashboard). |
 | `/api/cron/store-audit` | 16:00 | Auditoría tiendas vs Looker a Slack (incluye línea de la Réplica y de la Guardia). |
 | `/api/cron/kpi-guard` | :45 cada hora | Auditor automático; avisa a Slack solo cuando algo cambia de estado. |
+| `/api/cron/operativo-warm` | :05, :25, :35 | Pre-calienta la caché del Operativo después de los syncs. |
 
 ## Rendimiento
 
@@ -60,7 +61,11 @@ Supabase store_daily (día × tienda × país, USD de la propia tienda) ──�
 - Caché por combinación de filtros (`unstable_cache`, etiqueta `operativo`): los crons `kpi-daily` y
   `store-daily` la invalidan al terminar (`revalidateTag('operativo', { expire: 0 })`). Valores de filtros:
   24 h; estado de réplica/tiendas/guardia: 5 min.
-- Sin caché ≈ 1.6–2.1 s (antes ≈ 3.9 s); con caché, inmediato. La Guardia mide el peor caso cada hora.
+- La caché guarda solo lo que la página usa (serie y totales ya sumados; spend de las series por dimensión) para
+  quedar bajo el límite de 2 MB por entrada de Next.
+- Cron `/api/cron/operativo-warm` (:05, :25, :35) pre-calienta 7 d, 30 d, mes en curso, 90 d y 12 meses después de
+  cada sync (va aparte porque Next aplica `revalidateTag` al final de la petición del sync).
+- Sin caché ≈ 1–3 s (antes ≈ 3.9 s); con caché ≈ 0.1 s. La Guardia mide el peor caso cada hora.
 
 ## Fórmulas
 
