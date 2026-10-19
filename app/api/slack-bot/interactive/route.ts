@@ -4,6 +4,7 @@ import { verifySlackSignature } from '@/lib/slack/verify';
 import { postChatMessage } from '@/lib/slack/post';
 import { runKpiGuard, formatGuardRun } from '@/lib/audit/kpi-guard';
 import { runKpiFix, formatFixResult, fixInProgress } from '@/lib/audit/kpi-fix';
+import { setProposalStatus } from '@/lib/estela/estela';
 
 // Correcciones largas (re-sincronizar réplica + tiendas ≈ 2–4 min) corren en waitUntil después de responder a Slack.
 export const maxDuration = 300;
@@ -13,6 +14,7 @@ export const maxDuration = 300;
  * Interactivity & Shortcuts → On → Request URL = https://<dominio>/api/slack-bot/interactive
  *   kpi_fix      corre las correcciones que tocan y responde en el hilo con el antes y el después
  *   kpi_recheck  vuelve a correr la Guardia y responde en el hilo
+ *   estela_accept / estela_reject  Pepis decide sobre una propuesta de Estela (value = id en estela_proposals)
  */
 export async function POST(request: NextRequest) {
   const rawBody = await request.text();
@@ -36,7 +38,14 @@ export async function POST(request: NextRequest) {
 
   waitUntil((async () => {
     try {
-      if (action === 'kpi_recheck') {
+      if (action === 'estela_accept' || action === 'estela_reject') {
+        const id = Number(payload.actions?.[0]?.value);
+        const estado = action === 'estela_accept' ? 'aceptada' : 'rechazada';
+        const r = Number.isFinite(id) ? await setProposalStatus(id, estado, who) : { ok: false, error: 'id inválido' };
+        await reply(r.ok
+          ? `${estado === 'aceptada' ? '✅' : '✖'} Propuesta #${id} "${r.titulo}" marcada como *${estado}*${who ? ` por ${who}` : ''}. Estela le da seguimiento el próximo lunes.`
+          : `No pude registrar la decisión: ${r.error}`);
+      } else if (action === 'kpi_recheck') {
         await reply(formatGuardRun(await runKpiGuard()));
       } else if (action === 'kpi_fix') {
         if (await fixInProgress()) { await reply('⏳ Ya hay una corrección o un sync de la réplica corriendo; en unos minutos vuelve a revisar con 🔄.'); return; }

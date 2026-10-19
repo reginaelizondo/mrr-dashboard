@@ -47,6 +47,10 @@
     {
       "path": "/api/cron/kpi-guard",
       "schedule": "15 3 * * *"
+    },
+    {
+      "path": "/api/cron/estela-weekly",
+      "schedule": "0 14 * * 1"
     }
   ]
 }
