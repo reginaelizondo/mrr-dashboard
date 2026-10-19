@@ -2,9 +2,11 @@
 
 Tres capas, de lo automático a lo profundo. Ninguna cambia fórmulas ni datos: reportan.
 
-## 1. Guardia de KPIs (automática, cada hora)
+## 1. Guardia de KPIs (automática, 4 veces al día)
 
-`lib/audit/kpi-guard.ts` · cron `/api/cron/kpi-guard` (:45) · local `npx tsx scripts/audit-kpis.ts`.
+`lib/audit/kpi-guard.ts` · cron `/api/cron/kpi-guard` a las **9:25** (antes del brief de las 9:30), **11:45** y **14:45**
+(después de los rebuilds de dbt) y **21:15** MX (decidido con Pepis el 2026-10-19; antes era cada hora) · local
+`npx tsx scripts/audit-kpis.ts`.
 Guarda cada corrida en `kpi_guard_runs`. **Avisa a Slack (#datastudiobot) solo cuando un chequeo empeora o se
 recupera**, y recuerda una vez al día si algo sigue en alarma. La línea "Guardia KPIs: N/N" aparece además en la
 auditoría diaria de tiendas (10:00 MX).
@@ -75,3 +77,24 @@ La auditoría semanal del 19-oct encontró cuatro defectos en las herramientas (
 4. La auto-reparación solo comparaba día × OS y no veía usuarios movidos entre idiomas o regiones con los mismos
    totales por OS. Ahora compara también día × idioma y día × región, y corre en cada rebuild de dbt (sync de
    cada 30 min), no solo una vez al día.
+
+## Corregir desde Slack (2026-10-19)
+
+Cada alerta de la Guardia trae tres botones: **🔧 Corregir ahora**, **🔄 Revisar otra vez** y **Ver en el dashboard**.
+También funcionan los comandos `/kpi guardia` (estado) y `/kpi arreglar` (corrige). La corrección
+(`lib/audit/kpi-fix.ts`) corre la receta de cada chequeo que falló, vuelve a correr la Guardia y responde en el hilo
+con el antes y el después. No hace nada destructivo: solo re-sincroniza, recalibra o recalienta la caché.
+
+| Chequeo | Corrección automática | Si sigue |
+|---|---|---|
+| `frescura.bigquery`, `replica.dias` | re-sincroniza 95 días + verifica y repara todo el historial | — |
+| `formulas.paridad` | igual que réplica | cambió una fórmula en el código: revisión de código |
+| `frescura.tiendas` | re-sincroniza tiendas 75 días (incluye earnings de Google) + recalibra | revisar el reporte de la tienda |
+| `calibracion.tiendas` | re-sincroniza tiendas 10 días + recalibra | revisar `store_daily` |
+| `pagina.salud` | recalienta la caché | — |
+| `datos.invariantes` | re-sincroniza la réplica | el dato viene así de BigQuery/dbt: tech |
+| `tiendas.looker` | ninguna (es el Looker vs tiendas) | tech/dbt |
+
+Si ya hay una corrección o un sync corriendo, el bot lo dice y no arranca otra. Los botones requieren que la app de
+Slack tenga **Interactivity** activado con Request URL `https://mrr-dashboard-phi.vercel.app/api/slack-bot/interactive`;
+los comandos `/kpi` funcionan sin ese paso.

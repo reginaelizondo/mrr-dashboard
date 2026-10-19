@@ -23,7 +23,7 @@ import { KPI_SQL } from '@/lib/kpi/formulas';
 import { fetchAgg, sumAgg, computeKpis, fetchReplicaStatus, type KpiValues } from '@/lib/kpi/replica';
 import { verifyKpiDaily, fetchBigQueryModified } from '@/lib/sync/kpi-daily';
 import { addDays, todayMx, mondayOf } from '@/lib/kpi/period';
-import { postToSlack } from '@/lib/slack/post';
+import { postToSlack, postChatMessage, type SlackMessage } from '@/lib/slack/post';
 
 export type GuardStatus = 'ok' | 'warn' | 'alarm';
 export interface GuardCheck { id: string; area: string; status: GuardStatus; line: string; detail?: string }
@@ -267,12 +267,15 @@ export async function recordAndAlert(run: GuardRun, opts: { post?: boolean } = {
   if (stale && !changes.length) changes.push(...run.checks.filter((c) => c.status === 'alarm').map((c) => `🔴 sigue en alarma — ${c.line}`));
   const alerted = changes.length > 0 && opts.post !== false;
   if (alerted) {
-    const head = `🛡️ Guardia KPIs — ${run.status === 'ok' ? 'todo recuperado' : `${run.checks.filter((c) => c.status !== 'ok').length} chequeo(s) con problema`}`;
-    await postToSlack({ text: head, blocks: [
+    const bad = run.checks.filter((c) => c.status !== 'ok');
+    const head = `🛡️ Guardia KPIs — ${run.status === 'ok' ? 'todo recuperado' : `${bad.length} chequeo(s) con problema`}`;
+    const blocks: NonNullable<SlackMessage['blocks']> = [
       { type: 'section', text: { type: 'mrkdwn', text: `*${head}*` } },
       { type: 'section', text: { type: 'mrkdwn', text: changes.join('\n').slice(0, 2900) } },
-      { type: 'context', elements: [{ type: 'mrkdwn', text: '_Auditor automático (cada hora). Detalle en el dashboard Operativo → Auditoría · método en docs/AUDITORIA.md_' }] },
-    ] });
+    ];
+    if (run.status !== 'ok') blocks.push({ type: 'actions', elements: guardButtons() });
+    blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: '_Auditor automático. 🔧 Corregir corre la corrección que toca y responde en el hilo · también `/kpi arreglar` · método en docs/AUDITORIA.md_' }] });
+    await postGuardMessage({ text: head, blocks });
   }
   await sb.from('kpi_guard_runs').insert({ ran_at: run.ranAt, status: run.status, checks: run.checks, alerted, seconds: run.seconds });
   return { alerted, changes };
@@ -285,4 +288,32 @@ export async function lastGuardSummary(): Promise<string | null> {
   if (!r) return null;
   const okN = r.checks.filter((c) => c.status === 'ok').length;
   return `Guardia KPIs: ${okN}/${r.checks.length} chequeos ${icon(r.status)}${r.status === 'ok' ? '' : ` — ${r.checks.filter((c) => c.status !== 'ok').map((c) => c.area).join(', ')}`}`;
+}
+
+/** Botones de las alertas de la Guardia (los atiende /api/slack-bot/interactive). */
+export function guardButtons() {
+  const dash = (process.env.DASHBOARD_URL ?? 'https://mrr-dashboard-phi.vercel.app').replace(/\/$/, '');
+  return [
+    { type: 'button', style: 'primary', action_id: 'kpi_fix', value: 'fix', text: { type: 'plain_text', text: '🔧 Corregir ahora' } },
+    { type: 'button', action_id: 'kpi_recheck', value: 'recheck', text: { type: 'plain_text', text: '🔄 Revisar otra vez' } },
+    { type: 'button', action_id: 'kpi_open_dashboard', url: `${dash}/dashboard/operativo?tab=audit`, text: { type: 'plain_text', text: 'Ver en el dashboard' } },
+  ];
+}
+
+/** Publica con el bot (para poder responder en hilo y usar botones); si no se puede, por el webhook. */
+export async function postGuardMessage(message: SlackMessage, threadTs?: string): Promise<string | undefined> {
+  const token = process.env.SLACK_BOT_TOKEN; const channel = process.env.SLACK_BRIEF_CHANNEL;
+  if (token && channel) {
+    const r = await postChatMessage(token, channel, message, threadTs);
+    if (r.ok) return r.ts;
+    console.error('[guard] bot post failed, webhook fallback:', r.error);
+  }
+  await postToSlack(message);
+  return undefined;
+}
+
+/** Resumen corto del estado de la Guardia (para /kpi guardia y el botón "Revisar otra vez"). */
+export function formatGuardRun(run: GuardRun): string {
+  const okN = run.checks.filter((c) => c.status === 'ok').length;
+  return [`*🛡️ Guardia KPIs — ${okN}/${run.checks.length} ${icon(run.status)}*`, ...run.checks.map((c) => `${icon(c.status)} ${c.line}`)].join('\n').slice(0, 2900);
 }

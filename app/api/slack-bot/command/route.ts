@@ -8,6 +8,9 @@ import { queryMixpanel } from '@/lib/mixpanel/client';
 import { createBotBookmark } from '@/lib/mixpanel/insights';
 import { formatResultAsSlack, formatErrorAsSlack, FormattedResponse } from '@/lib/slack/format-result';
 import type { SlackMessage } from '@/lib/slack/post';
+import { postChatMessage as postBotMessage } from '@/lib/slack/post';
+import { runKpiGuard, formatGuardRun, guardButtons } from '@/lib/audit/kpi-guard';
+import { runKpiFix, formatFixResult, fixInProgress } from '@/lib/audit/kpi-fix';
 
 // Slash command flow:
 //   1. Verify signature; ack immediately in-channel ("Working on it…")
@@ -16,7 +19,8 @@ import type { SlackMessage } from '@/lib/slack/post';
 //   4. If chat.postMessage fails for any reason, fall back to response_url
 //      so the user still gets an answer (non-threaded).
 
-export const maxDuration = 60;
+// 300 s: `/kpi arreglar` puede re-sincronizar réplica y tiendas (2–4 min) en waitUntil.
+export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
   const rawBody = await request.text();
@@ -51,8 +55,33 @@ export async function POST(request: NextRequest) {
   if (!text) {
     return NextResponse.json({
       response_type: 'ephemeral',
-      text: 'Ask a KPI question. Example: `/kpi CAC last week by platform`',
+      text: 'Ask a KPI question. Example: `/kpi CAC last week by platform` · `/kpi guardia` (estado del auditor) · `/kpi arreglar` (corrige las alertas)',
     });
+  }
+
+  // Guardia de KPIs: `/kpi guardia` revisa; `/kpi arreglar` corre las correcciones y responde en hilo.
+  const guardCmd = /^(guardia|estado|status)$/i.test(text) ? 'check' : /^(arregla|arreglar|corrige|corregir|fix)\b/i.test(text) ? 'fix' : null;
+  if (guardCmd) {
+    const token = process.env.SLACK_BOT_TOKEN;
+    waitUntil((async () => {
+      const post = async (msg: string, threadTs?: string, withButtons = false) => {
+        const blocks: NonNullable<SlackMessage['blocks']> = [{ type: 'section', text: { type: 'mrkdwn', text: msg } }];
+        if (withButtons) blocks.push({ type: 'actions', elements: guardButtons() });
+        if (token) { const r = await postBotMessage(token, channelId, { text: msg.slice(0, 200), blocks }, threadTs); if (r.ok) return r.ts; }
+        await fetch(responseUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ response_type: 'in_channel', text: msg }) });
+        return undefined;
+      };
+      try {
+        const run = await runKpiGuard();
+        if (guardCmd === 'check') { await post(formatGuardRun(run), undefined, run.status !== 'ok'); return; }
+        if (await fixInProgress()) { await post('⏳ Ya hay una corrección o un sync de la réplica corriendo; revisa en unos minutos con `/kpi guardia`.'); return; }
+        const ts = await post(`🔧 Corrigiendo (pedido por @${userName})… respondo en el hilo en 2–4 min.\n${formatGuardRun(run)}`);
+        await post(formatFixResult(await runKpiFix({ before: run, triggeredBy: `@${userName}` }), `@${userName}`), ts);
+      } catch (e) {
+        await post(`❌ ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}`);
+      }
+    })());
+    return NextResponse.json({ response_type: 'ephemeral', text: guardCmd === 'check' ? '🛡️ Revisando la Guardia…' : '🔧 Arrancando la corrección…' });
   }
 
   waitUntil(

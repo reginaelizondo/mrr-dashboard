@@ -29,12 +29,24 @@
       "schedule": "40 15 * * *"
     },
     {
-      "path": "/api/cron/kpi-guard",
-      "schedule": "45 * * * *"
-    },
-    {
       "path": "/api/cron/operativo-warm",
       "schedule": "5,25,35 * * * *"
+    },
+    {
+      "path": "/api/cron/kpi-guard",
+      "schedule": "25 15 * * *"
+    },
+    {
+      "path": "/api/cron/kpi-guard",
+      "schedule": "45 17 * * *"
+    },
+    {
+      "path": "/api/cron/kpi-guard",
+      "schedule": "45 20 * * *"
+    },
+    {
+      "path": "/api/cron/kpi-guard",
+      "schedule": "15 3 * * *"
     }
   ]
 }
