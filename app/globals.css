@@ -163,3 +163,6 @@
     transform: translateY(-1px);
   }
 }
+/* Operativo: barra de "cargando" al cambiar filtros */
+@keyframes op-progress { 0% { transform: translateX(-100%); } 100% { transform: translateX(350%); } }
+.op-progress { animation: op-progress 1.1s ease-in-out infinite; }

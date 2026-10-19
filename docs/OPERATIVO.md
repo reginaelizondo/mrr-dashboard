@@ -65,7 +65,29 @@ Supabase store_daily (día × tienda × país, USD de la propia tienda) ──�
   quedar bajo el límite de 2 MB por entrada de Next.
 - Cron `/api/cron/operativo-warm` (:05, :25, :35) pre-calienta 7 d, 30 d, mes en curso, 90 d y 12 meses después de
   cada sync (va aparte porque Next aplica `revalidateTag` al final de la petición del sync).
-- Sin caché ≈ 1–3 s (antes ≈ 3.9 s); con caché ≈ 0.1 s. La Guardia mide el peor caso cada hora.
+- Sin caché ≈ 1–3 s (antes ≈ 3.9 s); con caché ≈ 0.1 s. La Guardia mide el peor caso 4 veces al día.
+
+## Navegación (interfaz, 2026-10-19)
+
+Solo cambia cómo se ve y se navega; los números salen de las mismas funciones (`computeKpis`) y la vista Looker
+sigue siendo idéntica al Looker. Código en `components/dashboard/operativo/` (`filters.tsx`, `charts.tsx`,
+`tables.tsx`, `format.ts`) y `components/dashboard/OperativoContent.tsx`.
+
+- **Barra de filtros fija** (en escritorio se queda arriba al hacer scroll): periodo, rango personalizado,
+  granularidad, Región / País / OS / Idioma y vista Looker / Corregido. Cada filtro activo aparece como chip con ×;
+  "Limpiar filtros" quita todos. Al cambiar un filtro se ve una barra de progreso y "actualizando…".
+- **Tarjetas** con mini-gráfica del periodo; clic en una tarjeta la abre en el explorador.
+- **Explorador**: cualquier KPI en grande, comparado con otro (eje derecho), con promedio, mejor y peor periodo,
+  y barra de zoom cuando hay más de 20 puntos. En la URL: `kpi=` y `vs=`.
+- **Gráficas**: pastillas para prender/apagar cada serie (con el total del periodo), tooltip con todas las series
+  del punto; al pasar el mouse por un día se marca el mismo día en todas las gráficas de la pestaña; botón para
+  ampliar (con zoom) y para descargar CSV.
+- **Corregido**: el tramo con ventas estimadas se sombrea en ámbar ("≈ incluye estimado") en las gráficas de
+  montos, y el tooltip dice qué % del periodo es estimado.
+- **Tablas**: ordenar con clic en el encabezado, mapa de calor por columna (verde = mejor, rosa = peor; spend y
+  KPIs sin dirección en azul), encabezado y primera columna fijos, CSV. Clic en una fila abre ese periodo a la
+  granularidad siguiente (semana → días, mes → días, trimestre → semanas, año → meses).
+- **Desglose**: clic en una fila (p. ej. un país) filtra todo el dashboard por ese valor; otro clic lo quita.
 
 ## Fórmulas
 
