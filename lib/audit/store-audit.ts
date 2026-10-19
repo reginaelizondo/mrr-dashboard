@@ -177,9 +177,11 @@ export async function fetchLookerDaily(start: string, end: string): Promise<Look
   const [rows] = await bq.query({
     query: `
       SELECT CAST(date AS STRING) d, payment_processor pp,
-        SUM(new_subscriptions_sales) + SUM(refunds_total_amount_sale_date) + SUM(renewals_sales) + SUM(renewals_sales_yearly_ios) + SUM(other_sales) AS gross,
-        SUM(new_subscriptions) + SUM(num_of_refunds_sale_date) + SUM(renewals) + SUM(renewals_yearly_ios) AS n,
-        SUM(refunds_total_amount_refund_date) AS refunds, SUM(num_of_refunds_refund_date) AS refund_n
+        -- IFNULL en cada SUM: si una columna viene NULL en todas las filas del día (p. ej. Stripe sin
+        -- renovaciones anuales), SUM es NULL y la suma completa también (falso "Stripe −14 %" del 2026-10-19).
+        IFNULL(SUM(new_subscriptions_sales), 0) + IFNULL(SUM(refunds_total_amount_sale_date), 0) + IFNULL(SUM(renewals_sales), 0) + IFNULL(SUM(renewals_sales_yearly_ios), 0) + IFNULL(SUM(other_sales), 0) AS gross,
+        IFNULL(SUM(new_subscriptions), 0) + IFNULL(SUM(num_of_refunds_sale_date), 0) + IFNULL(SUM(renewals), 0) + IFNULL(SUM(renewals_yearly_ios), 0) AS n,
+        IFNULL(SUM(refunds_total_amount_refund_date), 0) AS refunds, IFNULL(SUM(num_of_refunds_refund_date), 0) AS refund_n
       FROM ${KINEDU_OPERATIONAL_TABLE}
       WHERE date BETWEEN @start AND @end AND payment_processor IN ('apple','google','stripe')
       GROUP BY d, pp`,
@@ -193,10 +195,10 @@ export async function fetchLookerDaily(start: string, end: string): Promise<Look
   const [tcRows] = await bq.query({
     query: `
       SELECT CAST(date AS STRING) d,
-        (SUM(IF(payment_processor = "stripe", new_subscriptions_sales, 0)) + SUM(IF(payment_processor = "stripe", renewals_sales, 0))) * 0.965
-          + SUM(IF(payment_processor = "stripe", other_sales, 0)) * 0.97
-          + SUM(IF(payment_processor = "stripe", renewals_sales_yearly_ios, 0)) * 0.85 AS stripe_term,
-        ${STRIPE_REFUND_GAP_SQL} AS refund_gap
+        (IFNULL(SUM(IF(payment_processor = "stripe", new_subscriptions_sales, 0)), 0) + IFNULL(SUM(IF(payment_processor = "stripe", renewals_sales, 0)), 0)) * 0.965
+          + IFNULL(SUM(IF(payment_processor = "stripe", other_sales, 0)), 0) * 0.97
+          + IFNULL(SUM(IF(payment_processor = "stripe", renewals_sales_yearly_ios, 0)), 0) * 0.85 AS stripe_term,
+        IFNULL(${STRIPE_REFUND_GAP_SQL}, 0) AS refund_gap
       FROM ${KINEDU_OPERATIONAL_TABLE}
       WHERE date BETWEEN @start AND @end
       GROUP BY d`,

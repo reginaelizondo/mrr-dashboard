@@ -95,21 +95,23 @@ const MAP: Record<string, ['looker' | 'fixed', string]> = {
     else console.log(`✅ ${c.name} — ${Object.keys(MAP).length} KPIs iguales (TC fixed $${Math.round(rep.fixed.totalContribution).toLocaleString('en-US')} · Looker $${Math.round(rep.looker.totalContribution).toLocaleString('en-US')})`);
   }
   // Serie semanal (camino del rollup semanal + orillas diarias): spend, NS Sales, Net Sales y TC por semana ISO.
+  // Se compara la vista Looker (sin calibrar) contra la fórmula Looker de BigQuery: los montos del Corregido
+  // calibrado salen de las tiendas y se validan en la Guardia (calibración vs tiendas), no aquí.
   if (!opt('--from')) {
     const ws = '2026-07-30', we = '2026-10-11'; // empieza en jueves → la 1ª semana sale del diario
-    const [bqw] = await bq.query({ query: `SELECT CAST(DATE_TRUNC(date, WEEK(MONDAY)) AS STRING) AS wk, ${KPI_SQL.spend} AS spend, ${KPI_SQL.nsSales} AS nsSales, ${KPI_SQL.netSales} AS netSales, ${KPI_SQL.totalContributionLooker} AS tcLooker FROM ${KINEDU_OPERATIONAL_TABLE} WHERE date BETWEEN @s AND @e GROUP BY wk ORDER BY wk`, params: { s: ws, e: we } });
+    const [bqw] = await bq.query({ query: `SELECT CAST(DATE_TRUNC(date, WEEK(MONDAY)) AS STRING) AS wk, ${KPI_SQL.spend} AS spend, ${KPI_SQL.nsSales} AS nsSales, ${KPI_SQL.netSalesLooker} AS netSales, ${KPI_SQL.totalContributionLooker} AS tcLooker FROM ${KINEDU_OPERATIONAL_TABLE} WHERE date BETWEEN @s AND @e GROUP BY wk ORDER BY wk`, params: { s: ws, e: we } });
     const weeks = await fetchAgg({ start: ws, end: we }, 'week');
     const byWk = new Map(weeks.map((w) => [w.period, w]));
     const bad: string[] = [];
     for (const r of bqw as Record<string, unknown>[]) {
       const w = byWk.get(String(r.wk));
       if (!w) { bad.push(`${r.wk}: falta en réplica`); continue; }
-      const f = computeKpis(w, 'fixed'), l = computeKpis(w, 'looker');
-      for (const [name, a, b] of [['spend', r.spend, f.spend], ['nsSales', r.nsSales, f.nsSales], ['netSales', r.netSales, f.netSales], ['tcLooker', r.tcLooker, l.totalContribution]] as const)
+      const l = computeKpis(w, 'looker');
+      for (const [name, a, b] of [['spend', r.spend, l.spend], ['nsSales', r.nsSales, l.nsSales], ['netSales (Looker)', r.netSales, l.netSales], ['tcLooker', r.tcLooker, l.totalContribution]] as const)
         if (Math.abs(Number(a) - Number(b)) > 0.02) bad.push(`${r.wk} ${name}: BQ ${a} · réplica ${b}`);
     }
     if (bad.length) { failures++; console.log(`❌ serie semanal ${ws} → ${we}\n   ${bad.join('\n   ')}`); }
-    else console.log(`✅ serie semanal ${ws} → ${we} — ${(bqw as unknown[]).length} semanas iguales (spend, NS Sales, Net Sales, TC Looker)`);
+    else console.log(`✅ serie semanal ${ws} → ${we} — ${(bqw as unknown[]).length} semanas iguales (spend, NS Sales, Net Sales y TC en definición Looker)`);
   }
   if (failures) process.exit(1);
 })().catch((e) => { console.error('❌', e instanceof Error ? e.stack ?? e.message : e); process.exit(1); });

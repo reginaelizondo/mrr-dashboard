@@ -185,36 +185,49 @@ function quarterChunks(start: string, end: string): Array<{ start: string; end: 
   return out;
 }
 
-/** Compare replica vs BigQuery per day × os over [start, end]. Missing cells on either side count as mismatches. */
+// Además de día × OS (16 campos), día × idioma y día × región con los campos principales: BigQuery a veces mueve
+// un usuario de idioma o región sin cambiar los totales por OS (2026-02-18, 04-01, 04-20: 1 signup en → pt) y la
+// comparación por OS no lo veía.
+const VERIFY_CORE = ['signups', 'spend', 'fts_started', 'fts_converted', 'new_subscriptions', 'new_subscriptions_sales', 'renewals_sales', 'refunds_total_amount_sale_date'] as const;
+const VERIFY_DIMS: Array<{ dim: 'os' | 'kinedu_language' | 'kinedu_region'; label: string; fields: readonly (typeof VERIFY_FIELDS)[number][] }> = [
+  { dim: 'os', label: '', fields: VERIFY_FIELDS },
+  { dim: 'kinedu_language', label: 'idioma ', fields: VERIFY_CORE },
+  { dim: 'kinedu_region', label: 'región ', fields: VERIFY_CORE },
+];
+
+/** Compare replica vs BigQuery per day × OS, × idioma y × región over [start, end]. Missing cells count as mismatches. */
 export async function verifyKpiDaily(start: string, end: string): Promise<VerifyResult> {
   const { fetchAgg } = await import('@/lib/kpi/replica');
   const bq = getBigQueryClient();
-  const [bqRows] = await bq.query({
-    query: `SELECT CAST(date AS STRING) AS date, COALESCE(os, "null") AS os, ${VERIFY_FIELDS.map((f) => `${VERIFY_BQ_EXPR[f]} AS ${f}`).join(', ')}
-            FROM ${KINEDU_OPERATIONAL_TABLE} WHERE date BETWEEN @start AND @end GROUP BY date, os`,
-    params: { start, end },
-  });
-  const rep = new Map<string, Record<string, unknown>>();
-  for (const c of quarterChunks(start, end)) {
-    for (const r of await fetchAgg({ start: c.start, end: c.end }, 'day', 'os')) rep.set(`${r.period}|${r.grp}`, r as unknown as Record<string, unknown>);
-  }
   const mismatches: VerifyResult['mismatches'] = [];
-  const bad = new Set<string>(); const seen = new Set<string>(); const days = new Set<string>();
-  const isZero = (r: Record<string, unknown>) => VERIFY_FIELDS.every((f) => Math.abs(toNum(r[f])) <= 0.01);
-  for (const r of bqRows as Record<string, unknown>[]) {
-    const d = String(r.date); const os = String(r.os); const key = `${d}|${os}`;
-    seen.add(key); days.add(d);
-    const rr = rep.get(key);
-    if (!rr && isZero(r)) continue;
-    for (const f of VERIFY_FIELDS) {
-      const a = toNum(r[f]); const b = rr ? toNum(rr[f]) : 0;
-      if (!rr || Math.abs(a - b) > 0.01) { mismatches.push({ date: d, os, field: f, bq: a, replica: b }); bad.add(d); }
+  const bad = new Set<string>(); const days = new Set<string>();
+  for (const { dim, label, fields } of VERIFY_DIMS) {
+    const [bqRows] = await bq.query({
+      query: `SELECT CAST(date AS STRING) AS date, COALESCE(${dim}, "null") AS seg, ${fields.map((f) => `${VERIFY_BQ_EXPR[f]} AS ${f}`).join(', ')}
+              FROM ${KINEDU_OPERATIONAL_TABLE} WHERE date BETWEEN @start AND @end GROUP BY date, seg`,
+      params: { start, end },
+    });
+    const rep = new Map<string, Record<string, unknown>>();
+    for (const c of quarterChunks(start, end)) {
+      for (const r of await fetchAgg({ start: c.start, end: c.end }, 'day', dim)) rep.set(`${r.period}|${r.grp}`, r as unknown as Record<string, unknown>);
     }
-  }
-  for (const [key, rr] of rep) {
-    if (seen.has(key) || isZero(rr)) continue;
-    const [d, os] = key.split('|');
-    mismatches.push({ date: d, os, field: '(no existe en BigQuery)', bq: 0, replica: 1 }); bad.add(d);
+    const seen = new Set<string>();
+    const isZero = (r: Record<string, unknown>) => fields.every((f) => Math.abs(toNum(r[f])) <= 0.01);
+    for (const r of bqRows as Record<string, unknown>[]) {
+      const d = String(r.date); const seg = String(r.seg); const key = `${d}|${seg}`;
+      seen.add(key); days.add(d);
+      const rr = rep.get(key);
+      if (!rr && isZero(r)) continue;
+      for (const f of fields) {
+        const a = toNum(r[f]); const b = rr ? toNum(rr[f]) : 0;
+        if (!rr || Math.abs(a - b) > 0.01) { mismatches.push({ date: d, os: label + seg, field: f, bq: a, replica: b }); bad.add(d); }
+      }
+    }
+    for (const [key, rr] of rep) {
+      if (seen.has(key) || isZero(rr)) continue;
+      const [d, seg] = key.split('|');
+      mismatches.push({ date: d, os: label + seg, field: '(no existe en BigQuery)', bq: 0, replica: 1 }); bad.add(d);
+    }
   }
   return { days: days.size, mismatches, badDates: [...bad].sort() };
 }
@@ -249,10 +262,11 @@ export const KPI_DAILY_WINDOW_DAYS = 95; // refunds and late re-attributions kee
  *  3. Self-heal: compare day totals over the whole history and re-sync any day that differs
  *     (capped per run), so the replica converges to BigQuery without manual backfills.
  */
-export async function runDailyKpiSync(today: string, opts: { budgetMs?: number; maxHealDays?: number } = {}) {
+export async function runDailyKpiSync(today: string, opts: { budgetMs?: number; maxHealDays?: number; rotate?: boolean } = {}) {
   const t0 = Date.now();
   const bqModified = await fetchBigQueryModified();
-  const budgetMs = opts.budgetMs ?? 220_000;
+  // Vercel corta a los 300 s: no se empieza a verificar/reparar después de 200 s.
+  const budgetMs = opts.budgetMs ?? 200_000;
   const maxHealDays = opts.maxHealDays ?? 62;
   const windowStart = addDays(today, -KPI_DAILY_WINDOW_DAYS);
   const window = await syncKpiDaily(windowStart, today);
@@ -261,7 +275,7 @@ export async function runDailyKpiSync(today: string, opts: { budgetMs?: number; 
   const months: string[] = [];
   for (const c of monthChunks(KPI_DAILY_HISTORY_START, addDays(windowStart.slice(0, 8) + '01', -1))) months.push(c.start);
   let rotated: { start: string; end: string; rows: number } | null = null;
-  if (months.length) {
+  if (months.length && opts.rotate !== false) {
     const dayNumber = Math.floor(Date.parse(today + 'T00:00:00Z') / 86_400_000);
     const m = months[dayNumber % months.length];
     const chunk = monthChunks(m, today)[0];

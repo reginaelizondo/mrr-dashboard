@@ -116,44 +116,63 @@ async function storesFresh(): Promise<Omit<GuardCheck, 'id' | 'area'>> {
   return { status: st, line: `Tiendas: definitivo hasta Apple ${a ?? '—'} · Google ${g ?? '—'} · Stripe ${s ?? '—'}` };
 }
 
-/** Corregido calibrado vs lo que reportan las tiendas, últimas 4 semanas completas, por procesador. */
-async function calibrationVsStores(): Promise<Omit<GuardCheck, 'id' | 'area'>> {
+interface StoreRow { date: string; store: string; country: string; status: string; paid_usd: number; net_usd: number; refunds_paid_usd: number; refunds_net_usd: number }
+
+/**
+ * Lee store_daily de [start, end] paginado y CON orden estable. Sin .order() PostgREST devuelve páginas que se
+ * traslapan y omiten filas en cuanto el rango pasa de 1,000 filas (falsa alarma del 2026-10-19: google +44 %).
+ */
+async function readStoreDaily(start: string, end: string): Promise<StoreRow[]> {
   const sb = createServerClient();
-  const today = todayMx();
-  const end = addDays(mondayOf(today), -1); const start = addDays(end, -27);
-  const rows = await fetchAgg({ start, end }, 'total', 'payment_processor');
-  if (!rows.some((r) => r.cal_gross !== 0)) return { status: 'warn', line: 'Calibración: inactiva (falta la migración 037 o el backfill de store_daily)' };
-  const store: Record<string, { paid: number; net: number }> = {};
+  const out: StoreRow[] = [];
   for (let from = 0; ; from += 1000) {
-    const { data, error } = await sb.from('store_daily').select('store,paid_usd,net_usd,refunds_paid_usd,refunds_net_usd').gte('date', start).lte('date', end).range(from, from + 999);
-    if (error) throw new Error(error.message);
-    for (const r of data ?? []) { const x = (store[r.store] ??= { paid: 0, net: 0 }); x.paid += Number(r.paid_usd) - Number(r.refunds_paid_usd); x.net += Number(r.net_usd) - Number(r.refunds_net_usd); }
+    const { data, error } = await sb.from('store_daily').select('date,store,country,status,paid_usd,net_usd,refunds_paid_usd,refunds_net_usd')
+      .gte('date', start).lte('date', end).order('date').order('store').order('country').range(from, from + 999);
+    if (error) throw new Error(`store_daily: ${error.message}`);
+    for (const r of data ?? []) out.push({ ...r, date: String(r.date), paid_usd: Number(r.paid_usd), net_usd: Number(r.net_usd), refunds_paid_usd: Number(r.refunds_paid_usd), refunds_net_usd: Number(r.refunds_net_usd) });
     if (!data || data.length < 1000) break;
   }
+  return out;
+}
+
+/**
+ * Corregido calibrado vs lo que reportan las tiendas, últimas 4 semanas completas, por procesador. Cada tienda se
+ * compara solo hasta su último día con reporte definitivo (Apple tarda 1–2 días; Google cierra el mes con el
+ * earnings): comparar 28 días calibrados contra 27 publicados daba un falso +3.9 % en Apple.
+ */
+async function calibrationVsStores(): Promise<Omit<GuardCheck, 'id' | 'area'>> {
+  const today = todayMx();
+  const end = addDays(mondayOf(today), -1); const start = addDays(end, -27);
+  const all = await fetchAgg({ start, end }, 'total', 'payment_processor');
+  if (!all.some((r) => r.cal_gross !== 0)) return { status: 'warn', line: 'Calibración: inactiva (falta la migración 037 o el backfill de store_daily)' };
+  const storeRows = await readStoreDaily(start, end);
   const lines: string[] = []; const sts: GuardStatus[] = [];
   for (const pp of ['apple', 'google', 'stripe']) {
-    const r = rows.find((x) => x.grp === pp); const s = store[pp];
-    if (!r || !s) { lines.push(`${pp}: sin datos`); sts.push('warn'); continue; }
-    const calPaid = r.cal_gross - r.cal_ref_gross; const calNet = r.cal_net - r.cal_ref_net;
-    const dp = pct(calPaid, s.paid), dn = pct(calNet, s.net);
+    const mine = storeRows.filter((r) => r.store === pp);
+    const finals = mine.filter((r) => r.status === 'final').map((r) => r.date).sort();
+    // Google: si el mes aún no tiene earnings, sus días son 'estimado' y se comparan igual (la base es la misma).
+    const ppEnd = pp === 'google' ? (mine.map((r) => r.date).sort().pop() ?? end) : (finals.pop() ?? end);
+    const s = mine.filter((r) => r.date <= ppEnd).reduce((x, r) => ({ paid: x.paid + r.paid_usd - r.refunds_paid_usd, net: x.net + r.net_usd - r.refunds_net_usd }), { paid: 0, net: 0 });
+    const r = ppEnd === end ? all.find((x) => x.grp === pp) : (await fetchAgg({ start, end: ppEnd }, 'total', 'payment_processor')).find((x) => x.grp === pp);
+    if (!r || !s.paid) { lines.push(`${pp}: sin datos`); sts.push('warn'); continue; }
+    const dp = pct(r.cal_gross - r.cal_ref_gross, s.paid), dn = pct(r.cal_net - r.cal_ref_net, s.net);
     // Los factores usan ventanas de 7 días: en 4 semanas el total debe quedar dentro de ±3 %.
     const st: GuardStatus = Math.abs(dp) > 0.08 || Math.abs(dn) > 0.08 ? 'alarm' : Math.abs(dp) > 0.03 || Math.abs(dn) > 0.03 ? 'warn' : 'ok';
     sts.push(st);
-    lines.push(`${pp} cobrado ${(dp * 100).toFixed(1)} % · neto ${(dn * 100).toFixed(1)} % ${icon(st)}`);
+    lines.push(`${pp}${ppEnd !== end ? ` (hasta ${ppEnd.slice(5)})` : ''} cobrado ${(dp * 100).toFixed(1)} % · neto ${(dn * 100).toFixed(1)} % ${icon(st)}`);
   }
   return { status: worst(sts), line: `Calibración vs tiendas (${start} → ${end}): ${lines.join(' · ')}` };
 }
 
 /** BigQuery en base Looker vs tiendas — la misma lógica de la auditoría diaria, sobre store_daily (barato). */
 async function lookerVsStores(): Promise<Omit<GuardCheck, 'id' | 'area'>> {
-  const sb = createServerClient();
   const today = todayMx();
   const end = addDays(today, -3); const start = addDays(end, -6);   // Apple publica con 1–2 días
   const rows = await fetchAgg({ start, end }, 'total', 'payment_processor');
   const store: Record<string, number> = {};
-  const { data, error } = await sb.from('store_daily').select('store,paid_usd').gte('date', start).lte('date', end).limit(5000);
-  if (error) return { status: 'warn', line: 'Tiendas vs Looker: store_daily no disponible (falta la migración 037)' };
-  for (const r of data ?? []) store[r.store] = (store[r.store] ?? 0) + Number(r.paid_usd);
+  let storeRows: StoreRow[];
+  try { storeRows = await readStoreDaily(start, end); } catch { return { status: 'warn', line: 'Tiendas vs Looker: store_daily no disponible (falta la migración 037)' }; }
+  for (const r of storeRows) store[r.store] = (store[r.store] ?? 0) + r.paid_usd;
   const parts: string[] = []; const sts: GuardStatus[] = [];
   for (const [pp, warnAt, alarmAt] of [['apple', 0.04, 0.08], ['stripe', 0.05, 0.1]] as const) {
     const r = rows.find((x) => x.grp === pp); const gross = r ? r.new_subscriptions_sales + r.refunds_total_amount_sale_date + r.renewals_sales + r.renewals_sales_yearly_ios + r.other_sales : 0;

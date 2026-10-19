@@ -13,9 +13,9 @@ auditoría diaria de tiendas (10:00 MX).
 |---|---|---|---|---|
 | `frescura.bigquery` | dbt reconstruyó `an_operational_dash` y la réplica tiene esa versión | réplica al día | réplica > 60 min atrás | BigQuery > 26 h sin reconstruir o réplica > 3 h atrás |
 | `frescura.tiendas` | último día definitivo por tienda | Apple ≤ 3 días, Google mes anterior cerrado (desde el día 9), Stripe ≤ 1 día | alguno atrasado | — |
-| `replica.dias` | réplica = BigQuery, por día × OS, 16 campos, últimos 35 días | 0 días | 1–5 días (la auto-reparación los corrige) | > 5 días |
+| `replica.dias` | réplica = BigQuery, por día × OS (16 campos) y por día × idioma y × región (8 campos), últimos 35 días | 0 días | 1–5 días (la auto-reparación los corrige) | > 5 días |
 | `formulas.paridad` | 27 KPIs × 4 ventanas (ayer, 7 días, mes en curso, mes pasado): dashboard (`replica.ts`) = BigQuery (`formulas.ts`), vista Looker completa y Corregido sin montos | 108 iguales | 1–3 distintos (suele ser un rebuild de dbt a medio camino) | > 3 distintos: cambió una fórmula |
-| `calibracion.tiendas` | Corregido calibrado vs lo que reportó cada tienda, 4 semanas completas, cobrado y neto | ±3 % | 3–8 % | > 8 % |
+| `calibracion.tiendas` | Corregido calibrado vs lo que reportó cada tienda, 4 semanas completas, cobrado y neto; cada tienda hasta su último día definitivo (lectura de store_daily ordenada) | ±3 % | 3–8 % | > 8 % |
 | `tiendas.looker` | BigQuery en base Looker vs tiendas, 7 días hasta D-3 | Apple ±4 %, Stripe ±5 %, Google en su banda conocida (+3 a +22 %) | fuera | Apple > 8 %, Stripe > 10 % |
 | `datos.invariantes` | 30 días con spend, signups y new subs > 0; CAC, C.R., CM/Sales en rangos posibles; downloads en cero (conocido) | normal | KPI fuera de rango | día sin datos |
 | `pagina.salud` | carga de la vista por default del Operativo sin caché (peor caso) | < 4 s | 4–10 s | > 10 s o error |
@@ -60,3 +60,18 @@ FT conv + purchases by country, Users needed per purchase, Cost Ranges. Bubble G
    de Google?, ¿falla la API de Stripe?) y re-sincronizar con `backfill-store-daily.ts`.
 4. **Diferencia nueva contra el Looker:** confirmar con el agente; si es real, agregarla al registro
    `lib/kpi/looker-differences.ts`, regenerar el documento (`npx tsx scripts/gen-docs.ts`) y decidir con Pepis.
+
+## Correcciones a la propia auditoría (2026-10-19)
+
+La auditoría semanal del 19-oct encontró cuatro defectos en las herramientas (no en los KPIs). Corregidos:
+
+1. Guardia `calibracion.tiendas` leía `store_daily` paginado sin orden → con > 1,000 filas las páginas se traslapaban
+   (falso google +44 %). Ahora lee ordenado por fecha, tienda y país, y compara cada tienda hasta su último día
+   definitivo (Apple tarda 1–2 días; antes daba un falso +3.9 %).
+2. Auditoría de tiendas sumaba columnas con NULL en BigQuery sin `IFNULL` → un día sin renovaciones anuales de Stripe
+   contaba como $0 (falso "Stripe −14 %"). Todas las sumas usan `IFNULL(..., 0)`.
+3. `test-kpi-replica.ts`, serie semanal: comparaba montos calibrados contra tasas fijas. Ahora compara la vista
+   Looker (sin calibrar) contra la fórmula Looker de BigQuery.
+4. La auto-reparación solo comparaba día × OS y no veía usuarios movidos entre idiomas o regiones con los mismos
+   totales por OS. Ahora compara también día × idioma y día × región, y corre en cada rebuild de dbt (sync de
+   cada 30 min), no solo una vez al día.
