@@ -33,7 +33,8 @@ export async function GET(request: NextRequest) {
     if (dry) {
       return NextResponse.json({
         ok: true, posted: false, narrativeSource: result.narrativeSource,
-        text: result.text, facts: result.facts, message: result.message,
+        text: result.text, facts: result.facts,
+        message: { ...result.message, files: result.message.files?.map((f) => ({ filename: f.filename, title: f.title, bytes: f.data.byteLength })) },
         // Las imágenes no van en el JSON: solo nombre y tamaño.
         thread: result.thread.map(({ files, ...m }) => ({ ...m, files: files?.map((f) => ({ filename: f.filename, title: f.title, bytes: f.data.byteLength })) })),
       });

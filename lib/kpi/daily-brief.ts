@@ -814,6 +814,17 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   // --- main
   const mainBlocks: SlackBlock[] = [{ type: 'header', text: { type: 'plain_text', text: title.slice(0, 150) } }];
   mainBlocks.push(sec(`*Lo más importante*\n${narrative.loMasImportante}`));
+  // Gráficas como imagen DENTRO del mensaje principal (mismos datos que el Operativo, vista Corregido).
+  // Si fallan, el brief sale igual con los enlaces.
+  let charts: { files: SlackFile[]; comment: string } | null = null;
+  try {
+    charts = await buildBriefCharts({ lwStart, lwEnd, cohorts, links: { total: linkTendencia, ios: linkOs('iOS'), android: linkOs('Android') } });
+  } catch (e) { console.error('[brief] gráficas no disponibles:', e instanceof Error ? e.message : e); }
+  if (charts) {
+    charts.files.forEach((f, i) => { mainBlocks.push({ type: 'image', _file: i, alt_text: f.title, title: { type: 'plain_text', text: f.title } } as SlackBlock); });
+    textParts.push(`[${charts.files.length} gráficas: ${charts.files.map((f) => f.title).join(' · ')}]`, '');
+    mainBlocks.push(ctx(`📊 Ver las gráficas en el dashboard: <${linkTendencia}|total por semana> · <${linkOs('iOS')}|iOS> · <${linkOs('Android')}|Android> — mismos números, vista Corregido`));
+  }
   mainBlocks.push(semaforo(`Ayer — ${dayShortEs(y)}  (vs prom. 7 días)`, daily, 'vs 7d'));
   if (week) mainBlocks.push(semaforo(`Semana ${rangeShortEs(lwStart, lwEnd)}  (vs semana anterior)`, week, 'vs sem. ant.'));
   else if (wtd) mainBlocks.push(semaforo(`Semana en curso — ${rangeShortEs(wtdStart, y)}  (vs mismos días de la semana pasada)`, wtd, 'vs sem. pas.'));
@@ -828,7 +839,7 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   }
   mainBlocks.push(sec(`*Qué revisaría hoy*\n` + narrative.queRevisariaHoy.map((a, i) => `${i + 1}. ${a}`).join('\n')));
   mainBlocks.push(ctx(`📊 Abrir en el dashboard: <${linkAyer}|últimos 30 días> · <${linkSemana}|${week ? 'semana pasada' : 'semana en curso'}> · <${linkTendencia}|tendencia 12 semanas> · <${linkDesglose}|desglose>`));
-  mainBlocks.push(ctx(`🧵 Detalle en el hilo (tablas y gráficas): ayer completo · semana · tendencia 4 semanas · alerta por OS · gráficas de 12 semanas · desglose por plataforma, idioma y país · 🟢/🔴 mejor/peor que la base · ⚪ sin cambio · ‼️ fuera de la banda de 28 días · 🤖 KPI Bot${narrativeSource === 'fallback' ? ' · narrativa automática' : ''}`));
+  mainBlocks.push(ctx(`🧵 Detalle en el hilo (tablas): ayer completo · semana · tendencia 4 semanas · alerta por OS · desglose por plataforma, idioma y país · 🟢/🔴 mejor/peor que la base · ⚪ sin cambio · ‼️ fuera de la banda de 28 días · 🤖 KPI Bot${narrativeSource === 'fallback' ? ' · narrativa automática' : ''}`));
 
   // --- thread
   textParts.push('——— 🧵 HILO ———', '');
@@ -857,13 +868,7 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   ] });
   // Los lunes la alerta por OS va en el mensaje principal; el resto de la semana, en el hilo.
   if (!weekly) thread.push({ text: 'Alerta semanal por OS', blocks: osWeeklyBlocks() });
-  // Gráficas como imagen (mismos datos que el Operativo). Si fallan, el brief sale igual con los enlaces.
-  let charts: { files: SlackFile[]; comment: string } | null = null;
-  try {
-    charts = await buildBriefCharts({ lwStart, lwEnd, cohorts, links: { total: linkTendencia, ios: linkOs('iOS'), android: linkOs('Android') } });
-  } catch (e) { console.error('[brief] gráficas no disponibles:', e instanceof Error ? e.message : e); }
-  thread.push({ text: 'Gráficas', blocks: [], files: charts?.files, filesComment: charts?.comment ?? `📊 <${linkTendencia}|Ver tendencia de 12 semanas en el dashboard>` });
-  if (charts) textParts.push(`[${charts.files.length} gráficas: ${charts.files.map((f) => f.title).join(' · ')}]`, charts.comment, '');
+
   const bdTitle = weekly ? 'semana pasada vs anterior' : 'ayer vs prom. 7d';
   const segRow = (r: SegmentRow, suffix = '') => [r.segment + suffix, ...DIM_KPIS.map((k) => valDelta(k, r.curr[k], r.base[k]))];
   thread.push({
@@ -887,7 +892,7 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   thread.push({ text: 'Notas y fuente', blocks: notasBlocks });
 
   return {
-    message: { text: `${title} — ${narrative.loMasImportante.slice(0, 180)}`, blocks: mainBlocks },
+    message: { text: `${title} — ${narrative.loMasImportante.slice(0, 180)}`, blocks: mainBlocks, files: charts?.files },
     thread,
     text: textParts.join('\n'),
     facts,

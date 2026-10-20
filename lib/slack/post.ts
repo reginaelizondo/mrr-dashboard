@@ -22,7 +22,11 @@ export interface SlackFile {
 export interface SlackMessage {
   text: string; // fallback text used in notifications
   blocks?: SlackBlock[];
-  /** Imágenes (PNG) que se suben al hilo después de este mensaje, con `filesComment` como texto. Solo por el bot. */
+  /**
+   * Imágenes (PNG). Si `blocks` trae bloques `{ type: 'image', _file: i }`, la imagen i va DENTRO del mensaje
+   * (se sube primero sin compartir y se referencia con `slack_file`). Si no, se suben al hilo después del mensaje
+   * con `filesComment` como texto. Solo por el bot.
+   */
   files?: SlackFile[];
   filesComment?: string;
 }
@@ -109,6 +113,52 @@ export async function uploadFiles(token: string, channel: string, files: SlackFi
   }
 }
 
+const isImagePlaceholder = (b: SlackBlock) => b.type === 'image' && typeof b._file === 'number';
+
+/** Sube archivos sin compartirlos en ningún canal; devuelve sus ids (para bloques `image` con `slack_file`). */
+async function uploadPrivate(token: string, files: SlackFile[]): Promise<string[] | null> {
+  const ids: string[] = [];
+  for (const f of files) {
+    const u = await fetch('https://slack.com/api/files.getUploadURLExternal', {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ filename: f.filename, length: String(f.data.byteLength) }),
+    }).then((x) => x.json()).catch(() => null);
+    if (!u?.ok) { console.error('[slack] getUploadURLExternal:', u?.error); return null; }
+    const put = await fetch(u.upload_url, { method: 'POST', body: new Blob([f.data as BlobPart], { type: 'image/png' }) }).catch(() => null);
+    if (!put?.ok) return null;
+    ids.push(u.file_id);
+  }
+  const done = await fetch('https://slack.com/api/files.completeUploadExternal', {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify({ files: ids.map((id, i) => ({ id, title: files[i].title })) }),
+  }).then((x) => x.json()).catch(() => null);
+  if (!done?.ok) { console.error('[slack] completeUploadExternal:', done?.error); return null; }
+  return ids;
+}
+
+/**
+ * Publica un mensaje con imágenes dentro (bloques `image` con `_file`). Slack tarda unos segundos en procesar el
+ * archivo ("invalid slack file"), así que se reintenta; si no se puede subir, el mensaje sale sin las imágenes.
+ */
+async function postWithImages(token: string, channel: string, message: SlackMessage, threadTs?: string): Promise<PostResult> {
+  const blocks = message.blocks ?? [];
+  const ids = message.files?.length ? await uploadPrivate(token, message.files) : null;
+  const withImages = ids
+    ? blocks.map((b) => (isImagePlaceholder(b) ? (({ _file, ...rest }) => ({ ...rest, slack_file: { id: ids[_file as number] } }))(b) : b))
+    : blocks.filter((b) => !isImagePlaceholder(b));
+  let r: PostResult = { ok: false };
+  for (let i = 0; i < 6; i++) {
+    r = await postChatMessage(token, channel, { ...message, blocks: withImages }, threadTs);
+    if (r.ok || !ids || !/invalid_blocks/.test(r.error ?? '')) break;
+    await new Promise((res) => setTimeout(res, 2500));
+  }
+  if (!r.ok && ids) {
+    console.error('[slack] mensaje con imágenes falló, se manda sin ellas:', r.error);
+    r = await postChatMessage(token, channel, { ...message, blocks: blocks.filter((b) => !isImagePlaceholder(b)) }, threadTs);
+  }
+  return r;
+}
+
 /** Flatten main + thread into one webhook message (fallback path). */
 function mergeForWebhook(post: ThreadedPost): SlackMessage {
   const blocks: SlackBlock[] = [...(post.main.blocks ?? [])];
@@ -116,16 +166,22 @@ function mergeForWebhook(post: ThreadedPost): SlackMessage {
     blocks.push({ type: 'divider' });
     blocks.push(...(m.blocks ?? []));
   }
-  return { text: post.main.text, blocks: degradeTables(blocks).slice(0, 50) };
+  return { text: post.main.text, blocks: degradeTables(blocks.filter((b) => !isImagePlaceholder(b))).slice(0, 50) };
 }
 
 export async function postWithThread(post: ThreadedPost): Promise<{ via: 'bot' | 'webhook'; ts?: string }> {
   const token = process.env.SLACK_BOT_TOKEN;
   const channel = process.env.SLACK_BRIEF_CHANNEL;
   if (token && channel) {
-    const main = await postChatMessage(token, channel, post.main);
+    const inline = (m: SlackMessage) => !!m.files?.length && !!m.blocks?.some(isImagePlaceholder);
+    const main = inline(post.main) ? await postWithImages(token, channel, post.main) : await postChatMessage(token, channel, post.main);
     if (main.ok && main.ts) {
       for (const m of post.thread) {
+        if (inline(m)) {
+          const r = await postWithImages(token, channel, m, main.ts);
+          if (!r.ok) console.error('[slack] thread reply failed:', r.error);
+          continue;
+        }
         if (m.blocks?.length) {
           const r = await postChatMessage(token, channel, m, main.ts);
           if (!r.ok) console.error('[slack] thread reply failed:', r.error);
