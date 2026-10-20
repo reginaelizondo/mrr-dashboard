@@ -818,12 +818,12 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   // Si fallan, el brief sale igual con los enlaces.
   let charts: { files: SlackFile[]; comment: string } | null = null;
   try {
-    charts = await buildBriefCharts({ lwStart, lwEnd, cohorts, links: { total: linkTendencia, ios: linkOs('iOS'), android: linkOs('Android') } });
+    charts = await buildBriefCharts({ lwStart, lwEnd, yesterday: y, cohorts, links: { total: linkTendencia, ios: linkOs('iOS'), android: linkOs('Android') } });
   } catch (e) { console.error('[brief] gráficas no disponibles:', e instanceof Error ? e.message : e); }
   if (charts) {
     charts.files.forEach((f, i) => { mainBlocks.push({ type: 'image', _file: i, alt_text: f.title, title: { type: 'plain_text', text: f.title } } as SlackBlock); });
     textParts.push(`[${charts.files.length} gráficas: ${charts.files.map((f) => f.title).join(' · ')}]`, '');
-    mainBlocks.push(ctx(`📊 Ver las gráficas en el dashboard: <${linkTendencia}|total por semana> · <${linkOs('iOS')}|iOS> · <${linkOs('Android')}|Android> — mismos números, vista Corregido`));
+    mainBlocks.push(ctx(`📊 Ver las gráficas en el dashboard: <${linkAyer}&kpi=spend&vs=signups|spend vs signups 30 días> · <${linkTendencia}|total por semana> · <${linkOs('iOS')}|iOS> · <${linkOs('Android')}|Android> — mismos números, vista Corregido`));
   }
   mainBlocks.push(semaforo(`Ayer — ${dayShortEs(y)}  (vs prom. 7 días)`, daily, 'vs 7d'));
   if (week) mainBlocks.push(semaforo(`Semana ${rangeShortEs(lwStart, lwEnd)}  (vs semana anterior)`, week, 'vs sem. ant.'));

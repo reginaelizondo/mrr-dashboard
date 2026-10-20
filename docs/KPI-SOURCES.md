@@ -217,7 +217,7 @@ total lo domina iOS (≈ 86 % de New Subs), así que una baja de Android no se v
   mismo día), semana en curso / semana pasada, tendencia de 4 semanas, alerta por OS y desglose por plataforma,
   idioma y país. Si Slack rechaza el bloque, `lib/slack/post.ts` reintenta con la tabla en texto monoespaciado; el
   respaldo por webhook también la manda así.
-- **Gráficas PNG dentro del mensaje principal**, debajo de "Lo más importante" (`lib/kpi/brief-charts.tsx`; se suben sin compartir y se insertan con bloques `image` + `slack_file`, reintentando unos segundos mientras Slack procesa el archivo): "últimas 12 semanas" (New Subs, CAC, Conversion Rate,
+- **Gráficas PNG dentro del mensaje principal**, debajo de "Lo más importante" (`lib/kpi/brief-charts.tsx`; se suben sin compartir y se insertan con bloques `image` + `slack_file`, reintentando unos segundos mientras Slack procesa el archivo): "spend vs signups, últimos 30 días" (barras = signups, línea = spend en doble eje, más CPNU; ayer vs promedio de los 7 días previos), "últimas 12 semanas" (New Subs, CAC, Conversion Rate,
   Total Contribution) y "por OS" (C.R., CAC y cohorte a 8 días para iOS y Android). Mismos datos que el Operativo
   (réplica, vista Corregido); el "vs 4 sem." usa la misma base que la alerta por OS. Se dibujan en el servidor con
   `next/og` (sin servicios externos) y se suben con `files:write` (permiso agregado el 2026-10-20). Cada envío trae
