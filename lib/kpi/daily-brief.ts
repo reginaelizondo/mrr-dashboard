@@ -19,7 +19,9 @@ import {
   writeBriefNarrative,
   type BriefFacts, type BriefNarrative, type FactComparison, type FactBreakdownRow,
 } from './brief-writer';
-import type { SlackMessage } from '@/lib/slack/post';
+import type { SlackMessage, SlackFile } from '@/lib/slack/post';
+import { tableBlock, tableToMrkdwn } from '@/lib/slack/table';
+import { buildBriefCharts } from './brief-charts';
 
 /**
  * Daily KPI brief — "Morning brief KPIs — Kinedu".
@@ -125,6 +127,8 @@ const OS_WEEKLY_MIN_PCT = 10;   // ±10 % vs la base
 const OS_WEEKLY_MIN_SUBS = 50;  // la base necesita ≥ 50 New Subs por semana; si no, es ruido
 /** Cohorte de signup: la última semana cuyos signups ya cumplieron 8 días + las 4 previas. */
 const COHORT_WEEKS = 5;
+/** Semanas de cohorte que se leen (12 para la gráfica; la alerta usa las últimas COHORT_WEEKS). */
+const COHORT_FETCH_WEEKS = 12;
 const COHORT_MIN_SIGNUPS = 1000;
 
 const Z_FLAG = 1.5;        // sd multiples outside the band
@@ -257,17 +261,6 @@ function dot(key: KPIKey, value: number | null, base: number | null): string {
   return good ? '🟢' : '🔴';
 }
 
-function renderComparisonLine(c: Comparison, baseLabel: string, sameLabel?: string): string {
-  const parts = [`*${KPI_LABELS[c.key]}* ${fmtValue(c.key, c.value)}`];
-  const d1 = fmtDelta(c.key, c.value, c.base);
-  if (d1) parts.push(`${dot(c.key, c.value, c.base)} ${d1} ${baseLabel}`);
-  if (sameLabel && c.sameDay !== null) {
-    const d2 = fmtDelta(c.key, c.value, c.sameDay);
-    if (d2) parts.push(`${dot(c.key, c.value, c.sameDay)} ${d2} ${sameLabel}`);
-  }
-  const mark = c.flag ? '  ‼️' : '';
-  return `• ${parts.join('  ·  ')}${mark}`;
-}
 
 // ---- Breakdown -----------------------------------------------------------------
 
@@ -316,14 +309,6 @@ function pickCountries(curr: Record<string, KPIValues>, base: Record<string, KPI
   return { list: [...CORE_COUNTRIES, ...extras], extras: new Set(extras) };
 }
 
-function renderSegmentLine(r: SegmentRow, suffix = ''): string {
-  const cells = DIM_KPIS.map((k) => {
-    const d = fmtDelta(k, r.curr[k], r.base[k]);
-    const short = k === 'newSubs' ? 'subs' : k === 'nsSales' ? 'NS' : k === 'cac' ? 'CAC' : 'conv';
-    return `${short} ${fmtValue(k, r.curr[k])}${d ? ` (${dot(k, r.curr[k], r.base[k])} ${d})` : ''}`;
-  });
-  return `• *${r.segment}*: ${cells.join(' · ')}${suffix}`;
-}
 
 function toBreakdownFacts(rows: SegmentRow[]): FactBreakdownRow[] {
   return rows.map((r) => ({
@@ -567,7 +552,7 @@ function osWeeklyCheck(byOs: Record<string, Record<string, KPIValues>>, cohorts:
       return { key, value, base, flag: enough ? flagOf(key, value, base) : null };
     });
     let cohort: OsWeekly['cohort'] = null;
-    const cw = cohorts?.[os] ?? [];
+    const cw = (cohorts?.[os] ?? []).slice(-COHORT_WEEKS);
     const last = cw[cw.length - 1]; const prev = cw.slice(0, -1);
     const prevSignups = sumOf(prev.map((c) => c.signups));
     if (last?.rate != null && prev.length && prevSignups && last.signups >= COHORT_MIN_SIGNUPS) {
@@ -655,7 +640,7 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
     fetchKPIsByPeriodAndDimension(periods, 'country'),
     fetchDailySeries(addDays(y, -28), addDays(y, -1)),
     fetchTableFreshness(),
-    fetchCohortConversion(lastCohortWeek, COHORT_WEEKS).catch((e) => { console.error('[brief] cohortes no disponibles:', e instanceof Error ? e.message : e); return null; }),
+    fetchCohortConversion(lastCohortWeek, COHORT_FETCH_WEEKS).catch((e) => { console.error('[brief] cohortes no disponibles:', e instanceof Error ? e.message : e); return null; }),
   ]);
 
   // Weekday-seasonal noise bands from the 28 days before yesterday
@@ -712,7 +697,7 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
     const prev = vals.slice(0, 3).filter((v): v is number => v !== null);
     const avgPrev = prev.length ? prev.reduce((a, b) => a + b, 0) / prev.length : null;
     const last = vals[3];
-    return { key: k, line: vals.map((v) => fmtValue(k, v)).join(' → '), mark: dot(k, last, avgPrev) };
+    return { key: k, vals, avgPrev, line: vals.map((v) => fmtValue(k, v)).join(' → '), mark: dot(k, last, avgPrev) };
   });
 
   // Alerta semanal por OS (semana cerrada vs 4 previas + cohorte de signup a 8 días)
@@ -795,6 +780,26 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   const textParts: string[] = [title, ''];
   const sec = (md: string): SlackBlock => { textParts.push(md, ''); return { type: 'section', text: { type: 'mrkdwn', text: md.slice(0, 2900) } }; };
   const ctx = (md: string): SlackBlock => { textParts.push(`_${md}_`, ''); return { type: 'context', elements: [{ type: 'mrkdwn', text: md.slice(0, 2900) }] }; };
+  // Tablas nativas de Slack (una por mensaje); si Slack no las acepta, lib/slack/post las manda en texto monoespaciado.
+  const table = (header: string[], rows: string[][]): SlackBlock => {
+    const t = tableBlock(header, rows); textParts.push(tableToMrkdwn(t), '');
+    return t as unknown as SlackBlock;
+  };
+  const deltaCell = (k: KPIKey, v: number | null, b: number | null) => { const d = fmtDelta(k, v, b); return d ? `${dot(k, v, b)} ${d}` : '—'; };
+  const valDelta = (k: KPIKey, v: number | null, b: number | null) => { const d = fmtDelta(k, v, b); return `${fmtValue(k, v)}${d ? `  ${dot(k, v, b)} ${d}` : ''}`; };
+  const compRows = (cs: Comparison[], withSame: boolean) => cs.map((c) => [
+    KPI_LABELS[c.key], fmtValue(c.key, c.value), deltaCell(c.key, c.value, c.base),
+    ...(withSame ? [c.sameDay === null ? '—' : deltaCell(c.key, c.value, c.sameDay)] : []), c.flag ? '‼️' : '',
+  ]);
+  const weekHdr = (start: string) => dayShortEs(start).split(' ').slice(-1)[0];
+  const osTable = () => {
+    const cohortWeek = osWeekly.find((o) => o.cohort)?.cohort?.week;
+    const fl = (l: OsWeeklyLine | undefined) => (l ? `${fmtValue(l.key, l.value)}  ${flagDot(l.flag)} ${fmtDelta(l.key, l.value, l.base) ?? 'n/d'}` : '—');
+    return table(['OS', 'C.R.', 'CAC', 'New Subs', cohortWeek ? `Cohorte ${weekHdr(cohortWeek)} · 8 días` : 'Cohorte 8 días'],
+      osWeekly.map((o) => [`${o.os} ${flagDot(o.status)}`, ...OS_WEEKLY_KPIS.map((k) => fl(o.lines.find((l) => l.key === k))),
+        o.cohort ? `${(o.cohort.rate * 100).toFixed(2)}%  ${flagDot(o.cohort.flag)} ${fmtDelta('conversionRate', o.cohort.rate, o.cohort.base) ?? 'n/d'}` : '—']));
+  };
+  const osLinks = `📊 ${OS_SEGMENTS.map((os) => `<${linkOs(os)}|${os} por semana>`).join(' · ')}`;
   const semaforo = (heading: string, comps: Comparison[], baseLabel: string): SlackBlock => {
     const fields = SEMAFORO_KPIS.flatMap((k) => {
       const c = comps.find((x) => x.key === k);
@@ -812,16 +817,18 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   mainBlocks.push(semaforo(`Ayer — ${dayShortEs(y)}  (vs prom. 7 días)`, daily, 'vs 7d'));
   if (week) mainBlocks.push(semaforo(`Semana ${rangeShortEs(lwStart, lwEnd)}  (vs semana anterior)`, week, 'vs sem. ant.'));
   else if (wtd) mainBlocks.push(semaforo(`Semana en curso — ${rangeShortEs(wtdStart, y)}  (vs mismos días de la semana pasada)`, wtd, 'vs sem. pas.'));
-  const osWeeklyBlock = () => sec(`*Alerta semanal por OS* — semana ${rangeShortEs(lwStart, lwEnd)} vs promedio de las 4 previas  _(🔴/🟢 = ±10 % o más)_\n`
-    + osWeekly.map(renderOsWeekly).join('\n')
-    + `\n_Cohorte = de quienes se registraron esa semana, cuántos compraron en sus primeros 8 días (incluye el trial); misma fuente que el Tableau de cohortes. 📊 ${OS_SEGMENTS.map((os) => `<${linkOs(os)}|${os} por semana>`).join(' · ')}_`);
-  if (weekly) mainBlocks.push(osWeeklyBlock());
+  const osWeeklyBlocks = (): SlackBlock[] => [
+    sec(`*Alerta semanal por OS* — semana ${rangeShortEs(lwStart, lwEnd)} vs promedio de las 4 previas  _(🔴/🟢 = ±10 % o más)_`),
+    osTable(),
+    ctx(`Cohorte = de quienes se registraron esa semana, cuántos compraron en sus primeros 8 días (incluye el trial); misma fuente que el Tableau de cohortes · ${osLinks}`),
+  ];
+  if (weekly) mainBlocks.push(...osWeeklyBlocks());
   if (causas.length) {
     mainBlocks.push(sec(`*Por qué se movió*\n` + causas.slice(0, 3).map((c) => `• *${KPI_LABELS[c.key]}*${c.scope === 'semana' ? ' (semana)' : ''}: ${c.text}.`).join('\n')));
   }
   mainBlocks.push(sec(`*Qué revisaría hoy*\n` + narrative.queRevisariaHoy.map((a, i) => `${i + 1}. ${a}`).join('\n')));
   mainBlocks.push(ctx(`📊 Abrir en el dashboard: <${linkAyer}|últimos 30 días> · <${linkSemana}|${week ? 'semana pasada' : 'semana en curso'}> · <${linkTendencia}|tendencia 12 semanas> · <${linkDesglose}|desglose>`));
-  mainBlocks.push(ctx(`🧵 Detalle en el hilo: ayer completo · semana · desglose por plataforma, idioma y país · tendencia 4 semanas · 🟢/🔴 mejor/peor que la base · ⚪ sin cambio · ‼️ fuera de la banda de 28 días · 🤖 KPI Bot${narrativeSource === 'fallback' ? ' · narrativa automática' : ''}`));
+  mainBlocks.push(ctx(`🧵 Detalle en el hilo (tablas y gráficas): ayer completo · semana · tendencia 4 semanas · alerta por OS · gráficas de 12 semanas · desglose por plataforma, idioma y país · 🟢/🔴 mejor/peor que la base · ⚪ sin cambio · ‼️ fuera de la banda de 28 días · 🤖 KPI Bot${narrativeSource === 'fallback' ? ' · narrativa automática' : ''}`));
 
   // --- thread
   textParts.push('——— 🧵 HILO ———', '');
@@ -829,23 +836,45 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   thread.push({
     text: 'Ayer — detalle',
     blocks: [
-      sec(`*Ayer — ${dayShortEs(y)}*  _(vs prom. 7d · ${sameLabel})_\n` + (narrative.comentarioAyer ? `${narrative.comentarioAyer}\n` : '') + `_Adquisición_\n` + dailyAcq.map((c) => renderComparisonLine(c, 'vs prom. 7d', sameLabel)).join('\n')),
-      sec(`_Monetización_\n` + dailyMon.map((c) => renderComparisonLine(c, 'vs prom. 7d', sameLabel)).join('\n')),
+      sec(`*Ayer — ${dayShortEs(y)}*  _(vs prom. 7d · ${sameLabel})_` + (narrative.comentarioAyer ? `\n${narrative.comentarioAyer}` : '')),
+      table(['KPI', 'Ayer', 'vs prom. 7d', sameLabel, ''], [['§Adquisición'], ...compRows(dailyAcq, true), ['§Monetización'], ...compRows(dailyMon, true)]),
+      ctx(`🟢/🔴 mejor/peor que la base · ‼️ fuera de la banda de 28 días · 📊 <${linkAyer}|últimos 30 días en el dashboard>`),
     ],
   });
-  const semanaBlocks: SlackBlock[] = [];
-  if (wtd) semanaBlocks.push(sec(`*Semana en curso — ${rangeShortEs(wtdStart, y)} (${wtdDays} días)*  _(vs mismos días de la semana pasada)_\n` + wtd.map((c) => renderComparisonLine(c, 'vs sem. pasada')).join('\n')));
-  if (week) semanaBlocks.push(sec(`*Semana pasada — ${rangeShortEs(lwStart, lwEnd)}*  _(vs ${rangeShortEs(addDays(lwStart, -7), addDays(lwEnd, -7))})_\n` + week.map((c) => renderComparisonLine(c, 'vs sem. anterior')).join('\n')));
-  semanaBlocks.push(sec(`*Tendencia — últimas 4 semanas completas*  _(${rangeShortEs(addDays(lwStart, -21), addDays(lwEnd, -21))} → ${rangeShortEs(lwStart, lwEnd)}; color = última vs promedio de las 3 previas)_\n` + trend.map((t) => `• *${KPI_LABELS[t.key]}*: ${t.line}  ${t.mark}`).join('\n')));
-  if (!weekly) semanaBlocks.push(osWeeklyBlock()); // los lunes va en el mensaje principal
-  semanaBlocks.push(ctx(`📊 <${linkTendencia}|Ver tendencia de 12 semanas en el dashboard>`));
-  thread.push({ text: 'Semana y tendencia', blocks: semanaBlocks });
+  if (wtd) thread.push({ text: 'Semana en curso', blocks: [
+    sec(`*Semana en curso — ${rangeShortEs(wtdStart, y)} (${wtdDays} días)*  _(vs mismos días de la semana pasada)_`),
+    table(['KPI', `${wtdDays} días`, 'vs sem. pasada', ''], compRows(wtd, false)),
+  ] });
+  if (week) thread.push({ text: 'Semana pasada', blocks: [
+    sec(`*Semana pasada — ${rangeShortEs(lwStart, lwEnd)}*  _(vs ${rangeShortEs(addDays(lwStart, -7), addDays(lwEnd, -7))})_`),
+    table(['KPI', 'Semana', 'vs anterior', ''], compRows(week, false)),
+  ] });
+  const trendStarts = [-21, -14, -7, 0].map((d) => addDays(lwStart, d));
+  thread.push({ text: 'Tendencia 4 semanas', blocks: [
+    sec(`*Tendencia — últimas 4 semanas completas*  _(semanas lun–dom; color = última vs promedio de las 3 previas)_`),
+    table(['KPI', ...trendStarts.map((d) => `sem. ${weekHdr(d)}`), 'vs 3 previas'],
+      trend.map((t) => [KPI_LABELS[t.key], ...t.vals.map((v) => fmtValue(t.key, v)), deltaCell(t.key, t.vals[3], t.avgPrev)])),
+  ] });
+  // Los lunes la alerta por OS va en el mensaje principal; el resto de la semana, en el hilo.
+  if (!weekly) thread.push({ text: 'Alerta semanal por OS', blocks: osWeeklyBlocks() });
+  // Gráficas como imagen (mismos datos que el Operativo). Si fallan, el brief sale igual con los enlaces.
+  let charts: { files: SlackFile[]; comment: string } | null = null;
+  try {
+    charts = await buildBriefCharts({ lwStart, lwEnd, cohorts, links: { total: linkTendencia, ios: linkOs('iOS'), android: linkOs('Android') } });
+  } catch (e) { console.error('[brief] gráficas no disponibles:', e instanceof Error ? e.message : e); }
+  thread.push({ text: 'Gráficas', blocks: [], files: charts?.files, filesComment: charts?.comment ?? `📊 <${linkTendencia}|Ver tendencia de 12 semanas en el dashboard>` });
+  if (charts) textParts.push(`[${charts.files.length} gráficas: ${charts.files.map((f) => f.title).join(' · ')}]`, charts.comment, '');
   const bdTitle = weekly ? 'semana pasada vs anterior' : 'ayer vs prom. 7d';
+  const segRow = (r: SegmentRow, suffix = '') => [r.segment + suffix, ...DIM_KPIS.map((k) => valDelta(k, r.curr[k], r.base[k]))];
   thread.push({
     text: 'Desglose',
     blocks: [
-      sec(`*Desglose — ${bdTitle}*  _(subs · NS Sales · CAC · conv)_\n` + (narrative.comentarioDesglose ? `${narrative.comentarioDesglose}\n` : '') + `_Plataforma_\n${osRows.map((r) => renderSegmentLine(r)).join('\n')}\n_Idioma_\n${langRows.map((r) => renderSegmentLine(r)).join('\n')}`),
-      sec(`_País (US · BR · MX${picked.extras.size ? ' + movimientos relevantes' : ''})_\n` + countryRows.map((r) => renderSegmentLine(r, picked.extras.has(r.segment) ? '  ← entra por movimiento' : '')).join('\n')),
+      sec(`*Desglose — ${bdTitle}*` + (narrative.comentarioDesglose ? `\n${narrative.comentarioDesglose}` : '')),
+      table(['Segmento', 'New Subs', 'NS Sales', 'CAC', 'Conv. Rate'], [
+        ['§Plataforma'], ...osRows.map((r) => segRow(r)),
+        ['§Idioma'], ...langRows.map((r) => segRow(r)),
+        [`§País (US · BR · MX${picked.extras.size ? ' + movimientos' : ''})`], ...countryRows.map((r) => segRow(r, picked.extras.has(r.segment) ? ' ←' : '')),
+      ]),
       ctx(`📊 <${linkDesglose}|Ver el desglose completo en el dashboard> (todas las regiones, idiomas y países)`),
     ],
   });
