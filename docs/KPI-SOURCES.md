@@ -210,3 +210,15 @@ total lo domina iOS (≈ 86 % de New Subs), así que una baja de Android no se v
 - Código: `osWeeklyCheck` / `renderOsWeekly` en `lib/kpi/daily-brief.ts`,
   `fetchCohortConversion` en `lib/kpi/brief-queries.ts`. Si la consulta de cohortes
   falla, el brief sale sin esa línea (no se cae).
+
+## Formato del brief en Slack (desde 2026-10-20)
+
+- **Tablas nativas de Slack** (bloque `table`, una por mensaje): ayer (adquisición y monetización, vs prom. 7d y vs
+  mismo día), semana en curso / semana pasada, tendencia de 4 semanas, alerta por OS y desglose por plataforma,
+  idioma y país. Si Slack rechaza el bloque, `lib/slack/post.ts` reintenta con la tabla en texto monoespaciado; el
+  respaldo por webhook también la manda así.
+- **Gráficas PNG** en el hilo (`lib/kpi/brief-charts.tsx`): "últimas 12 semanas" (New Subs, CAC, Conversion Rate,
+  Total Contribution) y "por OS" (C.R., CAC y cohorte a 8 días para iOS y Android). Mismos datos que el Operativo
+  (réplica, vista Corregido); el "vs 4 sem." usa la misma base que la alerta por OS. Se dibujan en el servidor con
+  `next/og` (sin servicios externos) y se suben con `files:write` (permiso agregado el 2026-10-20). Cada envío trae
+  enlaces al Operativo con el mismo periodo y filtro. Si la gráfica falla, el brief sale igual con los enlaces.

@@ -132,6 +132,8 @@ export async function postWithThread(post: ThreadedPost): Promise<{ via: 'bot' |
         }
         if (m.files?.length) {
           const f = await uploadFiles(token, channel, m.files, m.filesComment, main.ts);
+          // Slack comparte el archivo de forma asíncrona: se espera para que el hilo conserve el orden.
+          if (f.ok) await new Promise((res) => setTimeout(res, 6000));
           // Sin imagen (p. ej. falta files:write), al menos van los enlaces.
           if (!f.ok) {
             console.error('[slack] image upload failed:', f.error);
