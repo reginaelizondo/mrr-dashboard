@@ -190,3 +190,41 @@ export async function fetchTableFreshness(): Promise<string | null> {
     return null;
   }
 }
+
+// ---- Conversión por cohorte de signup (misma fuente que el Tableau "Conversion (Weekly) by Signup Cohort") ----
+
+/** Tabla por usuario: fecha de signup y de primera compra premium. Los signups por semana cuadran con el Tableau. */
+export const CONVERSION_COHORT_TABLE = '`celtic-music-240111.dbt_prod_analytics.an_conversion_analysis`';
+/** Ventana de conversión: compra dentro de los 8 días del signup (día 0 a 7). Incluye el cobro del trial
+ *  (3 días en Android, 7 en iOS), así que compara cohortes a la misma edad. */
+export const COHORT_WINDOW_DAYS = 7;
+
+export interface CohortWeek { week: string; signups: number; converted: number; rate: number | null }
+
+/**
+ * Conversión a 8 días por semana ISO de signup y por OS, para las semanas cuyo último signup ya cumplió los
+ * 8 días (`lastCompleteWeek` y anteriores). `weeks` = cuántas semanas completas, de la más vieja a la más nueva.
+ */
+export async function fetchCohortConversion(lastCompleteWeek: string, weeks: number): Promise<Record<string, CohortWeek[]>> {
+  if (!DATE_RE.test(lastCompleteWeek)) throw new Error(`Invalid cohort week: ${lastCompleteWeek}`);
+  const bq = getBigQueryClient();
+  const query = `
+    WITH u AS (
+      SELECT user_id, ANY_VALUE(os) AS os, MIN(signup_date) AS s, MIN(premium_conversion_date) AS c
+      FROM ${CONVERSION_COHORT_TABLE}
+      WHERE signup_date BETWEEN DATE_SUB(@last, INTERVAL @back DAY) AND DATE_ADD(@last, INTERVAL 6 DAY)
+      GROUP BY user_id
+    )
+    SELECT CAST(DATE_TRUNC(s, ISOWEEK) AS STRING) AS wk, os, COUNT(*) AS signups,
+      COUNTIF(c IS NOT NULL AND DATE_DIFF(c, s, DAY) BETWEEN 0 AND ${COHORT_WINDOW_DAYS}) AS converted
+    FROM u WHERE os IN ('iOS', 'Android')
+    GROUP BY wk, os ORDER BY os, wk
+  `;
+  const [rows] = await bq.query({ query, params: { last: lastCompleteWeek, back: 7 * (weeks - 1) } });
+  const out: Record<string, CohortWeek[]> = {};
+  for (const r of rows as Record<string, unknown>[]) {
+    const signups = toNumber(r.signups) ?? 0; const converted = toNumber(r.converted) ?? 0;
+    (out[String(r.os)] ??= []).push({ week: String(r.wk), signups, converted, rate: signups ? converted / signups : null });
+  }
+  return out;
+}

@@ -182,6 +182,31 @@ bruta. Se reproduce tal cual; no entra en el brief.
 
 ## Qué queda fuera de esta tabla
 
-MRR devengado, comisiones reales de tiendas, refunds por SKU, cohortes: viven en
-Supabase (`mrr-dashboard`) y las APIs directas de Apple/Google/Stripe. No son
-parte del brief operativo diario.
+MRR devengado, comisiones reales de tiendas y refunds por SKU viven en Supabase
+(`mrr-dashboard`) y las APIs directas de Apple/Google/Stripe. No son parte del
+brief operativo diario. Las cohortes de signup sí entran desde el 2026-10-20 (abajo).
+
+## Alerta semanal por OS y conversión por cohorte (desde 2026-10-20)
+
+Motivo: el 20-oct el brief salió "en rango" mientras el Tableau "Conversion (Weekly)
+by Signup Cohort" mostraba a Android bajando. El brief compara un día contra 7 y el
+total lo domina iOS (≈ 86 % de New Subs), así que una baja de Android no se ve.
+
+- **Qué compara:** por OS (iOS, Android), la última semana completa (lun–dom) contra
+  las 4 previas: C.R., CAC y New Subs. Base = promedio semanal para conteos y
+  cociente de las sumas de las 4 semanas para ratios. 🔴/🟢 con ±10 % o más
+  (redondeado, como se muestra) y solo si la base tiene ≥ 50 New Subs por semana.
+- **Cohorte:** `dbt_prod_analytics.an_conversion_analysis` (una fila por usuario y
+  venta; `signup_date`, `premium_conversion_date`). Es la fuente del Tableau: los
+  signups por semana cuadran (8,302 · 11,662 · … · 6,083). Métrica: de los que se
+  registraron esa semana ISO, % que compró entre el día 0 y el 7 (incluye el cobro
+  del trial: día 3 en Android, día 7 en iOS). Se usa la última semana cuyo domingo
+  + 7 días ≤ ayer, contra las 4 cohortes previas (cociente de sumas), mínimo 1,000
+  signups. El Tableau acumula semanas a conversión, así que sus % de cohortes
+  maduras salen algo más altos; a la misma edad la tendencia es la misma.
+- **Dónde sale:** los lunes en el mensaje principal (y en "Lo más importante" y "Qué
+  revisaría hoy" si hay 🔴); el resto de la semana en el hilo "Semana y tendencia".
+  Enlaces al Operativo filtrado por OS, por semana, con C.R. vs CAC en el explorador.
+- Código: `osWeeklyCheck` / `renderOsWeekly` en `lib/kpi/daily-brief.ts`,
+  `fetchCohortConversion` en `lib/kpi/brief-queries.ts`. Si la consulta de cohortes
+  falla, el brief sale sin esa línea (no se cae).

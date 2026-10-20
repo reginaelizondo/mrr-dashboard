@@ -3,7 +3,9 @@ import {
   fetchKPIsByPeriodAndDimension,
   fetchDailySeries,
   fetchTableFreshness,
+  fetchCohortConversion,
   emptyValues,
+  type CohortWeek,
   type KPIValues,
   type NamedPeriod,
   type DailyRow,
@@ -115,6 +117,15 @@ const MOVER_KPIS: KPIKey[] = ['newSubs', 'nsSales', 'spend'];
 
 const OS_SEGMENTS = ['iOS', 'Android'];
 const LANG_SEGMENTS = ['en', 'es', 'pt'];
+
+/** Alerta semanal por OS: última semana completa vs las 4 previas (ratios = cociente de las sumas). */
+const OS_WEEKLY_KPIS: KPIKey[] = ['conversionRate', 'cac', 'newSubs'];
+const OS_WEEKLY_PRIOR = ['priorWeek', 'week3', 'week4', 'week5'];
+const OS_WEEKLY_MIN_PCT = 10;   // ±10 % vs la base
+const OS_WEEKLY_MIN_SUBS = 50;  // la base necesita ≥ 50 New Subs por semana; si no, es ruido
+/** Cohorte de signup: la última semana cuyos signups ya cumplieron 8 días + las 4 previas. */
+const COHORT_WEEKS = 5;
+const COHORT_MIN_SIGNUPS = 1000;
 
 const Z_FLAG = 1.5;        // sd multiples outside the band
 const MIN_PCT_FLAG = 0.10; // and at least ±10% vs baseline (±1 pp for rates)
@@ -465,7 +476,7 @@ function actionFor(c: Comparison, sameLabel: string): string {
 }
 
 function buildFallbackNarrative(
-  daily: Comparison[], weekly: Comparison[] | null, movers: string[], sameLabel: string
+  daily: Comparison[], weekly: Comparison[] | null, movers: string[], sameLabel: string, osAlerts: OsWeekly[] = []
 ): BriefNarrative {
   const flagged = daily.filter((c) => c.flag);
   const worse = flagged.filter((c) => c.flag === 'peor');
@@ -484,6 +495,7 @@ function buildFallbackNarrative(
   if (weekFlag.length) {
     parts.push('Semana: ' + weekFlag.slice(0, 3).map((c) => `${dot(c.key, c.value, c.base)} ${KPI_LABELS[c.key]} *${fmtValue(c.key, c.value)}* (${fmtDelta(c.key, c.value, c.base)})`).join(', ') + '. `FACT`');
   }
+  if (osAlerts.length) parts.push('Por OS, semana vs las 4 previas: ' + osAlerts.map(osWeeklyHeadline).join('; ') + '. `FACT`');
   const comentarioSemana = undefined;
   const comentarioDesglose = movers.length ? movers.slice(0, 2).join('. ') + '. `FACT`' : undefined;
 
@@ -498,6 +510,10 @@ function buildFallbackNarrative(
     acciones.push(a);
     if (acciones.length === 4) break;
   }
+  for (const o of osAlerts) {
+    if (acciones.length >= 4) break;
+    acciones.push(`Marketing/Producto: revisar ${o.os} — ${o.lines.filter((l) => l.flag === 'peor').map((l) => `${SHORT_LABEL[l.key]} ${fmtValue(l.key, l.value)}`).join(', ') || 'conversión de la cohorte'}; ver qué campañas trajeron los signups de la semana y si convierten menos (calidad del tráfico) o si cambió algo en el paywall.`);
+  }
 
   return {
     loMasImportante: parts.join(' '),
@@ -505,6 +521,81 @@ function buildFallbackNarrative(
     comentarioDesglose,
     queRevisariaHoy: acciones.length ? acciones : ['Nada fuera de banda; sin acciones pendientes.'],
   };
+}
+
+// ---- Alerta semanal por OS ---------------------------------------------------------
+
+type Flag = 'mejor' | 'peor' | null;
+interface OsWeeklyLine { key: KPIKey; value: number | null; base: number | null; flag: Flag }
+interface OsWeekly {
+  os: string;
+  lines: OsWeeklyLine[];
+  cohort: { week: string; rate: number; base: number; flag: Flag } | null;
+  status: Flag; // 'peor' si algo empeoró, 'mejor' si solo mejoró, null si todo en rango
+}
+
+function sumOf(vals: Array<number | null>): number {
+  return vals.reduce<number>((a, v) => a + (v ?? 0), 0);
+}
+
+/** Base de las 4 semanas previas: promedio semanal para conteos; cociente de las sumas para ratios. */
+function priorBase(key: KPIKey, prior: KPIValues[]): number | null {
+  if (!prior.length) return null;
+  const parts = RATIO_PARTS[key];
+  if (parts && ADDITIVE.has(parts.num) && ADDITIVE.has(parts.den)) {
+    const den = sumOf(prior.map((p) => p[parts.den]));
+    return den ? sumOf(prior.map((p) => p[parts.num])) / den : null;
+  }
+  const vals = prior.map((p) => p[key]).filter((v): v is number => v !== null);
+  return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+}
+
+function flagOf(key: KPIKey, value: number | null, base: number | null): Flag {
+  const rel = relChange(key, value, base);
+  // Se compara ya redondeado, igual que se muestra: un "−10%" siempre sale marcado.
+  if (rel === null || Math.round(Math.abs(rel)) < OS_WEEKLY_MIN_PCT) return null;
+  return (LOWER_IS_BETTER.has(key) ? rel < 0 : rel > 0) ? 'mejor' : 'peor';
+}
+
+function osWeeklyCheck(byOs: Record<string, Record<string, KPIValues>>, cohorts: Record<string, CohortWeek[]> | null): OsWeekly[] {
+  return OS_SEGMENTS.map((os) => {
+    const cur = byOs.lastWeek?.[os];
+    const prior = OS_WEEKLY_PRIOR.map((k) => byOs[k]?.[os]).filter((v): v is KPIValues => !!v);
+    const enough = (priorBase('newSubs', prior) ?? 0) >= OS_WEEKLY_MIN_SUBS;
+    const lines = OS_WEEKLY_KPIS.map((key) => {
+      const value = cur?.[key] ?? null; const base = priorBase(key, prior);
+      return { key, value, base, flag: enough ? flagOf(key, value, base) : null };
+    });
+    let cohort: OsWeekly['cohort'] = null;
+    const cw = cohorts?.[os] ?? [];
+    const last = cw[cw.length - 1]; const prev = cw.slice(0, -1);
+    const prevSignups = sumOf(prev.map((c) => c.signups));
+    if (last?.rate != null && prev.length && prevSignups && last.signups >= COHORT_MIN_SIGNUPS) {
+      const base = sumOf(prev.map((c) => c.converted)) / prevSignups;
+      cohort = { week: last.week, rate: last.rate, base, flag: flagOf('conversionRate', last.rate, base) };
+    }
+    const flags = [...lines.map((l) => l.flag), cohort?.flag ?? null];
+    return { os, lines, cohort, status: flags.includes('peor') ? 'peor' : flags.includes('mejor') ? 'mejor' : null };
+  });
+}
+
+const flagDot = (f: Flag) => (f === 'peor' ? '🔴' : f === 'mejor' ? '🟢' : '⚪');
+const SHORT_LABEL: Partial<Record<KPIKey, string>> = { conversionRate: 'C.R.', cac: 'CAC', newSubs: 'New Subs' };
+
+function renderOsWeekly(o: OsWeekly): string {
+  const metric = (l: OsWeeklyLine) => `${flagDot(l.flag)} ${SHORT_LABEL[l.key] ?? KPI_LABELS[l.key]} *${fmtValue(l.key, l.value)}* (${fmtDelta(l.key, l.value, l.base) ?? 'n/d'} vs ${fmtValue(l.key, l.base)})`;
+  const lines = [`• *${o.os}* ${flagDot(o.status)}  ` + o.lines.map(metric).join(' · ')];
+  if (o.cohort) {
+    lines.push(`      ↳ ${flagDot(o.cohort.flag)} Cohorte de signups del ${dayShortEs(o.cohort.week)}: compró a los 8 días *${(o.cohort.rate * 100).toFixed(2)}%* (${fmtDelta('conversionRate', o.cohort.rate, o.cohort.base) ?? 'n/d'} vs ${(o.cohort.base * 100).toFixed(2)}% de las 4 cohortes previas)`);
+  }
+  return lines.join('\n');
+}
+
+/** Resumen corto para "Lo más importante" (solo lo que empeoró). */
+function osWeeklyHeadline(o: OsWeekly): string {
+  const bad = o.lines.filter((l) => l.flag === 'peor').map((l) => `${SHORT_LABEL[l.key]} ${fmtValue(l.key, l.value)} (${fmtDelta(l.key, l.value, l.base)})`);
+  if (o.cohort?.flag === 'peor') bad.push(`cohorte del ${dayShortEs(o.cohort.week)} a 8 días ${(o.cohort.rate * 100).toFixed(2)}% (${fmtDelta('conversionRate', o.cohort.rate, o.cohort.base)})`);
+  return `${o.os} 🔴 ${bad.join(', ')}`;
 }
 
 // ---- Main builder -----------------------------------------------------------------
@@ -551,16 +642,20 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
     { key: 'priorWeek', start: addDays(lwStart, -7), end: addDays(lwEnd, -7) },
     { key: 'week3', start: addDays(lwStart, -14), end: addDays(lwEnd, -14) },
     { key: 'week4', start: addDays(lwStart, -21), end: addDays(lwEnd, -21) },
+    { key: 'week5', start: addDays(lwStart, -28), end: addDays(lwEnd, -28) },
   ];
+  // Última cohorte de signup cuyos signups ya cumplieron 8 días (el domingo de esa semana + 7 ≤ ayer).
+  const lastCohortWeek = mondayOf(addDays(y, -13));
   const trendKeys = ['week4', 'week3', 'priorWeek', 'lastWeek']; // oldest → newest
 
-  const [totals, byOs, byLang, byCountry, series, freshness] = await Promise.all([
+  const [totals, byOs, byLang, byCountry, series, freshness, cohorts] = await Promise.all([
     fetchKPIsByPeriod(periods),
     fetchKPIsByPeriodAndDimension(periods, 'os'),
     fetchKPIsByPeriodAndDimension(periods, 'kinedu_language'),
     fetchKPIsByPeriodAndDimension(periods, 'country'),
     fetchDailySeries(addDays(y, -28), addDays(y, -1)),
     fetchTableFreshness(),
+    fetchCohortConversion(lastCohortWeek, COHORT_WEEKS).catch((e) => { console.error('[brief] cohortes no disponibles:', e instanceof Error ? e.message : e); return null; }),
   ]);
 
   // Weekday-seasonal noise bands from the 28 days before yesterday
@@ -620,6 +715,10 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
     return { key: k, line: vals.map((v) => fmtValue(k, v)).join(' → '), mark: dot(k, last, avgPrev) };
   });
 
+  // Alerta semanal por OS (semana cerrada vs 4 previas + cohorte de signup a 8 días)
+  const osWeekly = osWeeklyCheck(byOs, cohorts);
+  const osAlerts = osWeekly.filter((o) => o.status === 'peor');
+
   // Data notes
   const notas: string[] = [];
   if (freshness) {
@@ -664,6 +763,7 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
     movers,
     causas: causas.map((c) => `${KPI_LABELS[c.key]} (${c.scope}): ${c.text}`),
     tendencia4Semanas: trend.map((t) => `${KPI_LABELS[t.key]}: ${t.line}`),
+    alertaSemanalOs: osWeekly.map((o) => renderOsWeekly(o).replace(/\*/g, '')),
     notasDeDatos: notas,
   };
 
@@ -675,7 +775,7 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   if (!opts.skipNarrative && !narrativeOff) narrative = await writeBriefNarrative(facts);
   const narrativeSource: 'claude' | 'fallback' = narrative ? 'claude' : 'fallback';
   const sameLabel = `vs ${dayShortEs(addDays(y, -7))}`;
-  narrative ??= buildFallbackNarrative(daily, week ?? wtd, movers, sameLabel);
+  narrative ??= buildFallbackNarrative(daily, week ?? wtd, movers, sameLabel, weekly ? osAlerts : []);
 
   // ---- Render -------------------------------------------------------------------
   // Main message = the executive view: headline, a six-KPI traffic light, top-3
@@ -690,6 +790,7 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   const linkSemana = week ? dash(lwStart, lwEnd, 'day', 'funnel') : dash(wtdStart, y, 'day', 'funnel');
   const linkTendencia = dash(addDays(lwStart, -77), lwEnd, 'week', 'graphs');
   const linkDesglose = weekly ? dash(lwStart, lwEnd, 'day', 'breakdown') : dash(y, y, 'day', 'breakdown');
+  const linkOs = (os: string) => `${linkTendencia}&os=${encodeURIComponent(os)}&kpi=conversionRate&vs=cac`;
   const title = `Morning brief KPIs — Kinedu — ${dayLabelEs(today)}${opts.preview ? ' · vista previa' : ''}`;
   const textParts: string[] = [title, ''];
   const sec = (md: string): SlackBlock => { textParts.push(md, ''); return { type: 'section', text: { type: 'mrkdwn', text: md.slice(0, 2900) } }; };
@@ -711,6 +812,10 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   mainBlocks.push(semaforo(`Ayer — ${dayShortEs(y)}  (vs prom. 7 días)`, daily, 'vs 7d'));
   if (week) mainBlocks.push(semaforo(`Semana ${rangeShortEs(lwStart, lwEnd)}  (vs semana anterior)`, week, 'vs sem. ant.'));
   else if (wtd) mainBlocks.push(semaforo(`Semana en curso — ${rangeShortEs(wtdStart, y)}  (vs mismos días de la semana pasada)`, wtd, 'vs sem. pas.'));
+  const osWeeklyBlock = () => sec(`*Alerta semanal por OS* — semana ${rangeShortEs(lwStart, lwEnd)} vs promedio de las 4 previas  _(🔴/🟢 = ±10 % o más)_\n`
+    + osWeekly.map(renderOsWeekly).join('\n')
+    + `\n_Cohorte = de quienes se registraron esa semana, cuántos compraron en sus primeros 8 días (incluye el trial); misma fuente que el Tableau de cohortes. 📊 ${OS_SEGMENTS.map((os) => `<${linkOs(os)}|${os} por semana>`).join(' · ')}_`);
+  if (weekly) mainBlocks.push(osWeeklyBlock());
   if (causas.length) {
     mainBlocks.push(sec(`*Por qué se movió*\n` + causas.slice(0, 3).map((c) => `• *${KPI_LABELS[c.key]}*${c.scope === 'semana' ? ' (semana)' : ''}: ${c.text}.`).join('\n')));
   }
@@ -732,6 +837,7 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   if (wtd) semanaBlocks.push(sec(`*Semana en curso — ${rangeShortEs(wtdStart, y)} (${wtdDays} días)*  _(vs mismos días de la semana pasada)_\n` + wtd.map((c) => renderComparisonLine(c, 'vs sem. pasada')).join('\n')));
   if (week) semanaBlocks.push(sec(`*Semana pasada — ${rangeShortEs(lwStart, lwEnd)}*  _(vs ${rangeShortEs(addDays(lwStart, -7), addDays(lwEnd, -7))})_\n` + week.map((c) => renderComparisonLine(c, 'vs sem. anterior')).join('\n')));
   semanaBlocks.push(sec(`*Tendencia — últimas 4 semanas completas*  _(${rangeShortEs(addDays(lwStart, -21), addDays(lwEnd, -21))} → ${rangeShortEs(lwStart, lwEnd)}; color = última vs promedio de las 3 previas)_\n` + trend.map((t) => `• *${KPI_LABELS[t.key]}*: ${t.line}  ${t.mark}`).join('\n')));
+  if (!weekly) semanaBlocks.push(osWeeklyBlock()); // los lunes va en el mensaje principal
   semanaBlocks.push(ctx(`📊 <${linkTendencia}|Ver tendencia de 12 semanas en el dashboard>`));
   thread.push({ text: 'Semana y tendencia', blocks: semanaBlocks });
   const bdTitle = weekly ? 'semana pasada vs anterior' : 'ayer vs prom. 7d';

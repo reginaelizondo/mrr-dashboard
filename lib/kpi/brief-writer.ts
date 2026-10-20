@@ -46,6 +46,8 @@ export interface BriefFacts {
   causas: string[];
   /** Last 4 complete weeks for the key KPIs, oldest → newest ("Conversion Rate: 9.9% → 9.9% → 9.9% → 9.0%"). */
   tendencia4Semanas: string[];
+  /** Alerta semanal por OS: semana cerrada vs las 4 previas (C.R., CAC, New Subs) y cohorte de signup a 8 días. */
+  alertaSemanalOs?: string[];
   notasDeDatos: string[];    // freshness, known lags
 }
 
@@ -64,7 +66,7 @@ const SYSTEM_PROMPT = `Eres el analista de BizOps de Kinedu. Cada mañana escrib
 REGLAS DE CONTENIDO
 - Usa SOLO cifras que aparezcan en el JSON, con el mismo formato. No calcules nada nuevo, no inventes cifras ni causas.
 - Etiqueta cada afirmación con una de estas marcas al final de la frase, en código Slack: \`FACT\` cuando es lectura directa de los datos (incluidas las líneas de "causas", que ya están calculadas); \`HIPÓTESIS\` cuando propones una causa o una interpretación que NO está en el JSON. Una causa sin \`HIPÓTESIS\` está prohibida.
-- El JSON trae "causas": la descomposición calculada de cada KPI fuera de banda (de qué componente viene el movimiento y qué segmento lo explica). Úsalas: el titular debe decir QUÉ se movió y POR QUÉ, con esas causas. Y trae "tendencia4Semanas": úsala para distinguir un día raro de una tendencia (si un KPI lleva 3–4 semanas en la misma dirección, dilo).
+- El JSON trae "causas": la descomposición calculada de cada KPI fuera de banda (de qué componente viene el movimiento y qué segmento lo explica). Úsalas: el titular debe decir QUÉ se movió y POR QUÉ, con esas causas. Y trae "tendencia4Semanas": úsala para distinguir un día raro de una tendencia (si un KPI lleva 3–4 semanas en la misma dirección, dilo). Y trae "alertaSemanalOs": por OS, la semana cerrada contra las 4 previas y la conversión de la cohorte de signup a 8 días; si una línea trae 🔴, menciónala en el titular aunque el total se vea bien (el total lo domina iOS).
 - Prioriza en este orden: (1) KPIs marcados con flag (fuera de su banda de ruido de 28 días), (2) lo que mueve dinero: New Subs Sales, CAC, spend, Total Sales, (3) el desglose que explica el movimiento. Lo que está dentro de banda no merece frase, salvo que acumule tendencia.
 - Si nada está fuera de banda, dilo en una frase ("día dentro de rango") y no rellenes.
 - "Qué revisaría hoy": 2 a 4 acciones concretas y chequeables, cada una dirigida a un rol: Producto/Tech (signups, FT starts, FT conversion, conversion, New Subs — funnel in-app), Marketing (spend, CPNU, CPFT, CAC — adquisición), General (revenue, renewals, refunds). Cada acción debe nombrar el segmento concreto que sale en "causas" (plataforma, idioma o país), no "revisar en general". Si no hay nada que revisar, una sola línea diciéndolo.
