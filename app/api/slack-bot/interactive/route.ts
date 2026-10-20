@@ -14,7 +14,7 @@ export const maxDuration = 300;
  * Interactivity & Shortcuts → On → Request URL = https://<dominio>/api/slack-bot/interactive
  *   kpi_fix      corre las correcciones que tocan y responde en el hilo con el antes y el después
  *   kpi_recheck  vuelve a correr la Guardia y responde en el hilo
- *   estela_accept / estela_reject  Pepis decide sobre una propuesta de Estela (value = id en estela_proposals)
+ *   estela_accept / estela_reject / estela_close  Pepis decide o cierra una propuesta de Estela (value = id en estela_proposals)
  */
 export async function POST(request: NextRequest) {
   const rawBody = await request.text();
@@ -38,12 +38,16 @@ export async function POST(request: NextRequest) {
 
   waitUntil((async () => {
     try {
-      if (action === 'estela_accept' || action === 'estela_reject') {
+      if (action === 'estela_accept' || action === 'estela_reject' || action === 'estela_close') {
         const id = Number(payload.actions?.[0]?.value);
-        const estado = action === 'estela_accept' ? 'aceptada' : 'rechazada';
-        const r = Number.isFinite(id) ? await setProposalStatus(id, estado, who) : { ok: false, error: 'id inválido' };
+        const estado = action === 'estela_accept' ? 'aceptada' : action === 'estela_reject' ? 'rechazada' : 'cerrada';
+        const r = Number.isFinite(id)
+          ? await setProposalStatus(id, estado, who, estado === 'cerrada' ? `cerrada por ${who ?? 'Pepis'}` : undefined)
+          : { ok: false, error: 'id inválido' };
+        const icon = estado === 'aceptada' ? '✅' : estado === 'cerrada' ? '✔' : '✖';
+        const tail = estado === 'aceptada' ? 'Estela le da seguimiento cada lunes hasta que la cierres.' : estado === 'cerrada' ? 'Estela ya no le da seguimiento.' : 'No vuelve a aparecer.';
         await reply(r.ok
-          ? `${estado === 'aceptada' ? '✅' : '✖'} Propuesta #${id} "${r.titulo}" marcada como *${estado}*${who ? ` por ${who}` : ''}. Estela le da seguimiento el próximo lunes.`
+          ? `${icon} Propuesta #${id} "${r.titulo}" marcada como *${estado}*${who ? ` por ${who}` : ''}. ${tail}`
           : `No pude registrar la decisión: ${r.error}`);
       } else if (action === 'kpi_recheck') {
         await reply(formatGuardRun(await runKpiGuard()));

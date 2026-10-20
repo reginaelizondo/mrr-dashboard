@@ -40,7 +40,7 @@ export interface EstelaFacts {
   mrr: { fecha: string; mrrNeto: string; hace30d: string; hace90d: string; porTienda: Record<string, string> } | null;
   pnl: { mes: string; mesAnterior: string; lineas: PnlLine[]; notas: string[] } | null;
   caja: { hoja: string; mes: string; lineas: string[] } | null;
-  seguimiento: Array<{ id: number; semana: string; titulo: string; estado: string; impacto: string }>;
+  seguimiento: Array<{ id: number; semana: string; semanasAbierta: number; titulo: string; que: string; estado: string; impacto: string; cuandoSeVe: string }>;
   notas: string[];
 }
 
@@ -277,18 +277,26 @@ async function cajaFacts(): Promise<EstelaFacts['caja']> {
 
 // ---- Seguimiento (Supabase) -----------------------------------------------------------
 
-async function seguimiento(): Promise<EstelaFacts['seguimiento']> {
+async function seguimiento(today: string): Promise<EstelaFacts['seguimiento']> {
   try {
     const sb = createServerClient();
+    // Cierre automático: una propuesta sin decisión en 2 semanas se archiva; una aceptada con más de 8 semanas vence.
+    const twoWeeks = addDays(today, -14), eightWeeks = addDays(today, -56);
+    await sb.from('estela_proposals').update({ estado: 'cerrada', resultado: 'sin decisión en 2 semanas' }).eq('estado', 'propuesta').lt('week_start', twoWeeks);
+    await sb.from('estela_proposals').update({ estado: 'cerrada', resultado: 'vencida: 8 semanas sin cierre' }).eq('estado', 'aceptada').lt('week_start', eightWeeks);
     const { data, error } = await sb
       .from('estela_proposals')
-      .select('id, week_start, titulo, estado, impacto_cash')
+      .select('id, week_start, titulo, que, estado, impacto_cash, cuando_se_ve')
       .in('estado', ['propuesta', 'aceptada'])
       .order('week_start', { ascending: false })
       .limit(12);
     if (error || !data) return [];
-    return (data as Array<{ id: number; week_start: string; titulo: string; estado: string; impacto_cash: string | null }>)
-      .map((r) => ({ id: r.id, semana: r.week_start, titulo: r.titulo, estado: r.estado, impacto: r.impacto_cash ?? 'n/a' }));
+    type R = { id: number; week_start: string; titulo: string; que: string; estado: string; impacto_cash: string | null; cuando_se_ve: string | null };
+    return (data as R[]).map((r) => ({
+      id: r.id, semana: r.week_start,
+      semanasAbierta: Math.max(0, Math.round((Date.parse(today) - Date.parse(r.week_start)) / (7 * 86400000))),
+      titulo: r.titulo, que: r.que, estado: r.estado, impacto: r.impacto_cash ?? 'n/a', cuandoSeVe: r.cuando_se_ve ?? 'n/a',
+    }));
   } catch {
     return [];
   }
@@ -298,7 +306,7 @@ async function seguimiento(): Promise<EstelaFacts['seguimiento']> {
 
 export async function buildEstelaFacts(opts: { today?: string } = {}): Promise<EstelaFacts> {
   const today = opts.today ?? todayMx();
-  const [kpis, mrr, caja, seg] = await Promise.all([weeklyKpis(today), mrrFacts(), cajaFacts(), seguimiento()]);
+  const [kpis, mrr, caja, seg] = await Promise.all([weeklyKpis(today), mrrFacts(), cajaFacts(), seguimiento(today)]);
   const pnl = pnlFacts();
   const fuentes = ['BigQuery an_operational_dash (KPIs semanales, fórmulas validadas)'];
   if (mrr) fuentes.push('MRR Dashboard (Supabase mrr_daily_snapshots)');

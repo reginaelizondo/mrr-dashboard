@@ -36,6 +36,16 @@ Cuando una fuente falta, Estela lo dice en el mensaje y trabaja con lo demás. N
 - Tres propuestas distintas entre sí. No repite las que siguen abiertas: les da seguimiento.
 - Nunca propone despidos ni cambios de sueldo. Sin lenguaje de alarma.
 
+## Qué pasa con una propuesta después del lunes
+
+| Botón / regla | Estado | Qué hace Estela después |
+|---|---|---|
+| *Acepto* | aceptada | Cada lunes la revisa contra los datos y da un veredicto: SIGUE (no llega el plazo), YA SE VE (el dato muestra el efecto), NO SE VE (pasó el plazo sin cambio), CERRAR (más de 4 semanas sin señal o tema superado). El "so what" sigue siendo de Pepis: Estela no ejecuta. |
+| *No por ahora* | rechazada | No vuelve a aparecer. |
+| *Cerrar #id* (en la sección de seguimiento) | cerrada | Pepis marca que ya quedó resuelta o ya no aplica. Estela deja de seguirla. |
+| Sin decisión en 2 semanas | cerrada (automático) | Se archiva con resultado "sin decisión". |
+| Aceptada y 8 semanas sin cierre | cerrada (automático) | Vence con resultado "8 semanas sin cierre". |
+
 ## Mantenimiento mensual
 
 1. Cuando Arrowpoint cierre un mes, actualizar `data/estela/pnl-2026-cons-usd.csv` (export de la hoja *P&L Cons USD*

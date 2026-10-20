@@ -113,6 +113,17 @@ export async function buildEstela(opts: { today?: string; llm?: boolean; save?: 
     if (narrative.seguimiento.length) {
       blocks.push({ type: 'divider' });
       blocks.push(section(`*Seguimiento*\n${narrative.seguimiento.map((s) => `• ${s}`).join('\n')}`));
+      const abiertas = facts.seguimiento.filter((s) => s.estado === 'aceptada');
+      if (abiertas.length) {
+        blocks.push({
+          type: 'actions',
+          elements: abiertas.slice(0, 5).map((s) => ({
+            type: 'button', action_id: 'estela_close', value: String(s.id),
+            text: { type: 'plain_text', text: `✔ Cerrar #${s.id}` },
+          })),
+        });
+        blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: 'Cerrar = ya quedó resuelta o ya no aplica; Estela deja de darle seguimiento. Lo que no se cierra vence solo a las 8 semanas.' }] });
+      }
     }
   } else {
     blocks.push(section('⚠️ No pude redactar propuestas esta semana. Van los hechos; Pepis decide con ellos.'));
@@ -132,12 +143,14 @@ export async function postEstela(result: EstelaResult): Promise<{ ok: boolean; t
 }
 
 /** Cambia el estado de una propuesta (botones de Slack). */
-export async function setProposalStatus(id: number, estado: 'aceptada' | 'rechazada', who?: string): Promise<{ ok: boolean; titulo?: string; error?: string }> {
+export async function setProposalStatus(id: number, estado: 'aceptada' | 'rechazada' | 'cerrada', who?: string, resultado?: string): Promise<{ ok: boolean; titulo?: string; error?: string }> {
   try {
     const sb = createServerClient();
+    const patch: Record<string, unknown> = { estado, decidido_por: who ?? null, decidido_en: new Date().toISOString() };
+    if (resultado) patch.resultado = resultado;
     const { data, error } = await sb
       .from('estela_proposals')
-      .update({ estado, decidido_por: who ?? null, decidido_en: new Date().toISOString() })
+      .update(patch)
       .eq('id', id)
       .select('titulo')
       .single();
