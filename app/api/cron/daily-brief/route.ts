@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { buildDailyBrief } from '@/lib/kpi/daily-brief';
 import { postWithThread, postToSlack } from '@/lib/slack/post';
 
-export const maxDuration = 120;
+export const maxDuration = 300; // BigQuery + gráficas + ~8 mensajes y subida de imágenes
 
 /**
  * Daily KPI brief → Slack. Scheduled 15:30 UTC (09:30 MX), after the 09:01 MX
