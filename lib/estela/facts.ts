@@ -243,7 +243,7 @@ function pnlFacts(): EstelaFacts['pnl'] {
 // ---- Caja (Google Sheets, opcional) ---------------------------------------------------
 
 async function cajaFacts(): Promise<EstelaFacts['caja']> {
-  const keyB64 = process.env.ESTELA_GCP_SA_KEY_B64;
+  const keyB64 = process.env.BIZOPS_GCP_SA_KEY_B64 ?? process.env.ESTELA_GCP_SA_KEY_B64;
   const sheetId = process.env.ESTELA_CASH_SHEET_ID;
   if (!keyB64 || !sheetId) return null;
   try {

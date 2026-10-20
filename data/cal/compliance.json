@@ -1,0 +1,295 @@
+{
+  "_doc": "Respaldo del calendario de cumplimiento de Kinedu (INC y SAPI). La fuente de verdad es el calendario de Google 'Kinedu INC y SAPI fillings'; este JSON se usa solo si Cal no puede leerlo. Fechas AAAA-MM-DD; 'alertas' = días antes en que Cal avisa.",
+  "items": [
+    {
+      "id": "carta-409a-2026",
+      "titulo": "409A en Carta · renovación anual",
+      "fecha": "2026-11-17",
+      "entidad": "INC",
+      "responsable": "Pepis",
+      "ejecuta": "Pepis paso a paso en Carta; usar financieros de INC; dudas de acciones con abogados US",
+      "fuente": "doc maternity · Carta/Legal §1 (toca en noviembre)",
+      "alertas": [
+        30,
+        15,
+        5
+      ],
+      "notas": "Fecha del calendario de filings (17-nov, evento anual)."
+    },
+    {
+      "id": "de-franchise-q4-2026",
+      "titulo": "Delaware franchise tax · pago trimestral (Q4)",
+      "fecha": "2026-12-01",
+      "entidad": "INC",
+      "responsable": "Pepis",
+      "ejecuta": "Pepis en el portal de Delaware (icis.corp.delaware.gov)",
+      "fuente": "Procesos Finanzas §4.2 · doc maternity (siguiente pago antes del 1-dic)",
+      "alertas": [
+        30,
+        15,
+        5,
+        1
+      ],
+      "notas": "Business Entity File Number en el doc de Procesos Finanzas. Pagado el trimestre de septiembre."
+    },
+    {
+      "id": "payment-freeze-2026",
+      "titulo": "Comunicado de payment freeze y nómina de diciembre",
+      "fecha": "2026-12-04",
+      "entidad": "SAPI",
+      "responsable": "Pepis",
+      "ejecuta": "Paola manda el comunicado a #team; plantillas en el doc de maternity",
+      "fuente": "doc maternity · RH §2",
+      "alertas": [
+        14,
+        7,
+        1
+      ],
+      "notas": "Freeze del 19-dic al 5-ene. Segunda quincena + aguinaldo se pagan la semana del 18-dic."
+    },
+    {
+      "id": "stripe-tax-2026",
+      "titulo": "Stripe Tax · activar antes de enero 2027",
+      "fecha": "2026-12-15",
+      "entidad": "INC",
+      "responsable": "Luis decide · Pepis ejecuta",
+      "ejecuta": "Pepis en el dashboard de Stripe (3 cuentas)",
+      "fuente": "doc maternity · Carta/Legal §4 (contingencia, decisión de Luis)",
+      "alertas": [
+        30,
+        15,
+        5
+      ],
+      "notas": "Hoy el apartado TAX está apagado por decisión de Luis. Se prende en diciembre."
+    },
+    {
+      "id": "aguinaldo-2026",
+      "titulo": "Aguinaldos · cálculo por régimen y pago",
+      "fecha": "2026-12-18",
+      "entidad": "SAPI",
+      "responsable": "Pepis VOBO",
+      "ejecuta": "Paola calcula (sueldos y salarios normal; RESICO ×0.7; Deel, Nath y Lari no; Chris sí); QS Payroll valida",
+      "fuente": "doc maternity · RH §3",
+      "alertas": [
+        21,
+        10,
+        5
+      ],
+      "notas": "Proporcional para quien no tenga el año completo; quien cambió a RESICO ya cobró parte en su liquidación."
+    },
+    {
+      "id": "eval-360-2026",
+      "titulo": "Evaluaciones 360 · lanzar en My Kinedu",
+      "fecha": "2026-12-18",
+      "entidad": "Kinedu",
+      "responsable": "Pepis revisa con Luis antes de mandar",
+      "ejecuta": "Paola en My Kinedu (Admin > HR Dashboard > Reports)",
+      "fuente": "Manual HR §7 · doc maternity RH §5",
+      "alertas": [
+        21,
+        7
+      ],
+      "notas": "Se contesta durante el freeze; resultados se consolidan en enero."
+    },
+    {
+      "id": "registered-agent-2026",
+      "titulo": "Registered agent y contratos RESICO · cambiar dirección TX → DE",
+      "fecha": "2026-12-31",
+      "entidad": "INC / contratos RESICO",
+      "responsable": "Pepis",
+      "ejecuta": "Pepis con los contadores de INC (Davalos Michel); aprovechar el cambio de partner financiero de Coba",
+      "fuente": "doc maternity · Carta/Legal §2 (antes de enero 2027)",
+      "alertas": [
+        45,
+        30,
+        15,
+        5
+      ],
+      "notas": "La dirección de Regus en TX ya cerró. Usar la de Delaware (8 The Green, STE R, Dover)."
+    },
+    {
+      "id": "w9-1099-2027",
+      "titulo": "1099 · pedir W9 a proveedores US con más de $1,000 pagados",
+      "fecha": "2027-01-10",
+      "entidad": "INC",
+      "responsable": "Pepis",
+      "ejecuta": "Pepis pide W9 por correo; Davalos Michel presenta. Deel, PayPal, Gusto y Mercury lo hacen solos",
+      "fuente": "Procesos Finanzas §4.3",
+      "alertas": [
+        21,
+        10,
+        3
+      ],
+      "notas": "Solo proveedores pagados por factura directa."
+    },
+    {
+      "id": "hr-policies-2027",
+      "titulo": "HR Policies y calendario de festivos MX/BR · actualizar en My Kinedu",
+      "fecha": "2027-01-15",
+      "entidad": "Kinedu",
+      "responsable": "Pepis",
+      "ejecuta": "Paola",
+      "fuente": "Manual HR §8.2",
+      "alertas": [
+        15,
+        3
+      ],
+      "notas": "Subir policies firmadas y registrar puentes del año."
+    },
+    {
+      "id": "repse-q1-2027",
+      "titulo": "REPSE · informativa trimestral (contratos y altas/bajas)",
+      "fecha": "2027-01-17",
+      "entidad": "SAPI",
+      "responsable": "Pepis responde",
+      "ejecuta": "Topaz avisa y presenta; Pepis manda contratos y altas/bajas",
+      "fuente": "Procesos Finanzas §5 (trimestral, a solicitud de Topaz)",
+      "alertas": [
+        15,
+        5
+      ],
+      "notas": "Fecha tope estimada (día 17 del mes siguiente al trimestre). Confirmar con Topaz."
+    },
+    {
+      "id": "1099-filing-2027",
+      "titulo": "1099 · presentación (antes del 31 de enero)",
+      "fecha": "2027-01-31",
+      "entidad": "INC",
+      "responsable": "Pepis",
+      "ejecuta": "Davalos Michel",
+      "fuente": "Procesos Finanzas §4.3",
+      "alertas": [
+        15,
+        5,
+        1
+      ],
+      "notas": "Pedir acuse."
+    },
+    {
+      "id": "de-annual-report-2027",
+      "titulo": "Delaware annual report + franchise tax final (antes del 1 de marzo)",
+      "fecha": "2027-03-01",
+      "entidad": "INC",
+      "responsable": "Luis",
+      "ejecuta": "Luis en el portal de Delaware (según el calendario de filings); Pepis valida cifras de acciones con los abogados US",
+      "fuente": "Procesos Finanzas §4.2",
+      "alertas": [
+        30,
+        15,
+        5,
+        1
+      ],
+      "notas": ""
+    },
+    {
+      "id": "sapi-anual-2027",
+      "titulo": "Declaración anual SAPI 2026",
+      "fecha": "2027-03-31",
+      "entidad": "SAPI",
+      "responsable": "Pepis",
+      "ejecuta": "Topaz presenta; pedir acuse",
+      "fuente": "Procesos Finanzas §4.5",
+      "alertas": [
+        30,
+        10,
+        3
+      ],
+      "notas": ""
+    },
+    {
+      "id": "inc-federal-2027",
+      "titulo": "Federal return INC 2026 (antes del 15 de abril)",
+      "fecha": "2027-04-15",
+      "entidad": "INC",
+      "responsable": "Pepis",
+      "ejecuta": "Davalos Michel; pedir acuse",
+      "fuente": "Procesos Finanzas §4.4",
+      "alertas": [
+        30,
+        15,
+        5
+      ],
+      "notas": "Si se pide prórroga, mover la fecha aquí."
+    },
+    {
+      "id": "repse-q2-2027",
+      "titulo": "REPSE · informativa trimestral",
+      "fecha": "2027-04-17",
+      "entidad": "SAPI",
+      "responsable": "Pepis responde",
+      "ejecuta": "Topaz",
+      "fuente": "Procesos Finanzas §5",
+      "alertas": [
+        15,
+        5
+      ],
+      "notas": "Fecha estimada; confirmar con Topaz."
+    },
+    {
+      "id": "de-amended-report-2027",
+      "titulo": "Delaware · validar Amended Annual Franchise Tax Report",
+      "fecha": "2027-05-15",
+      "entidad": "INC",
+      "responsable": "Pepis",
+      "ejecuta": "Pepis revisa en el portal (icis.corp.delaware.gov)",
+      "fuente": "calendario de filings (evento anual 1–15 de mayo)",
+      "alertas": [
+        15,
+        5
+      ],
+      "notas": ""
+    },
+    {
+      "id": "de-franchise-q2-2027",
+      "titulo": "Delaware franchise tax · pago trimestral (Q2)",
+      "fecha": "2027-06-01",
+      "entidad": "INC",
+      "responsable": "Pepis",
+      "ejecuta": "Pepis en el portal de Delaware",
+      "fuente": "Procesos Finanzas §4.2",
+      "alertas": [
+        30,
+        15,
+        5,
+        1
+      ],
+      "notas": ""
+    },
+    {
+      "id": "repse-q3-2027",
+      "titulo": "REPSE · informativa trimestral",
+      "fecha": "2027-07-17",
+      "entidad": "SAPI",
+      "responsable": "Pepis responde",
+      "ejecuta": "Topaz",
+      "fuente": "Procesos Finanzas §5",
+      "alertas": [
+        15,
+        5
+      ],
+      "notas": "Fecha estimada; confirmar con Topaz."
+    },
+    {
+      "id": "de-franchise-q3-2027",
+      "titulo": "Delaware franchise tax · pago trimestral (Q3)",
+      "fecha": "2027-09-01",
+      "entidad": "INC",
+      "responsable": "Pepis",
+      "ejecuta": "Pepis en el portal de Delaware",
+      "fuente": "Procesos Finanzas §4.2",
+      "alertas": [
+        30,
+        15,
+        5,
+        1
+      ],
+      "notas": ""
+    }
+  ],
+  "pendientes": [
+    "Renovación de seguros (Cortina vía Talisis): fecha de vencimiento por confirmar con Paola; Cal la agrega cuando exista.",
+    "Co-registro / registered agent anual en Delaware: quién lo hace en 2027 (antes Nichols). Confirmar con Davalos Michel.",
+    "Materialidad SAT: reverificar EFOS de proveedores MX cada trimestre; renovar CSF y estudio de precios de transferencia en enero. Falta terminar el doc antes de calendarizarlo.",
+    "Fechas exactas de REPSE: hoy son estimadas al día 17 del mes siguiente al trimestre."
+  ]
+}
