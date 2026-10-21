@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { revalidateTag } from 'next/cache';
 import { runDailyKpiSync, syncKpiDaily, fetchBigQueryModified } from '@/lib/sync/kpi-daily';
+import { captureIntradaySnapshot } from '@/lib/sync/intraday-snapshot';
 import { createServerClient } from '@/lib/supabase/server';
 import { todayMx } from '@/lib/kpi/period';
 
@@ -46,9 +47,13 @@ export async function GET(request: NextRequest) {
       result = { ...r, rows: r.window.rows };
     }
     if (log) await supabase.from('sync_log').update({ status: 'success', completed_at: new Date().toISOString(), records_synced: result.rows ?? 0, details: result }).eq('id', log.id);
+    // Foto intradía del cumulado de hoy (para aprender la curva horaria). Solo en los syncs que incluyen
+    // hoy (diario / if-changed), no en re-sincronizaciones manuales de un rango viejo. Best-effort.
+    let snapshot: Awaited<ReturnType<typeof captureIntradaySnapshot>> | null = null;
+    if (!from) snapshot = await captureIntradaySnapshot(todayMx()).catch((e) => ({ captured: false, reason: e instanceof Error ? e.message : String(e) }));
     // La réplica cambió: invalida la caché del dashboard Operativo (expira ya, no "stale-while-revalidate").
     revalidateTag('operativo', { expire: 0 });
-    return NextResponse.json({ ok: true, ...result });
+    return NextResponse.json({ ok: true, ...result, snapshot });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (log) await supabase.from('sync_log').update({ status: 'error', completed_at: new Date().toISOString(), details: { error: msg } }).eq('id', log.id);
