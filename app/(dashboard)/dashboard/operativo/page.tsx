@@ -1,10 +1,14 @@
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
-import { OperativoContent, type OperativoData, type PeriodRow, type GroupRow } from '@/components/dashboard/OperativoContent';
-import { computeKpis, type AggRow } from '@/lib/kpi/replica';
-import { loadCore, loadDims, loadMeta, buildRequest, type PageParams } from '@/lib/kpi/operativo-data';
+import { OperativoContent, type OperativoData, type PeriodRow, type GroupRow, type TodayBlock, type DefPair } from '@/components/dashboard/OperativoContent';
+import { computeKpis, scaleAgg, type AggRow } from '@/lib/kpi/replica';
+import { loadCore, loadDims, loadMeta, loadToday, buildRequest, type PageParams } from '@/lib/kpi/operativo-data';
+import { todayMx, mxDayProgress } from '@/lib/kpi/period';
 export type { Preset } from '@/lib/kpi/operativo-data';
+const pair = (a: AggRow): DefPair => ({ looker: computeKpis(a, 'looker'), fixed: computeKpis(a, 'fixed') });
+// Antes de ~2.4 h del día MX la proyección a ritmo lineal multiplica por >10 y no es informativa.
+const MIN_FRACTION = 0.1;
 function toPeriodRows(rows: AggRow[]): PeriodRow[] {
   return rows.map((a) => ({ period: a.period, looker: computeKpis(a, 'looker'), fixed: computeKpis(a, 'fixed') }));
 }
@@ -19,9 +23,32 @@ export default async function OperativoPage({ searchParams }: { searchParams: Pr
   let error: string | null = null;
   let data: OperativoData | null = null;
   try {
-    const [core, dims, meta] = await Promise.all([loadCore(filters, range.grain, prior), loadDims(), loadMeta(range.start, range.end)]);
+    const today = todayMx();
+    const [core, dims, meta, todayAggs] = await Promise.all([
+      loadCore(filters, range.grain, prior), loadDims(), loadMeta(range.start, range.end),
+      loadToday({ region: filters.region ?? [], country: filters.country ?? [], os: filters.os ?? [], language: filters.language ?? [] }, today),
+    ]);
     const { series, current: cur, previous: prev, breakdown, groupSeries } = core;
     const { status, storeCoverage, guard } = meta;
+
+    // Franja "Hoy": lo que va del día, proyección del cierre a ritmo lineal (sobre la fracción del día
+    // MX ya transcurrida AL CORTE de los datos) y comparación vs el mismo día de semana (últimos N).
+    const running = pair(todayAggs.today);
+    const hasData = running.looker.signups > 0 || running.looker.spend > 0 || running.looker.newSubs > 0 || running.looker.nsSales > 0;
+    const prog = status.lastSyncedAt ? mxDayProgress(status.lastSyncedAt) : null;
+    const stale = prog ? prog.dateMx !== today : true;           // el último sync no es de hoy
+    const fraction = prog && !stale ? prog.fraction : null;
+    const tooEarly = fraction !== null && fraction < MIN_FRACTION;
+    const pf = fraction !== null && !tooEarly && fraction > 0 ? 1 / fraction : null;
+    const todayBlock: TodayBlock = {
+      date: today,
+      cutoffIso: status.lastSyncedAt, cutoffLabel: prog?.label ?? null, fraction,
+      stale, tooEarly, hasData, baselineDays: todayAggs.baselineDays,
+      running,
+      projected: pf ? pair(scaleAgg(todayAggs.today, pf)) : null,
+      baseline: todayAggs.baselineDays ? pair(todayAggs.baseline) : null,
+      yesterday: pair(todayAggs.yesterday),
+    };
     data = {
       preset: range.preset, start: range.start, end: range.end, grain: range.grain, days,
       filters: { region: filters.region ?? [], country: filters.country ?? [], os: filters.os ?? [], language: filters.language ?? [] },
@@ -33,6 +60,7 @@ export default async function OperativoPage({ searchParams }: { searchParams: Pr
       status,
       storeCoverage,
       guard,
+      today: todayBlock,
       generatedAt: new Date().toISOString(),
     };
   } catch (e) {

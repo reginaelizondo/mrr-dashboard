@@ -78,6 +78,20 @@ export function sumAgg(rows: AggRow[], period = 'total', grp = ''): AggRow {
   return out;
 }
 
+/** Escala todas las medidas base por un factor (proyección "a ritmo lineal" del cierre del día). */
+export function scaleAgg(r: AggRow, factor: number): AggRow {
+  const out = emptyAgg(r.period, r.grp);
+  for (const k of AGG_NUMERIC_KEYS) out[k] = r[k] * factor;
+  return out;
+}
+
+/** Promedio de varias filas (para la base "mismo día de semana, últimos N"). */
+export function avgAgg(rows: AggRow[], period = 'total', grp = ''): AggRow {
+  const out = sumAgg(rows, period, grp);
+  if (rows.length) for (const k of AGG_NUMERIC_KEYS) out[k] /= rows.length;
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Fórmulas (espejo exacto de lib/kpi/formulas.ts)
 // ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 import { unstable_cache } from 'next/cache';
-import { fetchAgg, fetchDimValues, fetchReplicaStatus, fetchStoreCoverage, fetchLastGuard, sumAgg, type Grain, type ReplicaFilters, type AggRow, type ReplicaStatus } from '@/lib/kpi/replica';
-import { todayMx, addDays, mondayOf } from '@/lib/kpi/period';
+import { fetchAgg, fetchDimValues, fetchReplicaStatus, fetchStoreCoverage, fetchLastGuard, sumAgg, avgAgg, emptyAgg, type Grain, type ReplicaFilters, type AggRow, type ReplicaStatus } from '@/lib/kpi/replica';
+import { todayMx, addDays, mondayOf, isoWeekday } from '@/lib/kpi/period';
 
 /**
  * Datos de la página Operativo (réplica del Looker): resolución de periodo/filtros, cargadores cacheados y
@@ -73,6 +73,35 @@ export const loadMeta = unstable_cache(
   { revalidate: 300, tags: ['operativo'] },
 );
 
+export interface TodayAggs { date: string; today: AggRow; yesterday: AggRow; baseline: AggRow; baselineDays: number }
+
+/**
+ * Sumas base del día de hoy (lo que va), de ayer, y de los últimos 4 días del MISMO día de semana
+ * (la base contra la que se compara la proyección). Respeta los filtros de dimensión de la página.
+ * Una sola consulta diaria de 29 días; la proyección del cierre y los KPIs se calculan en la página.
+ */
+export const loadToday = unstable_cache(
+  async (dims: Pick<ReplicaFilters, 'region' | 'country' | 'os' | 'language'>, today: string): Promise<TodayAggs> => {
+    const daily = await fetchAgg({ ...dims, start: addDays(today, -28), end: today }, 'day');
+    const byDate = new Map(daily.map((r) => [r.period, r]));
+    const wd = isoWeekday(today);
+    const sameWd: AggRow[] = [];
+    for (let k = 1; k <= 28 && sameWd.length < 4; k++) {
+      const d = addDays(today, -k);
+      if (isoWeekday(d) === wd && byDate.has(d)) sameWd.push(byDate.get(d)!);
+    }
+    return {
+      date: today,
+      today: byDate.get(today) ?? emptyAgg(today),
+      yesterday: byDate.get(addDays(today, -1)) ?? emptyAgg(addDays(today, -1)),
+      baseline: sameWd.length ? avgAgg(sameWd) : emptyAgg(),
+      baselineDays: sameWd.length,
+    };
+  },
+  ['operativo-today', 'v1'],
+  { revalidate: 1800, tags: ['operativo'] },
+);
+
 
 
 /**
@@ -137,7 +166,7 @@ export function buildRequest(params: PageParams) {
 /** Pre-calienta la caché de las vistas más usadas (sin filtros). Lo llaman los syncs tras invalidarla. */
 export async function warmOperativoCache(presets: Preset[] = ['30d', '7d', 'mtd', '90d', '12m']): Promise<{ preset: Preset; ms: number }[]> {
   const out: { preset: Preset; ms: number }[] = [];
-  await loadDims();
+  await Promise.all([loadDims(), loadToday({ region: [], country: [], os: [], language: [] }, todayMx())]);
   for (const preset of presets) {
     const t0 = Date.now();
     const { range, filters, prior } = buildRequest({ preset });

@@ -12,6 +12,7 @@ import { LOOKER_DIFFERENCES } from '@/lib/kpi/looker-differences';
 import type { Preset } from '@/app/(dashboard)/dashboard/operativo/page';
 import { KpiChart, Sparkline, TrendExplorer, type ChartRow, type EstRange, type SeriesDef } from './operativo/charts';
 import { KpiTable, BreakdownTable } from './operativo/tables';
+import { TodayStrip } from './operativo/today';
 import { FilterBar, DIMS, type DimKey } from './operativo/filters';
 import {
   fmt, compact, nf0, MONTHS, periodLabel, MONEY_KEYS, KPI_BY_KEY,
@@ -22,6 +23,13 @@ import {
 
 export interface PeriodRow { period: string; looker: KpiValues; fixed: KpiValues }
 export interface GroupRow extends PeriodRow { grp: string }
+export interface DefPair { looker: KpiValues; fixed: KpiValues }
+export interface TodayBlock {
+  date: string;
+  cutoffIso: string | null; cutoffLabel: string | null; fraction: number | null;
+  stale: boolean; tooEarly: boolean; hasData: boolean; baselineDays: number;
+  running: DefPair; projected: DefPair | null; baseline: DefPair | null; yesterday: DefPair;
+}
 export interface OperativoData {
   preset: Preset; start: string; end: string; grain: Grain; days: number;
   filters: { region: string[]; country: string[]; os: string[]; language: string[] };
@@ -33,6 +41,7 @@ export interface OperativoData {
   status: ReplicaStatus;
   storeCoverage: StoreCoverage[];
   guard: GuardSnapshot | null;
+  today: TodayBlock;
   generatedAt: string; // ISO, hora del servidor al generar la página
 }
 
@@ -108,6 +117,8 @@ export function OperativoContent({ data }: { data: OperativoData }) {
         filters={data.filters} dimOptions={dimOptions} def={def} setDef={setDef} setParams={setParams} pending={pending} status={data.status} />
 
       <div className={cn('space-y-5 transition-opacity duration-200', pending && 'opacity-60')}>
+        <TodayStrip today={data.today} def={def} />
+
         {def === 'fixed' && <CalibrationBanner coverage={data.storeCoverage} kpis={cur} />}
 
         {/* Tarjetas: clic = ver el KPI en grande en el explorador */}

@@ -37,6 +37,20 @@ export function todayMx(): string {
   return fmtDate(new Date(Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate())));
 }
 
+/**
+ * Progreso del día de Ciudad de México en el instante `iso` dado: qué fecha MX es, cuántas
+ * horas del día llevaban transcurridas y qué fracción (0–1). Se usa para proyectar el cierre
+ * del día a ritmo lineal: la fracción se mide sobre la HORA DE CORTE de los datos (último sync),
+ * no sobre el reloj, porque entre reconstrucciones de dbt el dato de "hoy" queda congelado.
+ */
+export function mxDayProgress(iso: string): { dateMx: string; hours: number; fraction: number; label: string } {
+  const mx = new Date(new Date(iso).getTime() + MX_TZ_OFFSET_HOURS * 3600 * 1000);
+  const dateMx = fmtDate(new Date(Date.UTC(mx.getUTCFullYear(), mx.getUTCMonth(), mx.getUTCDate())));
+  const hours = mx.getUTCHours() + mx.getUTCMinutes() / 60;
+  const label = `${String(mx.getUTCHours()).padStart(2, '0')}:${String(mx.getUTCMinutes()).padStart(2, '0')}`;
+  return { dateMx, hours, fraction: Math.min(1, Math.max(0, hours / 24)), label };
+}
+
 /** Add (or subtract) whole days to a 'YYYY-MM-DD' string. */
 export function addDays(day: string, delta: number): string {
   const d = parseDay(day);
