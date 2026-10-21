@@ -59,6 +59,10 @@
     {
       "path": "/api/cron/cal-daily",
       "schedule": "5 14 * * *"
+    },
+    {
+      "path": "/api/cron/bizops-brief",
+      "schedule": "15 15 * * 1-5"
     }
   ]
 }

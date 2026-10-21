@@ -10,7 +10,7 @@
 
 import { cleanTables, degradeTables } from './table';
 
-interface SlackBlock {
+export interface SlackBlock {
   type: string;
   [key: string]: unknown;
 }

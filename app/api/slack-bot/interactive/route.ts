@@ -5,6 +5,7 @@ import { postChatMessage } from '@/lib/slack/post';
 import { runKpiGuard, formatGuardRun } from '@/lib/audit/kpi-guard';
 import { runKpiFix, formatFixResult, fixInProgress } from '@/lib/audit/kpi-fix';
 import { setProposalStatus } from '@/lib/estela/estela';
+import { decidir, marcarDecidido } from '@/lib/bizops/brief';
 
 // Correcciones largas (re-sincronizar réplica + tiendas ≈ 2–4 min) corren en waitUntil después de responder a Slack.
 export const maxDuration = 300;
@@ -15,6 +16,8 @@ export const maxDuration = 300;
  *   kpi_fix      corre las correcciones que tocan y responde en el hilo con el antes y el después
  *   kpi_recheck  vuelve a correr la Guardia y responde en el hilo
  *   estela_accept / estela_reject / estela_close  Pepis decide o cierra una propuesta de Estela (value = id en estela_proposals)
+ *   bizops_hecho / bizops_manana / bizops_no      Pepis decide un pendiente del Brief BizOps (value = id en bizops_items);
+ *                                                 los botones se reemplazan por la decisión en el mismo mensaje
  */
 export async function POST(request: NextRequest) {
   const rawBody = await request.text();
@@ -38,7 +41,21 @@ export async function POST(request: NextRequest) {
 
   waitUntil((async () => {
     try {
-      if (action === 'estela_accept' || action === 'estela_reject' || action === 'estela_close') {
+      if (action === 'bizops_hecho' || action === 'bizops_manana' || action === 'bizops_no') {
+        const id = Number(payload.actions?.[0]?.value);
+        const estado = action === 'bizops_hecho' ? 'hecho' : action === 'bizops_manana' ? 'manana' : 'no';
+        const r = Number.isFinite(id) ? await decidir(id, estado, who) : { ok: false as const, error: 'id inválido' };
+        const etiqueta = !r.ok ? `⚠️ No pude guardar: ${r.error}`
+          : estado === 'hecho' ? `✅ Hecho${who ? ` · ${who}` : ''}` : estado === 'manana' ? `⏭️ Mañana vuelve a salir${who ? ` · ${who}` : ''}` : `✖ No aplica${who ? ` · ${who}` : ''} · ${r.agente} lo anota para aprender`;
+        const responseUrl: string | undefined = payload.response_url;
+        const blocks = payload.message?.blocks;
+        if (responseUrl && Array.isArray(blocks)) {
+          await fetch(responseUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ replace_original: true, text: payload.message?.text ?? 'Brief BizOps', blocks: marcarDecidido(blocks, id, etiqueta) }) });
+        } else {
+          await reply(etiqueta);
+        }
+      } else if (action === 'estela_accept' || action === 'estela_reject' || action === 'estela_close') {
         const id = Number(payload.actions?.[0]?.value);
         const estado = action === 'estela_accept' ? 'aceptada' : action === 'estela_reject' ? 'rechazada' : 'cerrada';
         const r = Number.isFinite(id)
