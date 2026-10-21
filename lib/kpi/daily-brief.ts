@@ -3,9 +3,7 @@ import {
   fetchKPIsByPeriodAndDimension,
   fetchDailySeries,
   fetchTableFreshness,
-  fetchCohortConversion,
   emptyValues,
-  type CohortWeek,
   type KPIValues,
   type NamedPeriod,
   type DailyRow,
@@ -30,6 +28,9 @@ import { buildBriefCharts } from './brief-charts';
  *   Lo más importante → Ayer (vs prom. 7d · vs mismo día sem. pasada) →
  *   Semana en curso (vs mismos días sem. pasada) | lunes: Semana pasada (vs anterior) →
  *   Desglose por plataforma / idioma / país → Qué revisaría hoy → fuente y corte.
+ *
+ * Calendar basis only: every KPI is attributed to the day it happened (an_operational_dash).
+ * Signup and refund cohorts live in their own brief and channel (lib/kpi/cohort-brief.ts).
  *
  * Every number comes from BigQuery with the validated formulas. The 28-day daily
  * series gives each KPI a noise band (mean ± 1.5 sd); only KPIs outside it get a
@@ -125,11 +126,6 @@ const OS_WEEKLY_KPIS: KPIKey[] = ['conversionRate', 'cac', 'newSubs'];
 const OS_WEEKLY_PRIOR = ['priorWeek', 'week3', 'week4', 'week5'];
 const OS_WEEKLY_MIN_PCT = 10;   // ±10 % vs la base
 const OS_WEEKLY_MIN_SUBS = 50;  // la base necesita ≥ 50 New Subs por semana; si no, es ruido
-/** Cohorte de signup: la última semana cuyos signups ya cumplieron 8 días + las 4 previas. */
-const COHORT_WEEKS = 5;
-/** Semanas de cohorte que se leen (12 para la gráfica; la alerta usa las últimas COHORT_WEEKS). */
-const COHORT_FETCH_WEEKS = 12;
-const COHORT_MIN_SIGNUPS = 1000;
 
 const Z_FLAG = 1.5;        // sd multiples outside the band
 const MIN_PCT_FLAG = 0.10; // and at least ±10% vs baseline (±1 pp for rates)
@@ -497,7 +493,7 @@ function buildFallbackNarrative(
   }
   for (const o of osAlerts) {
     if (acciones.length >= 4) break;
-    acciones.push(`Marketing/Producto: revisar ${o.os} — ${o.lines.filter((l) => l.flag === 'peor').map((l) => `${SHORT_LABEL[l.key]} ${fmtValue(l.key, l.value)}`).join(', ') || 'conversión de la cohorte'}; ver qué campañas trajeron los signups de la semana y si convierten menos (calidad del tráfico) o si cambió algo en el paywall.`);
+    acciones.push(`Marketing/Producto: revisar ${o.os} — ${o.lines.filter((l) => l.flag === 'peor').map((l) => `${SHORT_LABEL[l.key]} ${fmtValue(l.key, l.value)}`).join(', ') || 'la semana'}; ver qué campañas trajeron los signups de la semana y si convierten menos (calidad del tráfico) o si cambió algo en el paywall.`);
   }
 
   return {
@@ -515,7 +511,6 @@ interface OsWeeklyLine { key: KPIKey; value: number | null; base: number | null;
 interface OsWeekly {
   os: string;
   lines: OsWeeklyLine[];
-  cohort: { week: string; rate: number; base: number; flag: Flag } | null;
   status: Flag; // 'peor' si algo empeoró, 'mejor' si solo mejoró, null si todo en rango
 }
 
@@ -542,7 +537,7 @@ function flagOf(key: KPIKey, value: number | null, base: number | null): Flag {
   return (LOWER_IS_BETTER.has(key) ? rel < 0 : rel > 0) ? 'mejor' : 'peor';
 }
 
-function osWeeklyCheck(byOs: Record<string, Record<string, KPIValues>>, cohorts: Record<string, CohortWeek[]> | null): OsWeekly[] {
+function osWeeklyCheck(byOs: Record<string, Record<string, KPIValues>>): OsWeekly[] {
   return OS_SEGMENTS.map((os) => {
     const cur = byOs.lastWeek?.[os];
     const prior = OS_WEEKLY_PRIOR.map((k) => byOs[k]?.[os]).filter((v): v is KPIValues => !!v);
@@ -551,16 +546,8 @@ function osWeeklyCheck(byOs: Record<string, Record<string, KPIValues>>, cohorts:
       const value = cur?.[key] ?? null; const base = priorBase(key, prior);
       return { key, value, base, flag: enough ? flagOf(key, value, base) : null };
     });
-    let cohort: OsWeekly['cohort'] = null;
-    const cw = (cohorts?.[os] ?? []).slice(-COHORT_WEEKS);
-    const last = cw[cw.length - 1]; const prev = cw.slice(0, -1);
-    const prevSignups = sumOf(prev.map((c) => c.signups));
-    if (last?.rate != null && prev.length && prevSignups && last.signups >= COHORT_MIN_SIGNUPS) {
-      const base = sumOf(prev.map((c) => c.converted)) / prevSignups;
-      cohort = { week: last.week, rate: last.rate, base, flag: flagOf('conversionRate', last.rate, base) };
-    }
-    const flags = [...lines.map((l) => l.flag), cohort?.flag ?? null];
-    return { os, lines, cohort, status: flags.includes('peor') ? 'peor' : flags.includes('mejor') ? 'mejor' : null };
+    const flags = lines.map((l) => l.flag);
+    return { os, lines, status: flags.includes('peor') ? 'peor' : flags.includes('mejor') ? 'mejor' : null };
   });
 }
 
@@ -569,17 +556,12 @@ const SHORT_LABEL: Partial<Record<KPIKey, string>> = { conversionRate: 'C.R.', c
 
 function renderOsWeekly(o: OsWeekly): string {
   const metric = (l: OsWeeklyLine) => `${flagDot(l.flag)} ${SHORT_LABEL[l.key] ?? KPI_LABELS[l.key]} *${fmtValue(l.key, l.value)}* (${fmtDelta(l.key, l.value, l.base) ?? 'n/d'} vs ${fmtValue(l.key, l.base)})`;
-  const lines = [`• *${o.os}* ${flagDot(o.status)}  ` + o.lines.map(metric).join(' · ')];
-  if (o.cohort) {
-    lines.push(`      ↳ ${flagDot(o.cohort.flag)} Cohorte de signups del ${dayShortEs(o.cohort.week)}: compró a los 8 días *${(o.cohort.rate * 100).toFixed(2)}%* (${fmtDelta('conversionRate', o.cohort.rate, o.cohort.base) ?? 'n/d'} vs ${(o.cohort.base * 100).toFixed(2)}% de las 4 cohortes previas)`);
-  }
-  return lines.join('\n');
+  return `• *${o.os}* ${flagDot(o.status)}  ` + o.lines.map(metric).join(' · ');
 }
 
 /** Resumen corto para "Lo más importante" (solo lo que empeoró). */
 function osWeeklyHeadline(o: OsWeekly): string {
   const bad = o.lines.filter((l) => l.flag === 'peor').map((l) => `${SHORT_LABEL[l.key]} ${fmtValue(l.key, l.value)} (${fmtDelta(l.key, l.value, l.base)})`);
-  if (o.cohort?.flag === 'peor') bad.push(`cohorte del ${dayShortEs(o.cohort.week)} a 8 días ${(o.cohort.rate * 100).toFixed(2)}% (${fmtDelta('conversionRate', o.cohort.rate, o.cohort.base)})`);
   return `${o.os} 🔴 ${bad.join(', ')}`;
 }
 
@@ -629,18 +611,15 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
     { key: 'week4', start: addDays(lwStart, -21), end: addDays(lwEnd, -21) },
     { key: 'week5', start: addDays(lwStart, -28), end: addDays(lwEnd, -28) },
   ];
-  // Última cohorte de signup cuyos signups ya cumplieron 8 días (el domingo de esa semana + 7 ≤ ayer).
-  const lastCohortWeek = mondayOf(addDays(y, -13));
   const trendKeys = ['week4', 'week3', 'priorWeek', 'lastWeek']; // oldest → newest
 
-  const [totals, byOs, byLang, byCountry, series, freshness, cohorts] = await Promise.all([
+  const [totals, byOs, byLang, byCountry, series, freshness] = await Promise.all([
     fetchKPIsByPeriod(periods),
     fetchKPIsByPeriodAndDimension(periods, 'os'),
     fetchKPIsByPeriodAndDimension(periods, 'kinedu_language'),
     fetchKPIsByPeriodAndDimension(periods, 'country'),
     fetchDailySeries(addDays(y, -28), addDays(y, -1)),
     fetchTableFreshness(),
-    fetchCohortConversion(lastCohortWeek, COHORT_FETCH_WEEKS).catch((e) => { console.error('[brief] cohortes no disponibles:', e instanceof Error ? e.message : e); return null; }),
   ]);
 
   // Weekday-seasonal noise bands from the 28 days before yesterday
@@ -700,8 +679,8 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
     return { key: k, vals, avgPrev, line: vals.map((v) => fmtValue(k, v)).join(' → '), mark: dot(k, last, avgPrev) };
   });
 
-  // Alerta semanal por OS (semana cerrada vs 4 previas + cohorte de signup a 8 días)
-  const osWeekly = osWeeklyCheck(byOs, cohorts);
+  // Alerta semanal por OS (semana cerrada vs 4 previas, calendar basis)
+  const osWeekly = osWeeklyCheck(byOs);
   const osAlerts = osWeekly.filter((o) => o.status === 'peor');
 
   // Data notes
@@ -793,11 +772,9 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   ]);
   const weekHdr = (start: string) => dayShortEs(start).split(' ').slice(-1)[0];
   const osTable = () => {
-    const cohortWeek = osWeekly.find((o) => o.cohort)?.cohort?.week;
     const fl = (l: OsWeeklyLine | undefined) => (l ? `${fmtValue(l.key, l.value)}  ${flagDot(l.flag)} ${fmtDelta(l.key, l.value, l.base) ?? 'n/d'}` : '—');
-    return table(['OS', 'C.R.', 'CAC', 'New Subs', cohortWeek ? `Cohorte ${weekHdr(cohortWeek)} · 8 días` : 'Cohorte 8 días'],
-      osWeekly.map((o) => [`${o.os} ${flagDot(o.status)}`, ...OS_WEEKLY_KPIS.map((k) => fl(o.lines.find((l) => l.key === k))),
-        o.cohort ? `${(o.cohort.rate * 100).toFixed(2)}%  ${flagDot(o.cohort.flag)} ${fmtDelta('conversionRate', o.cohort.rate, o.cohort.base) ?? 'n/d'}` : '—']));
+    return table(['OS', 'C.R.', 'CAC', 'New Subs'],
+      osWeekly.map((o) => [`${o.os} ${flagDot(o.status)}`, ...OS_WEEKLY_KPIS.map((k) => fl(o.lines.find((l) => l.key === k)))]));
   };
   const osLinks = `📊 ${OS_SEGMENTS.map((os) => `<${linkOs(os)}|${os} por semana>`).join(' · ')}`;
   const semaforo = (heading: string, comps: Comparison[], baseLabel: string): SlackBlock => {
@@ -818,7 +795,7 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   // Si fallan, el brief sale igual con los enlaces.
   let charts: { files: SlackFile[]; comment: string } | null = null;
   try {
-    charts = await buildBriefCharts({ lwStart, lwEnd, yesterday: y, cohorts, links: { total: linkTendencia, ios: linkOs('iOS'), android: linkOs('Android') } });
+    charts = await buildBriefCharts({ lwStart, lwEnd, yesterday: y, links: { total: linkTendencia, ios: linkOs('iOS'), android: linkOs('Android') } });
   } catch (e) { console.error('[brief] gráficas no disponibles:', e instanceof Error ? e.message : e); }
   if (charts) {
     charts.files.forEach((f, i) => { mainBlocks.push({ type: 'image', _file: i, alt_text: f.title, title: { type: 'plain_text', text: f.title } } as SlackBlock); });
@@ -831,7 +808,7 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   const osWeeklyBlocks = (): SlackBlock[] => [
     sec(`*Alerta semanal por OS* — semana ${rangeShortEs(lwStart, lwEnd)} vs promedio de las 4 previas  _(🔴/🟢 = ±10 % o más)_`),
     osTable(),
-    ctx(`Cohorte = de quienes se registraron esa semana, cuántos compraron en sus primeros 8 días (incluye el trial); misma fuente que el Tableau de cohortes · ${osLinks}`),
+    ctx(`Semanas de calendario (cada venta cuenta el día que pasó) · las cohortes de signup y de refunds van en el canal de cohortes · ${osLinks}`),
   ];
   if (weekly) mainBlocks.push(...osWeeklyBlocks());
   if (causas.length) {

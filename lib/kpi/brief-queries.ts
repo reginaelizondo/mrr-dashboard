@@ -192,39 +192,42 @@ export async function fetchTableFreshness(): Promise<string | null> {
 }
 
 // ---- Conversión por cohorte de signup (misma fuente que el Tableau "Conversion (Weekly) by Signup Cohort") ----
+// La usa el brief de cohortes (lib/kpi/cohort-brief.ts), que va a su propio canal. El brief diario es calendar basis.
 
 /** Tabla por usuario: fecha de signup y de primera compra premium. Los signups por semana cuadran con el Tableau. */
 export const CONVERSION_COHORT_TABLE = '`celtic-music-240111.dbt_prod_analytics.an_conversion_analysis`';
-/** Ventana de conversión: compra dentro de los 8 días del signup (día 0 a 7). Incluye el cobro del trial
+/** Ventanas de conversión (días desde el signup, día 0 incluido). 8 días incluye el cobro del trial
  *  (3 días en Android, 7 en iOS), así que compara cohortes a la misma edad. */
 export const COHORT_WINDOW_DAYS = 7;
+export const COHORT_LONG_WINDOW_DAYS = 29;
 
-export interface CohortWeek { week: string; signups: number; converted: number; rate: number | null }
+/** Una cohorte diaria de signup por OS: cuántos se registraron y cuántos compraron el mismo día, a 8 y a 30 días. */
+export interface CohortDay { day: string; os: string; signups: number; d0: number; d8: number; d30: number }
 
 /**
- * Conversión a 8 días por semana ISO de signup y por OS, para las semanas cuyo último signup ya cumplió los
- * 8 días (`lastCompleteWeek` y anteriores). `weeks` = cuántas semanas completas, de la más vieja a la más nueva.
+ * Cohortes diarias de signup por OS (iOS, Android) con signup entre `start` y `end`. Los conteos a 8 y 30 días
+ * solo son finales si el signup + 7 (o + 29) ≤ último día con datos; quien llama decide qué cohortes ya maduraron.
  */
-export async function fetchCohortConversion(lastCompleteWeek: string, weeks: number): Promise<Record<string, CohortWeek[]>> {
-  if (!DATE_RE.test(lastCompleteWeek)) throw new Error(`Invalid cohort week: ${lastCompleteWeek}`);
+export async function fetchSignupCohortsDaily(start: string, end: string): Promise<CohortDay[]> {
+  if (!DATE_RE.test(start) || !DATE_RE.test(end)) throw new Error(`Invalid cohort range: ${start}..${end}`);
   const bq = getBigQueryClient();
   const query = `
     WITH u AS (
       SELECT user_id, ANY_VALUE(os) AS os, MIN(signup_date) AS s, MIN(premium_conversion_date) AS c
       FROM ${CONVERSION_COHORT_TABLE}
-      WHERE signup_date BETWEEN DATE_SUB(@last, INTERVAL @back DAY) AND DATE_ADD(@last, INTERVAL 6 DAY)
+      WHERE signup_date BETWEEN @start AND @end
       GROUP BY user_id
     )
-    SELECT CAST(DATE_TRUNC(s, ISOWEEK) AS STRING) AS wk, os, COUNT(*) AS signups,
-      COUNTIF(c IS NOT NULL AND DATE_DIFF(c, s, DAY) BETWEEN 0 AND ${COHORT_WINDOW_DAYS}) AS converted
+    SELECT CAST(s AS STRING) AS day, os, COUNT(*) AS signups,
+      COUNTIF(c IS NOT NULL AND DATE_DIFF(c, s, DAY) = 0) AS d0,
+      COUNTIF(c IS NOT NULL AND DATE_DIFF(c, s, DAY) BETWEEN 0 AND ${COHORT_WINDOW_DAYS}) AS d8,
+      COUNTIF(c IS NOT NULL AND DATE_DIFF(c, s, DAY) BETWEEN 0 AND ${COHORT_LONG_WINDOW_DAYS}) AS d30
     FROM u WHERE os IN ('iOS', 'Android')
-    GROUP BY wk, os ORDER BY os, wk
+    GROUP BY day, os ORDER BY day, os
   `;
-  const [rows] = await bq.query({ query, params: { last: lastCompleteWeek, back: 7 * (weeks - 1) } });
-  const out: Record<string, CohortWeek[]> = {};
-  for (const r of rows as Record<string, unknown>[]) {
-    const signups = toNumber(r.signups) ?? 0; const converted = toNumber(r.converted) ?? 0;
-    (out[String(r.os)] ??= []).push({ week: String(r.wk), signups, converted, rate: signups ? converted / signups : null });
-  }
-  return out;
+  const [rows] = await bq.query({ query, params: { start, end } });
+  return (rows as Record<string, unknown>[]).map((r) => ({
+    day: String(r.day), os: String(r.os),
+    signups: toNumber(r.signups) ?? 0, d0: toNumber(r.d0) ?? 0, d8: toNumber(r.d8) ?? 0, d30: toNumber(r.d30) ?? 0,
+  }));
 }

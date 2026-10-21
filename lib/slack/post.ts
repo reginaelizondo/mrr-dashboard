@@ -2,8 +2,10 @@
  * Slack delivery.
  *  - postToSlack: incoming webhook (bound to #datastudiobot). One message, no threads.
  *  - postWithThread: bot token + channel id → main message, then replies in a thread.
- *    Falls back to the webhook (everything in one message) if the bot path is not
- *    configured or fails, so a brief never goes missing because of Slack plumbing.
+ *    Default channel = SLACK_BRIEF_CHANNEL (calendar brief). The cohort brief passes
+ *    SLACK_COHORT_CHANNEL and turns the webhook fallback off, so it never lands in
+ *    the calendar channel. With the fallback on, a failed bot post goes to the webhook
+ *    (everything in one message), so a brief never goes missing because of Slack plumbing.
  */
 
 import { cleanTables, degradeTables } from './table';
@@ -169,9 +171,16 @@ function mergeForWebhook(post: ThreadedPost): SlackMessage {
   return { text: post.main.text, blocks: degradeTables(blocks.filter((b) => !isImagePlaceholder(b))).slice(0, 50) };
 }
 
-export async function postWithThread(post: ThreadedPost): Promise<{ via: 'bot' | 'webhook'; ts?: string }> {
+export interface PostOptions {
+  /** Canal de destino (id). Default: SLACK_BRIEF_CHANNEL. */
+  channel?: string;
+  /** Si el bot falla, mandar todo por el webhook (#datastudiobot). Default: true. */
+  webhookFallback?: boolean;
+}
+
+export async function postWithThread(post: ThreadedPost, opts: PostOptions = {}): Promise<{ via: 'bot' | 'webhook'; ts?: string }> {
   const token = process.env.SLACK_BOT_TOKEN;
-  const channel = process.env.SLACK_BRIEF_CHANNEL;
+  const channel = opts.channel ?? process.env.SLACK_BRIEF_CHANNEL;
   if (token && channel) {
     const inline = (m: SlackMessage) => !!m.files?.length && !!m.blocks?.some(isImagePlaceholder);
     const main = inline(post.main) ? await postWithImages(token, channel, post.main) : await postChatMessage(token, channel, post.main);
@@ -199,7 +208,10 @@ export async function postWithThread(post: ThreadedPost): Promise<{ via: 'bot' |
       }
       return { via: 'bot', ts: main.ts };
     }
+    if (opts.webhookFallback === false) throw new Error(`Slack bot post failed (${channel}): ${main.error}`);
     console.error('[slack] bot post failed, falling back to webhook:', main.error);
+  } else if (opts.webhookFallback === false) {
+    throw new Error('SLACK_BOT_TOKEN or channel not set');
   }
   await postToSlack(mergeForWebhook(post));
   return { via: 'webhook' };

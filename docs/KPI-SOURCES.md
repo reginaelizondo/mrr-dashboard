@@ -184,9 +184,10 @@ bruta. Se reproduce tal cual; no entra en el brief.
 
 MRR devengado, comisiones reales de tiendas y refunds por SKU viven en Supabase
 (`mrr-dashboard`) y las APIs directas de Apple/Google/Stripe. No son parte del
-brief operativo diario. Las cohortes de signup sí entran desde el 2026-10-20 (abajo).
+brief operativo diario. Las cohortes de signup y de refunds van en el brief de cohortes, en su propio canal
+(desde el 2026-10-21, abajo).
 
-## Alerta semanal por OS y conversión por cohorte (desde 2026-10-20)
+## Alerta semanal por OS (desde 2026-10-20, calendar basis)
 
 Motivo: el 20-oct el brief salió "en rango" mientras el Tableau "Conversion (Weekly)
 by Signup Cohort" mostraba a Android bajando. El brief compara un día contra 7 y el
@@ -196,20 +197,59 @@ total lo domina iOS (≈ 86 % de New Subs), así que una baja de Android no se v
   las 4 previas: C.R., CAC y New Subs. Base = promedio semanal para conteos y
   cociente de las sumas de las 4 semanas para ratios. 🔴/🟢 con ±10 % o más
   (redondeado, como se muestra) y solo si la base tiene ≥ 50 New Subs por semana.
-- **Cohorte:** `dbt_prod_analytics.an_conversion_analysis` (una fila por usuario y
-  venta; `signup_date`, `premium_conversion_date`). Es la fuente del Tableau: los
-  signups por semana cuadran (8,302 · 11,662 · … · 6,083). Métrica: de los que se
-  registraron esa semana ISO, % que compró entre el día 0 y el 7 (incluye el cobro
-  del trial: día 3 en Android, día 7 en iOS). Se usa la última semana cuyo domingo
-  + 7 días ≤ ayer, contra las 4 cohortes previas (cociente de sumas), mínimo 1,000
-  signups. El Tableau acumula semanas a conversión, así que sus % de cohortes
-  maduras salen algo más altos; a la misma edad la tendencia es la misma.
 - **Dónde sale:** los lunes en el mensaje principal (y en "Lo más importante" y "Qué
-  revisaría hoy" si hay 🔴); el resto de la semana en el hilo "Semana y tendencia".
-  Enlaces al Operativo filtrado por OS, por semana, con C.R. vs CAC en el explorador.
-- Código: `osWeeklyCheck` / `renderOsWeekly` en `lib/kpi/daily-brief.ts`,
-  `fetchCohortConversion` en `lib/kpi/brief-queries.ts`. Si la consulta de cohortes
-  falla, el brief sale sin esa línea (no se cae).
+  revisaría hoy" si hay 🔴); el resto de la semana en el hilo.
+- Código: `osWeeklyCheck` / `renderOsWeekly` en `lib/kpi/daily-brief.ts`.
+- Del 20 al 21-oct esta alerta también traía la cohorte de signup a 8 días. Desde el
+  21-oct esa cohorte se mudó al brief de cohortes (abajo): el brief diario es solo
+  calendar basis.
+
+## Dos canales: calendar y cohortes (desde 2026-10-21)
+
+| | Brief diario (calendar) | Brief de cohortes |
+|---|---|---|
+| Qué es | Cada KPI cuenta el día en que pasó | Cada número pertenece a un grupo (semana o día de signup, semana de cobro) y se sigue en el tiempo |
+| Canal | `SLACK_BRIEF_CHANNEL` | `SLACK_COHORT_CHANNEL` |
+| Cron | `/api/cron/daily-brief`, 15:30 UTC | `/api/cron/cohort-brief`, 15:35 UTC |
+| Código | `lib/kpi/daily-brief.ts`, `brief-charts.tsx` | `lib/kpi/cohort-brief.ts`, `cohort-charts.tsx` |
+| Prueba local | `npx tsx scripts/test-daily-brief.ts` | `npx tsx scripts/test-cohort-brief.ts` |
+
+El brief de cohortes nunca usa el webhook (que apunta al canal calendar): si falta
+`SLACK_COHORT_CHANNEL`, el cron no publica y lo dice en su respuesta; si el bot falla,
+manda el aviso de error al canal de cohortes y solo si eso falla, al webhook.
+
+### Qué trae el brief de cohortes
+
+- **Cohortes de signup:** `dbt_prod_analytics.an_conversion_analysis` (una fila por
+  usuario y venta; `signup_date`, `premium_conversion_date`). Es la fuente del Tableau
+  "Conversion (Weekly) by Signup Cohort": los signups por semana cuadran. Métricas:
+  % de los que se registraron que compró el mismo día, entre el día 0 y el 7 ("8 días",
+  incluye el cobro del trial: día 3 en Android, día 7 en iOS) y entre el día 0 y el 29
+  ("30 días"). Consulta: `fetchSignupCohortsDaily` en `lib/kpi/brief-queries.ts`
+  (cohortes diarias por OS; las semanas se suman en el código).
+  - Semanal a 8 días: última semana ISO cuyo domingo + 7 ≤ ayer, vs las 4 previas.
+  - Semanal a 30 días: última semana cuyo domingo + 29 ≤ ayer, vs las 4 previas.
+  - Diaria a 8 días: el día de signup = ayer − 7, vs el mismo día de la semana en las 4
+    semanas previas.
+  - Base = cociente de las sumas de las 4 cohortes previas. 🔴/🟢 con ±10 % o más
+    (redondeado) y volumen mínimo: 1,000 signups por semana, 200 por día (la cohorte y el
+    promedio de las previas).
+  - El Tableau acumula semanas a conversión, así que sus % de cohortes maduras salen algo
+    más altos; a la misma edad la tendencia es la misma.
+- **Cohortes de refunds:** `kinedu_refunds` en Supabase, RPC `refund_cohorts_weekly`
+  (`getRefundCohortsWeekly` en `lib/refunds.ts`): de los cobros de cada semana, % que se
+  devolvió (unidades y monto, base bruta; no es la tasa de refunds del calendar). Solo
+  se compara la última semana "madura" (terminó hace ≥ 14 días) contra las 4 maduras
+  previas, con ≥ 1,000 cobros. Las semanas recientes salen con ⏳.
+- **Sin ingresos por cohorte:** `usd_amount` de `an_conversion_analysis` no cuadra con
+  NS Sales del calendar (semanas 28-sep y 5-oct: primeras ventas $67.8K y $70.2K en la
+  tabla de cohortes contra NS Sales $90.2K y $92.0K; 1,652 y 1,582 primeras compras
+  contra 1,852 y 1,759 New Subs). No se usa hasta validarlo.
+- **Formato:** mensaje principal con "Lo más importante" (cuatro líneas: semanal 8 días,
+  diaria 8 días, semanal 30 días, refunds), una gráfica PNG de 12 semanas (iOS y Android a
+  8 y 30 días, signups por semana, refunds por semana de cobro), la tabla de las últimas 8
+  semanas de signup y "Qué revisaría hoy". En el hilo: cohortes diarias de los últimos 14
+  días, refunds por semana de cobro y tienda, y notas. Narrativa por reglas (sin Claude).
 
 ## Formato del brief en Slack (desde 2026-10-20)
 
@@ -218,7 +258,7 @@ total lo domina iOS (≈ 86 % de New Subs), así que una baja de Android no se v
   idioma y país. Si Slack rechaza el bloque, `lib/slack/post.ts` reintenta con la tabla en texto monoespaciado; el
   respaldo por webhook también la manda así.
 - **Gráficas PNG dentro del mensaje principal**, debajo de "Lo más importante" (`lib/kpi/brief-charts.tsx`; se suben sin compartir y se insertan con bloques `image` + `slack_file`, reintentando unos segundos mientras Slack procesa el archivo): "spend vs signups, últimos 30 días" (barras = signups, línea = spend en doble eje, más CPNU; ayer vs promedio de los 7 días previos), "últimas 12 semanas" (New Subs, CAC, Conversion Rate,
-  Total Contribution) y "por OS" (C.R., CAC y cohorte a 8 días para iOS y Android). Mismos datos que el Operativo
+  Total Contribution) y "por OS" (C.R., CAC y New Subs para iOS y Android; hasta el 21-oct traía la cohorte a 8 días). Mismos datos que el Operativo
   (réplica, vista Corregido); el "vs 4 sem." usa la misma base que la alerta por OS. Se dibujan en el servidor con
   `next/og` (sin servicios externos) y se suben con `files:write` (permiso agregado el 2026-10-20). Cada envío trae
   enlaces al Operativo con el mismo periodo y filtro. Si la gráfica falla, el brief sale igual con los enlaces.

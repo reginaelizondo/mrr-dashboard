@@ -17,6 +17,10 @@
       "schedule": "30 15 * * *"
     },
     {
+      "path": "/api/cron/cohort-brief",
+      "schedule": "35 15 * * *"
+    },
+    {
       "path": "/api/cron/store-audit",
       "schedule": "0 16 * * *"
     },

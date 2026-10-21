@@ -49,7 +49,8 @@ Supabase store_daily (día × tienda × país, USD de la propia tienda) ──�
 | `/api/cron/kpi-daily?mode=if-changed` | cada 30 min | Re-sincroniza 95 días si dbt reconstruyó BigQuery. |
 | `/api/cron/store-daily?days=10` | :20 cada hora | Ventas por tienda de los últimos 10 días + recalibración. |
 | `/api/cron/store-daily?days=75` | 15:40 | Igual, 75 días (recoge el earnings mensual de Google y días tardíos de Apple). |
-| `/api/cron/daily-brief` | 15:30 | Brief diario a Slack (enlaza al dashboard). |
+| `/api/cron/daily-brief` | 15:30 | Brief diario a Slack, calendar basis (`SLACK_BRIEF_CHANNEL`; enlaza al dashboard). |
+| `/api/cron/cohort-brief` | 15:35 | Brief de cohortes (signup a 8 y 30 días, refunds por semana de cobro) a su canal (`SLACK_COHORT_CHANNEL`). |
 | `/api/cron/store-audit` | 16:00 | Auditoría tiendas vs Looker a Slack (incluye línea de la Réplica y de la Guardia). |
 | `/api/cron/kpi-guard` | :45 cada hora | Auditor automático; avisa a Slack solo cuando algo cambia de estado. |
 | `/api/cron/operativo-warm` | :05, :25, :35 | Pre-calienta la caché del Operativo después de los syncs. |

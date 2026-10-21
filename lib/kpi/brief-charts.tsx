@@ -1,21 +1,21 @@
 /**
- * Gráficas del brief como imagen PNG (se suben al hilo de Slack). Mismos datos y colores que el dashboard Operativo:
- * la réplica `kpi_daily` en definición Corregido y la cohorte de signup de `an_conversion_analysis`.
+ * Gráficas del brief como imagen PNG (van dentro del mensaje de Slack). Mismos datos y colores que el dashboard
+ * Operativo: la réplica `kpi_daily` en definición Corregido (calendar basis). `renderPanels` también lo usa el
+ * brief de cohortes (`cohort-charts.tsx`).
  * Se dibujan en el propio servidor con `next/og` (sin servicios externos): los datos no salen de Kinedu.
  */
 import { ImageResponse } from 'next/og';
 import { addDays } from './period';
-import type { CohortWeek } from './brief-queries';
 import type { KpiValues } from './replica';
 import type { SlackFile } from '@/lib/slack/post';
 
-const BLUE = '#0086D8', NAVY = '#0E3687', GREEN = '#2F9E38', ROSE = '#DA4D7A', GRID = '#E8EDF3', MUTED = '#64748B';
+export const BLUE = '#0086D8', NAVY = '#0E3687', GREEN = '#2F9E38', ROSE = '#DA4D7A', GRID = '#E8EDF3', MUTED = '#64748B';
 const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 const W = 1200, H = 675;
 const ADDITIVE_KEYS = new Set<keyof KpiValues>(['newSubs', 'totalContribution', 'spend', 'signups', 'nsSales']);
 
-type Fmt = 'int' | 'usd' | 'usd2' | 'pct';
-interface PanelData {
+export type Fmt = 'int' | 'usd' | 'usd2' | 'pct';
+export interface PanelData {
   title: string; fmt: Fmt; kind: 'bar' | 'line'; higherIsBetter: boolean; labels: string[]; values: Array<number | null>; color?: string;
   /** Base de las 4 semanas previas, calculada igual que la alerta del brief (cociente de sumas para ratios). */
   base?: number | null;
@@ -33,7 +33,7 @@ function fmt(v: number | null, f: Fmt): string {
     case 'pct': return sign + (a * 100).toFixed(a < 0.1 ? 2 : 1) + '%';
   }
 }
-const weekLabel = (iso: string) => { const d = new Date(iso + 'T00:00:00Z'); return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`; };
+export const weekLabel = (iso: string) => { const d = new Date(iso + 'T00:00:00Z'); return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`; };
 
 /** Última semana vs la base de las 4 previas (la que manda el brief; si no, promedio simple). */
 function deltaVsPrior(values: Array<number | null>, given?: number | null): number | null {
@@ -98,7 +98,7 @@ function Panel({ p, w, h }: { p: PanelData; w: number; h: number }) {
   );
 }
 
-async function render(title: string, subtitle: string, panels: PanelData[], cols: number): Promise<Uint8Array> {
+export async function renderPanels(title: string, subtitle: string, panels: PanelData[], cols: number): Promise<Uint8Array> {
   const rows = Math.ceil(panels.length / cols);
   const gap = 16, pad = 28, headH = 78;
   const pw = Math.floor((W - pad * 2 - gap * (cols - 1)) / cols);
@@ -220,13 +220,11 @@ export interface BriefChartsInput {
   lwStart: string; lwEnd: string;
   /** Ayer (MX): último día de la gráfica de 30 días. */
   yesterday: string;
-  /** Cohortes completas por OS (de la más vieja a la más nueva). */
-  cohorts: Record<string, CohortWeek[]> | null;
   /** Enlaces al dashboard (ya armados por el brief). */
   links: { total: string; ios: string; android: string };
 }
 
-/** Tres imágenes: spend vs signups de 30 días, tendencia total de 12 semanas y C.R. / CAC / cohorte por OS. */
+/** Tres imágenes: spend vs signups de 30 días, tendencia total de 12 semanas y C.R. / CAC / New Subs por OS. */
 export async function buildBriefCharts(inp: BriefChartsInput): Promise<{ files: SlackFile[]; comment: string }> {
   const r = await import('./replica');
   const start = addDays(inp.lwStart, -77); const end = inp.lwEnd;
@@ -250,7 +248,7 @@ export async function buildBriefCharts(inp: BriefChartsInput): Promise<{ files: 
     const v = r.computeKpis(r.sumAgg(sel), 'fixed')[key] as number | null;
     return v === null ? null : ADDITIVE_KEYS.has(key) ? v / prior4.length : v;
   };
-  const totalImg = await render(
+  const totalImg = await renderPanels(
     'Kinedu - ultimas 12 semanas',
     `Semana del ${labels[0]} a la del ${weekLabel(inp.lwStart)} (lun-dom, cada etiqueta = lunes) · vista Corregido · color fuerte = ultima semana · etiqueta = vs las 4 previas`,
     [
@@ -266,14 +264,11 @@ export async function buildBriefCharts(inp: BriefChartsInput): Promise<{ files: 
     const osRows = byOs.filter((a) => a.grp === os);
     osPanels.push({ title: `${os} · C.R.`, fmt: 'pct', kind: 'line', higherIsBetter: true, labels, values: series(m, 'conversionRate'), color: GREEN, base: baseOf(osRows, 'conversionRate') });
     osPanels.push({ title: `${os} · CAC`, fmt: 'usd2', kind: 'line', higherIsBetter: false, labels, values: series(m, 'cac'), color: ROSE, base: baseOf(osRows, 'cac') });
-    const cw = inp.cohorts?.[os] ?? [];
-    const prevC = cw.slice(-5, -1); const prevSignups = prevC.reduce((a, c) => a + c.signups, 0);
-    osPanels.push({ title: `${os} · Cohorte 8 dias`, fmt: 'pct', kind: 'line', higherIsBetter: true, labels: cw.map((c) => weekLabel(c.week)), values: cw.map((c) => c.rate), color: BLUE,
-      base: prevSignups ? prevC.reduce((a, c) => a + c.converted, 0) / prevSignups : null });
+    osPanels.push({ title: `${os} · New Subs`, fmt: 'int', kind: 'bar', higherIsBetter: true, labels, values: series(m, 'newSubs'), base: baseOf(osRows, 'newSubs') });
   }
-  const osImg = await render(
+  const osImg = await renderPanels(
     'Por OS - ultimas 12 semanas',
-    'C.R. y CAC por semana (Corregido) · Cohorte 8 dias = de quienes se registraron esa semana, % que compro en sus primeros 8 dias (incluye el trial)',
+    'C.R., CAC y New Subs por semana de calendario (Corregido) · las cohortes de signup van en el canal de cohortes',
     osPanels, 3);
 
   // 30 días: base = promedio de los 7 días previos a ayer, como el "vs prom. 7d" del brief (CPNU = suma/suma).
