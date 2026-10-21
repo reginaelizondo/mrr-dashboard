@@ -22,7 +22,7 @@ export interface Proposal {
 }
 
 export interface EstelaNarrative {
-  lectura: string;         // 2–3 frases: cómo viene la caja y la rentabilidad esta semana
+  lectura: string;         // 1 frase con semáforo: cómo viene la caja esta semana
   propuestas: Proposal[];  // exactamente 3
   seguimiento: string[];   // una línea por propuesta anterior aceptada o abierta
 }
@@ -42,14 +42,14 @@ REGLAS
 FORMATO
 Responde ÚNICAMENTE con un objeto JSON válido, sin texto antes ni después, sin bloque de código:
 {
-  "lectura": "2 a 3 frases sobre caja y rentabilidad esta semana, con cifras del JSON.",
+  "lectura": "UNA frase (máx. 160 caracteres) que empieza con 🟢, 🟡 o 🔴 y dice cómo viene la caja esta semana, con una cifra del JSON.",
   "propuestas": [
     {"titulo": "...", "que": "...", "impactoCash": "+$X/mes", "comoSeCalculo": "...", "riesgo": "...", "cuandoSeVe": "...", "dueno": "Pepis", "tipo": "ahorro"},
     {...}, {...}
   ],
   "seguimiento": ["#12 · Tope de CAC · CAC semanal bajó de $26.61 a $24.10 · veredicto: YA SE VE", "..."]
 }
-"tipo" es uno de: ahorro, ingreso, cobranza, riesgo, pricing, otro. "cuandoSeVe" son 2 a 5 palabras ("2 semanas", "P&L de noviembre", "MRR del 1-nov"). Las cifras van siempre con formato de dinero ($14,321), nunca con decimales largos. Longitudes: titulo ≤ 70, que ≤ 400, comoSeCalculo ≤ 300, riesgo ≤ 200.`;
+"tipo" es uno de: ahorro, ingreso, cobranza, riesgo, pricing, otro. "cuandoSeVe" son 2 a 5 palabras ("2 semanas", "P&L de noviembre", "MRR del 1-nov"). Las cifras van siempre con formato de dinero ($14,321), nunca con decimales largos. Longitudes: titulo ≤ 60, que ≤ 160 (UNA frase con la acción concreta), comoSeCalculo ≤ 140, riesgo ≤ 90. Pepis tiene muy poco tiempo de lectura: todo debe leerse en 30 segundos; nada de párrafos ni explicaciones de método.`;
 
 let cached: Anthropic | null = null;
 function client(): Anthropic {
@@ -72,18 +72,18 @@ function asNarrative(raw: unknown): EstelaNarrative {
   if (!raw || typeof raw !== 'object') throw new Error('Narrative is not an object');
   const o = raw as Record<string, unknown>;
   const str = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '');
-  const lectura = str(o.lectura, 600);
+  const lectura = str(o.lectura, 220);
   if (!lectura) throw new Error('Missing lectura');
   const props = Array.isArray(o.propuestas) ? (o.propuestas as unknown[]) : [];
   const propuestas: Proposal[] = props.slice(0, 3).map((p) => {
     const q = (p ?? {}) as Record<string, unknown>;
     const tipo = str(q.tipo, 20);
     return {
-      titulo: str(q.titulo, 70) || 'Propuesta',
-      que: str(q.que, 400),
+      titulo: str(q.titulo, 60) || 'Propuesta',
+      que: str(q.que, 200),
       impactoCash: str(q.impactoCash, 60) || 'n/a',
-      comoSeCalculo: str(q.comoSeCalculo, 300),
-      riesgo: str(q.riesgo, 200),
+      comoSeCalculo: str(q.comoSeCalculo, 160),
+      riesgo: str(q.riesgo, 110),
       cuandoSeVe: str(q.cuandoSeVe, 60) || 'n/a',
       dueno: str(q.dueno, 30) || 'Pepis',
       tipo: (TIPOS.has(tipo) ? tipo : 'otro') as Proposal['tipo'],

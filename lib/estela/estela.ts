@@ -34,8 +34,11 @@ function section(text: string): SlackBlock {
 
 function proposalBlocks(p: Proposal, id: number | null, n: number): SlackBlock[] {
   const head = `*${n}. ${TIPO_ICON[p.tipo]} ${p.titulo}*  ·  *${p.impactoCash}*  ·  se ve en ${p.cuandoSeVe}  ·  dueño: ${p.dueno}`;
-  const body = `${p.que}\n_Cómo se calculó:_ ${p.comoSeCalculo}\n_Riesgo:_ ${p.riesgo}`;
-  const blocks: SlackBlock[] = [section(head), section(body)];
+  // Lo principal en grande; cálculo y riesgo en gris chico (detalle opcional).
+  const blocks: SlackBlock[] = [
+    section(`${head}\n${p.que}`),
+    { type: 'context', elements: [{ type: 'mrkdwn', text: `Cálculo: ${p.comoSeCalculo}  ·  Riesgo: ${p.riesgo}` }] },
+  ];
   if (id !== null) {
     blocks.push({
       type: 'actions',
