@@ -245,6 +245,28 @@ manda el aviso de error al canal de cohortes y solo si eso falla, al webhook.
   NS Sales del calendar (semanas 28-sep y 5-oct: primeras ventas $67.8K y $70.2K en la
   tabla de cohortes contra NS Sales $90.2K y $92.0K; 1,652 y 1,582 primeras compras
   contra 1,852 y 1,759 New Subs). No se usa hasta validarlo.
+- **Cadencia (desde 2026-10-21):**
+  - **Diario:** todo lo de arriba.
+  - **Lunes:** la misma conversión a 8 y 30 días por **red de adquisición** (`network` de
+    `an_conversion_analysis`: Organics, Facebook, Smartlinks…; una red con < 500 signups en la semana va a
+    "Otras redes", que solo sale si juntas pasan de 500). Solo red, no campaña: en `an_cac_and_purchases` ≈ 90 %
+    de las compras no tiene red (sep-2026: 496 compradores Facebook ahí contra 2,533 conversiones a 30 días de
+    signups Facebook en `an_conversion_analysis`), así que no sirve para CAC por red. Por eso el Tableau
+    "CAC & PURCHASES (All Networks)" muestra compras en cero al filtrar por red.
+  - **Primer día hábil del mes** (`firstBusinessDay`, lun–vie, sin feriados): **cohortes mensuales de compra**
+    (cohorte = mes del primer pago), leídas de `cohort_cells` del proyecto **kinedu-cohorts**
+    (`lib/kpi/cohort-monthly.ts`), sin recalcular: LTV neto a M0/M3/M6/M12, sigue pagando a M6 (réplica de
+    "Churn by Cohort"), volvió a pagar a M12, apagó la renovación en M0–M1 (≠ dejar de pagar) y ROAS a la fecha.
+    Cada métrica de la cohorte más reciente que ya la tiene se compara con las 3 cohortes previas a la misma edad.
+    Necesita `COHORTS_SUPABASE_URL` y `COHORTS_SUPABASE_SERVICE_ROLE_KEY` (las de kinedu-cohorts); sin ellas la
+    sección dice "no disponible" y el resto sale igual.
+  - Slack acepta una tabla por mensaje: las tablas por red y mensual van al hilo; su resumen y sus 🔴, al mensaje
+    principal. Para forzarlas: `?weekly=1&monthly=1` en la ruta o `--weekly --monthly` en el script.
+- **Inventario del Tableau (2026-10-21, sitio andressada, proyecto Kinedu PROD):** de 39 workbooks, los de cohortes
+  vivos son "Cohort Subscriptions" (Retention, Churn y Revenue/LTR by Cohort), "Conversion Analysis", "Free Trials",
+  "Track Subscriptions" (incluye "Subscriber Sales Accounting - FT Cohort") y "CAC & PURCHASES (All Networks)".
+  kinedu-cohorts replica todos salvo "Retention by Cohort" (recompra a N meses de la primera compra, con filtro de
+  red), "Subscriber Sales Accounting - FT Cohort" y "LTR Projected" (este último por defecto termina en 2022).
 - **Formato:** mensaje principal con "Lo más importante" (cuatro líneas: semanal 8 días,
   diaria 8 días, semanal 30 días, refunds), una gráfica PNG de 12 semanas (iOS y Android a
   8 y 30 días, signups por semana, refunds por semana de cobro), la tabla de las últimas 8

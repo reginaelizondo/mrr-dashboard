@@ -11,11 +11,19 @@
  *   - Cohortes de refunds (Supabase, refund_cohorts_weekly): de los cobros de cada semana, % que se devolvió.
  *     Solo se compara una semana "madura" (terminó hace ≥ 14 días); las recientes siguen subiendo.
  *
+ * Cadencia (2026-10-21):
+ *   - diario: lo de arriba;
+ *   - lunes: la misma conversión a 8 y 30 días separada por red de adquisición (Organics, Facebook, Smartlinks…);
+ *   - primer día hábil del mes: cohortes mensuales de compra (LTV, sigue pagando, renovación anual, apagó la
+ *     renovación, ROAS) leídas de kinedu-cohorts (lib/kpi/cohort-monthly.ts).
+ *   Slack acepta una tabla por mensaje: las tablas de red y mensual van al hilo; su resumen, al mensaje principal.
+ *
  * 🔴/🟢 = ±10 % o más vs la base (redondeado, como se muestra) y solo con volumen suficiente.
  * Narrativa por reglas (sin llamada a Claude), igual que el brief diario con DAILY_BRIEF_NARRATIVE=off.
  */
 import { fetchSignupCohortsDaily, type CohortDay } from './brief-queries';
-import { todayMx, addDays, mondayOf, dayLabelEs, dayShortEs, rangeShortEs } from './period';
+import { todayMx, addDays, isoWeekday, mondayOf, dayLabelEs, dayShortEs, rangeShortEs } from './period';
+import { buildCohortMonthly, monthLabel, type CohortMonthly, type MonthlyCheck } from './cohort-monthly';
 import { getRefundCohortsWeekly, type RefundCohortRow } from '@/lib/refunds';
 import type { SlackMessage, SlackFile } from '@/lib/slack/post';
 import { tableBlock, tableToMrkdwn } from '@/lib/slack/table';
@@ -40,6 +48,17 @@ const MIN_REFUND_CHARGES = 1000;
 /** Una semana de cobro es "madura" cuando terminó hace al menos estos días. */
 const REFUND_MATURE_DAYS = 14;
 const REFUND_SOURCES = ['apple', 'google', 'stripe'] as const;
+/** Por red: una red sale en su propio renglón con ≥ este número de signups en la semana; el resto va a "Otras". */
+const MIN_NET_SIGNUPS = 500;
+/** Por red y OS: volumen mínimo para marcar 🔴/🟢. */
+const MIN_NET_OS_SIGNUPS = 500;
+
+/** Primer día hábil (lun–vie) del mes de `day`. No considera feriados. */
+export function firstBusinessDay(day: string): string {
+  let d = `${day.slice(0, 7)}-01`;
+  while (isoWeekday(d) > 4) d = addDays(d, 1);
+  return d;
+}
 
 interface Agg { signups: number; d0: number; d8: number; d30: number }
 const zero = (): Agg => ({ signups: 0, d0: 0, d8: 0, d30: 0 });
@@ -53,6 +72,7 @@ function signed(n: number): string {
   return r > 0 ? `+${r}%` : r < 0 ? `−${Math.abs(r)}%` : '0%';
 }
 const flagDot = (f: Flag) => (f === 'peor' ? '🔴' : f === 'mejor' ? '🟢' : '⚪');
+const fmtMonthly = (c: MonthlyCheck) => (c.value === null ? 'n/d' : c.fmt === 'usd' ? `$${c.value.toFixed(2)}` : pct(c.value, 1));
 
 /** Comparación de una cohorte contra su base (cociente de las sumas de las previas). */
 interface Check { seg: string; value: number | null; base: number | null; rel: number | null; flag: Flag; volume: number }
@@ -77,6 +97,10 @@ export interface CohortBriefOptions {
   today?: string;
   /** Marca el mensaje como vista previa (sufijo en el título). */
   preview?: boolean;
+  /** Fuerza (o quita) la sección por red. Default: lunes. */
+  weekly?: boolean;
+  /** Fuerza (o quita) la sección mensual. Default: primer día hábil del mes. */
+  monthly?: boolean;
 }
 
 export interface CohortBriefResult {
@@ -89,6 +113,8 @@ export interface CohortBriefResult {
 export async function buildCohortBrief(opts: CohortBriefOptions = {}): Promise<CohortBriefResult> {
   const today = opts.today ?? todayMx();
   const y = addDays(today, -1);
+  const showWeekly = opts.weekly ?? isoWeekday(today) === 0;
+  const showMonthly = opts.monthly ?? today === firstBusinessDay(today);
 
   // Cohortes maduras: la semana w está completa a N días si su domingo + (N − 1) ≤ ayer.
   const w8 = mondayOf(addDays(y, -13));   // última semana de signup con los 8 días cumplidos
@@ -97,21 +123,34 @@ export async function buildCohortBrief(opts: CohortBriefOptions = {}): Promise<C
   const dc = addDays(y, -7);               // último día de signup con los 8 días cumplidos
   const refundStart = addDays(mondayOf(y), -7 * (WEEKS - 1));
 
+  const monthlyP: Promise<CohortMonthly | null> = showMonthly
+    ? buildCohortMonthly(today).catch((e) => { console.error('[cohort-brief] mensual no disponible:', e instanceof Error ? e.message : e); return null; })
+    : Promise.resolve(null);
   const [days, refundAll, ...refundBySrc] = await Promise.all([
     fetchSignupCohortsDaily(weeks[0], y),
     getRefundCohortsWeekly('all', refundStart, y),
     ...REFUND_SOURCES.map((s) => getRefundCohortsWeekly(s, refundStart, y)),
   ]);
 
-  // day → seg → Agg (con Total)
+  // day → seg → Agg (con Total), y lo mismo por red (day|red)
   const byDay = new Map<string, Record<Seg, Agg>>();
+  const byDayNet = new Map<string, Record<Seg, Agg>>();
+  const put = (map: Map<string, Record<Seg, Agg>>, key: string, os: 'iOS' | 'Android', a: Agg) => {
+    const m = map.get(key) ?? { iOS: zero(), Android: zero(), Total: zero() };
+    addInto(m[os], a); addInto(m.Total, a);
+    map.set(key, m);
+  };
   for (const r of days as CohortDay[]) {
     if (r.os !== 'iOS' && r.os !== 'Android') continue;
-    const m = byDay.get(r.day) ?? { iOS: zero(), Android: zero(), Total: zero() };
     const a: Agg = { signups: r.signups, d0: r.d0, d8: r.d8, d30: r.d30 };
-    addInto(m[r.os], a); addInto(m.Total, a);
-    byDay.set(r.day, m);
+    put(byDay, r.day, r.os, a);
+    put(byDayNet, `${r.day}|${r.network}`, r.os, a);
   }
+  const netWeekAgg = (w: string, nets: string[], s: Seg): Agg => {
+    const a = zero();
+    for (let i = 0; i < 7; i++) for (const n of nets) { const v = byDayNet.get(`${addDays(w, i)}|${n}`)?.[s]; if (v) addInto(a, v); }
+    return a;
+  };
   const dayAgg = (d: string, s: Seg) => byDay.get(d)?.[s];
   const weekAgg = (w: string, s: Seg): Agg => {
     const a = zero();
@@ -125,6 +164,29 @@ export async function buildCohortBrief(opts: CohortBriefOptions = {}): Promise<C
   const weekly8 = SEGS.map((s) => check(s, nd(weekAgg(w8, s), 'd8'), priorWeeks(w8).map((w) => nd(weekAgg(w, s), 'd8')).filter((x): x is { n: number; d: number } => !!x), MIN_WEEK_SIGNUPS));
   const weekly30 = SEGS.map((s) => check(s, nd(weekAgg(w30, s), 'd30'), priorWeeks(w30).map((w) => nd(weekAgg(w, s), 'd30')).filter((x): x is { n: number; d: number } => !!x), MIN_WEEK_SIGNUPS));
   const daily8 = SEGS.map((s) => check(s, nd(dayAgg(dc, s), 'd8'), priorWeeks(dc).map((d) => nd(dayAgg(d, s), 'd8')).filter((x): x is { n: number; d: number } => !!x), MIN_DAY_SIGNUPS));
+
+  // ---- Por red (lunes): redes con volumen propio en la semana w8; el resto junto en "Otras redes"
+  const allNets = [...new Set((days as CohortDay[]).map((r) => r.network))];
+  const netVol = (n: string) => netWeekAgg(w8, [n], 'Total').signups;
+  const mainNets = allNets.filter((n) => netVol(n) >= MIN_NET_SIGNUPS).sort((a, b) => netVol(b) - netVol(a));
+  const otherNets = allNets.filter((n) => !mainNets.includes(n));
+  // "Otras redes" solo si juntas tienen volumen; con un puñado de signups el renglón es puro ruido.
+  const otherVol = otherNets.reduce((a, n) => a + netVol(n), 0);
+  const netGroups: Array<{ label: string; nets: string[] }> = [
+    ...mainNets.map((n) => ({ label: n, nets: [n] })),
+    ...(otherNets.length && otherVol >= MIN_NET_SIGNUPS ? [{ label: 'Otras redes', nets: otherNets }] : []),
+  ];
+  const netCheck = (g: { label: string; nets: string[] }, s: Seg, w: string, k: Win, minVol: number) =>
+    check(g.label, nd(netWeekAgg(w, g.nets, s), k), priorWeeks(w).map((pw) => nd(netWeekAgg(pw, g.nets, s), k)).filter((x): x is { n: number; d: number } => !!x), minVol);
+  const network = showWeekly ? netGroups.map((g) => ({
+    label: g.label,
+    signups: netWeekAgg(w8, g.nets, 'Total').signups,
+    d8: { iOS: netCheck(g, 'iOS', w8, 'd8', MIN_NET_OS_SIGNUPS), Android: netCheck(g, 'Android', w8, 'd8', MIN_NET_OS_SIGNUPS), Total: netCheck(g, 'Total', w8, 'd8', MIN_WEEK_SIGNUPS) },
+    d30: netCheck(g, 'Total', w30, 'd30', MIN_WEEK_SIGNUPS),
+  })) : [];
+  const totalW8 = weekAgg(w8, 'Total').signups;
+
+  const monthly = await monthlyP;
 
   // ---- Refunds por semana de cobro
   const srcMap = REFUND_SOURCES.map((s, i) => new Map((refundBySrc[i] as RefundCohortRow[]).map((r) => [r.cohort_month, r])));
@@ -147,10 +209,17 @@ export async function buildCohortBrief(opts: CohortBriefOptions = {}): Promise<C
     ...daily8.filter((c) => c.flag === 'peor').map((c) => ({ c, what: `signups del ${dayShortEs(dc)} a 8 días` })),
     ...weekly30.filter((c) => c.flag === 'peor').map((c) => ({ c, what: `cohorte ${w30Range} a 30 días` })),
     ...(refundCheck?.flag === 'peor' ? [{ c: refundCheck, what: `cobros de la semana ${rangeShortEs(lastMature!.cohort_month, addDays(lastMature!.cohort_month, 6))}` }] : []),
+    ...network.flatMap((n) => (['iOS', 'Android'] as const).filter((s) => n.d8[s].flag === 'peor')
+      .map((s) => ({ c: { ...n.d8[s], seg: `${n.label} ${s}` }, what: `cohorte ${w8Range} a 8 días por red` }))),
   ];
-  const better = allChecks.filter((c) => c.flag === 'mejor').length;
-  const headline = worse.length
-    ? `🔴 Empeoró: ${worse.slice(0, 4).map(({ c, what }) => `${c.seg} ${pct(c.value)} (${signed(c.rel ?? 0)}, ${what})`).join('; ')}.`
+  const monthlyWorse = (monthly?.checks ?? []).filter((c) => c.flag === 'peor');
+  const better = allChecks.filter((c) => c.flag === 'mejor').length + (monthly?.checks ?? []).filter((c) => c.flag === 'mejor').length;
+  const worseText = [
+    ...worse.slice(0, 4).map(({ c, what }) => `${c.seg} ${pct(c.value)} (${signed(c.rel ?? 0)}, ${what})`),
+    ...monthlyWorse.map((c) => `${c.label}: ${fmtMonthly(c)} (${signed(c.rel ?? 0)}, cohorte de ${monthLabel(c.cohort)})`),
+  ];
+  const headline = worseText.length
+    ? `🔴 Empeoró: ${worseText.slice(0, 5).join('; ')}.`
     : `Todas las cohortes dentro de ±${MIN_PCT} % de su base${better ? ` (${better} 🟢 a favor)` : ''}.`;
 
   const lines = [
@@ -158,8 +227,18 @@ export async function buildCohortBrief(opts: CohortBriefOptions = {}): Promise<C
     `• *Signups del ${dayShortEs(dc)} · compra a 8 días* (vs el mismo día de las 4 semanas previas): ${daily8.map((c) => inline(c)).join(' · ')}`,
     `• *Semana de signup ${w30Range} · compra a 30 días* (vs las 4 previas): ${weekly30.map((c) => inline(c)).join(' · ')}`,
   ];
+  if (network.length) {
+    lines.push(`• *Por red · semana ${w8Range} a 8 días* (vs las 4 previas): ${network.map((n) => `${n.label} *${pct(n.d8.Total.value)}* ${flagDot(n.d8.Total.flag)} ${n.d8.Total.rel !== null ? signed(n.d8.Total.rel) : 'n/d'} (${Math.round((n.signups / (totalW8 || 1)) * 100)}% de signups)`).join(' · ')} — tabla en el hilo`);
+  }
   if (refundCheck && lastMature) {
     lines.push(`• *Refunds de los cobros del ${rangeShortEs(lastMature.cohort_month, addDays(lastMature.cohort_month, 6))}* (semana madura, vs las 4 previas): *${pct(refundCheck.value, 1)}* de ${int(lastMature.charge_units)} cobros ${flagDot(refundCheck.flag)} ${refundCheck.rel !== null ? signed(refundCheck.rel) : 'n/d'}`);
+  }
+
+  if (monthly) {
+    lines.push(`• *Cohortes mensuales de compra* (vs las 3 cohortes previas a la misma edad; tabla en el hilo): ` +
+      monthly.checks.map((c) => `${c.label} (${monthLabel(c.cohort)}) *${fmtMonthly(c)}* ${flagDot(c.flag)} ${c.rel !== null ? signed(c.rel) : 'n/d'}`).join(' · '));
+  } else if (showMonthly) {
+    lines.push('• *Cohortes mensuales de compra:* no disponibles hoy (no se pudo leer kinedu-cohorts).');
   }
 
   const acciones: string[] = [];
@@ -170,6 +249,10 @@ export async function buildCohortBrief(opts: CohortBriefOptions = {}): Promise<C
     } else if (c.seg !== 'Total' || !worse.some((x) => x.what === what && x.c.seg !== 'Total')) {
       acciones.push(`Marketing/Producto: ${c.seg}, ${what} en ${pct(c.value)} (${signed(c.rel ?? 0)} vs base ${pct(c.base)}) — ver qué campañas trajeron esos signups (calidad del tráfico) y si cambió algo en onboarding, trial o paywall.`);
     }
+  }
+  for (const c of monthlyWorse) {
+    if (acciones.length >= 5) break;
+    acciones.push(`Finanzas/Producto: ${c.label.toLowerCase()} de la cohorte de ${monthLabel(c.cohort)} en ${fmtMonthly(c)} (${signed(c.rel ?? 0)} vs ${c.base === null ? 'n/d' : c.fmt === 'usd' ? `$${c.base.toFixed(2)}` : pct(c.base, 1)}) — abrir esa cohorte en el dashboard de cohortes por tienda, plan y SKU.`);
   }
   if (!acciones.length) acciones.push('Nada fuera de rango; sin acciones pendientes.');
 
@@ -208,10 +291,37 @@ export async function buildCohortBrief(opts: CohortBriefOptions = {}): Promise<C
   main.push(table(['Semana de signup', 'Signups', '8d iOS', '8d Android', '8d Total', '30d iOS', '30d Android', '30d Total'], tableWeeks.map(rowFor)));
   main.push(sec(`*Qué revisaría hoy*\n` + acciones.map((a, i) => `${i + 1}. ${a}`).join('\n')));
   main.push(ctx(`Cohorte = los que se registraron ese día o semana; "compra a 8 días" = % que compró entre el día 0 y el 7 (incluye el cobro del trial: día 3 en Android, día 7 en iOS). Fuente: \`an_conversion_analysis\`, la misma del Tableau de cohortes. El brief de KPIs por fecha de calendario va en su propio canal.`));
-  main.push(ctx(`🧵 Detalle en el hilo: cohortes diarias · refunds por semana de cobro y tienda · notas · 🤖 KPI Bot`));
+  main.push(ctx(`🧵 Detalle en el hilo: ${[network.length ? 'por red' : '', monthly ? 'cohortes mensuales de compra' : '', 'cohortes diarias', 'refunds por semana de cobro y tienda', 'notas'].filter(Boolean).join(' · ')} · 🤖 KPI Bot`));
 
   // ---- Hilo
   const thread: SlackMessage[] = [];
+  if (network.length) {
+    thread.push({
+      text: 'Cohortes por red',
+      blocks: [
+        sec(`*Cohortes por red de adquisición* — semana de signup ${w8Range} a 8 días y ${w30Range} a 30 días  _(🔴/🟢 vs las 4 semanas previas de esa misma red)_`),
+        table(['Red', 'Signups', '% del total', '8d iOS', '8d Android', '8d Total', `30d Total (${w30Range})`], network.map((n) => [
+          n.label, int(n.signups), `${Math.round((n.signups / (totalW8 || 1)) * 100)}%`, cell(n.d8.iOS), cell(n.d8.Android), cell(n.d8.Total), cell(n.d30),
+        ])),
+        ctx(`Red = la red con la que se registró el usuario en \`an_conversion_analysis\` (la misma fuente y definición de 8 y 30 días de arriba). Solo hay red, no campaña: la tabla de gasto por campaña (\`an_cac_and_purchases\`) deja ≈ 90 % de las compras sin red, así que no se usa para CAC por red.`),
+      ],
+    });
+  }
+  if (monthly) {
+    const m = monthly;
+    const usd = (v: number | null) => (v === null ? '⏳' : `$${v.toFixed(2)}`);
+    const pc = (v: number | null) => (v === null ? '⏳' : pct(v, 1));
+    thread.push({
+      text: 'Cohortes mensuales de compra',
+      blocks: [
+        sec(`*Cohortes mensuales de compra* — cohorte = mes del primer pago; hasta ${monthLabel(m.lastMonth)}  _(⏳ = la cohorte aún no cumple esa edad)_`),
+        table(['Cohorte', 'Pagadores', 'LTV M0', 'LTV M3', 'LTV M6', 'LTV M12', 'Sigue pagando M6', 'Renovó M12', 'Apagó renov. M0–M1', 'ROAS a la fecha'],
+          m.rows.map((r) => [monthLabel(r.cohort), int(r.payers), usd(r.ltv[0]), usd(r.ltv[3]), usd(r.ltv[6]), usd(r.ltv[12]), pc(r.alive6), pc(r.renew12), pc(r.autoOff), r.roas === null ? '—' : `${r.roas.toFixed(2)}x`])),
+        ctx('LTV = revenue cobrado acumulado por pagador, neto de refunds y de comisiones de tienda (tasas medidas). Sigue pagando = su suscripción no ha expirado (réplica del Tableau "Churn by Cohort"). Renovó M12 = % que volvió a pagar en el mes 12 (anuales). Apagó renov. = % de suscripciones que apagó la renovación automática en sus 2 primeros meses (≠ dejar de pagar). ROAS = revenue cobrado a la fecha ÷ gasto de adquisición de ese mes.'),
+        ctx(`Fuente: ${m.computedNote}, mismas cifras que el dashboard de cohortes. Las cohortes de Tableau "Retention by Cohort" (recompra a N meses) no están aquí todavía.`),
+      ],
+    });
+  }
   const dailyDays = Array.from({ length: DAILY_ROWS }, (_, i) => addDays(dc, -(DAILY_ROWS - 1 - i)));
   thread.push({
     text: 'Cohortes diarias',
@@ -253,6 +363,8 @@ export async function buildCohortBrief(opts: CohortBriefOptions = {}): Promise<C
     semana30d: { semana: w30, checks: weekly30 },
     dia8d: { dia: dc, checks: daily8 },
     refunds: lastMature ? { semana: lastMature.cohort_month, check: refundCheck } : null,
+    porRed: network,
+    mensual: monthly,
   };
   return {
     message: { text: `${title} — ${headline.slice(0, 180)}`, blocks: main, files },

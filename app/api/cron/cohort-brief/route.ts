@@ -12,6 +12,8 @@ export const maxDuration = 300; // BigQuery + Supabase + gráfica + subida de im
  * Query params (opcionales):
  *   dry=1             arma el mensaje sin publicar; devuelve el texto y los datos
  *   today=YYYY-MM-DD  como si fuera otro día (MX)
+ *   weekly=1|0        fuerza o quita la sección por red (default: lunes)
+ *   monthly=1|0       fuerza o quita las cohortes mensuales de compra (default: primer día hábil del mes)
  */
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization');
@@ -22,6 +24,7 @@ export async function GET(request: NextRequest) {
   const sp = request.nextUrl.searchParams;
   const dry = sp.get('dry') === '1';
   const today = sp.get('today') ?? undefined;
+  const flagParam = (k: string) => (sp.get(k) === null ? undefined : sp.get(k) === '1');
   const channel = process.env.SLACK_COHORT_CHANNEL;
 
   if (!dry && !channel) {
@@ -30,7 +33,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const result = await buildCohortBrief({ today });
+    const result = await buildCohortBrief({ today, weekly: flagParam('weekly'), monthly: flagParam('monthly') });
     if (dry) {
       return NextResponse.json({
         ok: true, posted: false, text: result.text, facts: result.facts,

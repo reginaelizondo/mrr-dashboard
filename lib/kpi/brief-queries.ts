@@ -201,8 +201,9 @@ export const CONVERSION_COHORT_TABLE = '`celtic-music-240111.dbt_prod_analytics.
 export const COHORT_WINDOW_DAYS = 7;
 export const COHORT_LONG_WINDOW_DAYS = 29;
 
-/** Una cohorte diaria de signup por OS: cuántos se registraron y cuántos compraron el mismo día, a 8 y a 30 días. */
-export interface CohortDay { day: string; os: string; signups: number; d0: number; d8: number; d30: number }
+/** Una cohorte diaria de signup por OS y red de adquisición: cuántos se registraron y cuántos compraron el mismo
+ *  día, a 8 y a 30 días. `network` = red del signup (Organics, Facebook, Smartlinks…; sin red → 'Sin red'). */
+export interface CohortDay { day: string; os: string; network: string; signups: number; d0: number; d8: number; d30: number }
 
 /**
  * Cohortes diarias de signup por OS (iOS, Android) con signup entre `start` y `end`. Los conteos a 8 y 30 días
@@ -213,21 +214,21 @@ export async function fetchSignupCohortsDaily(start: string, end: string): Promi
   const bq = getBigQueryClient();
   const query = `
     WITH u AS (
-      SELECT user_id, ANY_VALUE(os) AS os, MIN(signup_date) AS s, MIN(premium_conversion_date) AS c
+      SELECT user_id, ANY_VALUE(os) AS os, ANY_VALUE(network) AS network, MIN(signup_date) AS s, MIN(premium_conversion_date) AS c
       FROM ${CONVERSION_COHORT_TABLE}
       WHERE signup_date BETWEEN @start AND @end
       GROUP BY user_id
     )
-    SELECT CAST(s AS STRING) AS day, os, COUNT(*) AS signups,
+    SELECT CAST(s AS STRING) AS day, os, IFNULL(NULLIF(TRIM(network), ''), 'Sin red') AS network, COUNT(*) AS signups,
       COUNTIF(c IS NOT NULL AND DATE_DIFF(c, s, DAY) = 0) AS d0,
       COUNTIF(c IS NOT NULL AND DATE_DIFF(c, s, DAY) BETWEEN 0 AND ${COHORT_WINDOW_DAYS}) AS d8,
       COUNTIF(c IS NOT NULL AND DATE_DIFF(c, s, DAY) BETWEEN 0 AND ${COHORT_LONG_WINDOW_DAYS}) AS d30
     FROM u WHERE os IN ('iOS', 'Android')
-    GROUP BY day, os ORDER BY day, os
+    GROUP BY day, os, network ORDER BY day, os, network
   `;
   const [rows] = await bq.query({ query, params: { start, end } });
   return (rows as Record<string, unknown>[]).map((r) => ({
-    day: String(r.day), os: String(r.os),
+    day: String(r.day), os: String(r.os), network: String(r.network),
     signups: toNumber(r.signups) ?? 0, d0: toNumber(r.d0) ?? 0, d8: toNumber(r.d8) ?? 0, d30: toNumber(r.d30) ?? 0,
   }));
 }

@@ -4,6 +4,7 @@
  * Run:
  *   npx tsx scripts/test-cohort-brief.ts                    # dry run, hoy (MX)
  *   npx tsx scripts/test-cohort-brief.ts --today 2026-10-20
+ *   npx tsx scripts/test-cohort-brief.ts --weekly --monthly # fuerza la sección por red (lunes) y la mensual
  *   npx tsx scripts/test-cohort-brief.ts --facts            # también los datos de las comparaciones
  *   npx tsx scripts/test-cohort-brief.ts --png out.png      # guarda la gráfica
  *   npx tsx scripts/test-cohort-brief.ts --post             # publica en SLACK_COHORT_CHANNEL (vista previa)
@@ -34,7 +35,11 @@ const opt = (f: string) => { const i = args.indexOf(f); return i >= 0 ? args[i +
 (async () => {
   const { buildCohortBrief } = await import('../lib/kpi/cohort-brief');
   const t0 = Date.now();
-  const result = await buildCohortBrief({ today: opt('--today'), preview: flag('--post') });
+  const result = await buildCohortBrief({
+    today: opt('--today'), preview: flag('--post'),
+    weekly: flag('--weekly') ? true : flag('--no-weekly') ? false : undefined,
+    monthly: flag('--monthly') ? true : flag('--no-monthly') ? false : undefined,
+  });
   console.error(`⏱  built in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   console.log(result.text);
   if (flag('--facts')) console.log('\n=== FACTS ===\n' + JSON.stringify(result.facts, null, 2));
