@@ -48,8 +48,8 @@ function ChartTooltip({ active, payload, label, series, def }: TooltipLike & { s
 
 // ─── Gráfica base (líneas + barras, dos ejes) ────────────────────────────────
 
-function SeriesChart({ data, series, hidden, height, brush, est, def, yDomain, sync = true }: {
-  data: ChartRow[]; series: SeriesDef[]; hidden: Set<string>; height: number; brush?: boolean; est?: EstRange | null; def?: Definition; yDomain?: [number, number]; sync?: boolean;
+function SeriesChart({ data, series, hidden, height, brush, est, def, yDomain, sync = true, partialLabel }: {
+  data: ChartRow[]; series: SeriesDef[]; hidden: Set<string>; height: number; brush?: boolean; est?: EstRange | null; def?: Definition; yDomain?: [number, number]; sync?: boolean; partialLabel?: string | null;
 }) {
   const uid = useId().replace(/:/g, '');
   const visible = series.filter((s) => !hidden.has(s.key));
@@ -77,6 +77,7 @@ function SeriesChart({ data, series, hidden, height, brush, est, def, yDomain, s
         {hasRight && <YAxis yAxisId="right" orientation="right" tick={AXIS_TICK} tickLine={false} axisLine={false} tickFormatter={tickFmt(rightFmt)} width={48} />}
         <Tooltip content={(p) => <ChartTooltip {...(p as TooltipLike)} series={series} def={def} />} cursor={{ fill: 'rgba(0,134,216,0.06)', stroke: '#0086D8', strokeOpacity: 0.25 }} />
         {shadeEst && <ReferenceArea yAxisId="left" x1={est!.x1} x2={est!.x2} fill="#F59E0B" fillOpacity={0.08} stroke="#F59E0B" strokeOpacity={0.25} strokeDasharray="3 3" label={{ value: '≈ incluye estimado', position: 'insideTopRight', fontSize: 10, fill: '#B45309' }} />}
+        {partialLabel && <ReferenceLine yAxisId="left" x={partialLabel} stroke="#94A3B8" strokeOpacity={0.7} strokeDasharray="3 3" label={{ value: 'hoy', position: 'top', fontSize: 9, fill: '#64748B' }} />}
         {visible.map((s) => s.type === 'bar'
           ? <Bar key={s.key} yAxisId={s.axis ?? 'left'} dataKey={s.key} fill={`url(#g${uid}${s.key.replace(/\W/g, '')})`} stackId={s.stack} maxBarSize={28}
               radius={!s.stack || lastStacked.get(s.stack) === s.key ? [3, 3, 0, 0] : 0} animationDuration={500} />
@@ -112,8 +113,8 @@ function SeriesPills({ series, hidden, toggle, totals }: { series: SeriesDef[]; 
 
 // ─── Tarjeta de gráfica: pastillas, ampliar, descargar ───────────────────────
 
-export function KpiChart({ title, data, series, note, def, est, totals, yDomain, height = 250 }: {
-  title: string; data: ChartRow[]; series: SeriesDef[]; note?: string; def?: Definition; est?: EstRange | null; totals?: Partial<KpiValues>; yDomain?: [number, number]; height?: number;
+export function KpiChart({ title, data, series, note, def, est, totals, yDomain, height = 250, partialLabel }: {
+  title: string; data: ChartRow[]; series: SeriesDef[]; note?: string; def?: Definition; est?: EstRange | null; totals?: Partial<KpiValues>; yDomain?: [number, number]; height?: number; partialLabel?: string | null;
 }) {
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState(false);
@@ -143,13 +144,13 @@ export function KpiChart({ title, data, series, note, def, est, totals, yDomain,
     <>
       <div className="group rounded-xl border border-slate-200/80 bg-white p-4 shadow-sm transition-shadow hover:shadow-md">
         {header(false)}
-        <div className="mt-3"><SeriesChart data={data} series={series} hidden={hidden} height={height} est={est} def={def} yDomain={yDomain} /></div>
+        <div className="mt-3"><SeriesChart data={data} series={series} hidden={hidden} height={height} est={est} def={def} yDomain={yDomain} partialLabel={partialLabel} /></div>
         {note && <p className="mt-1 text-[11px] text-muted-foreground">{note}</p>}
       </div>
       {expanded && (
         <Modal onClose={() => setExpanded(false)}>
           {header(true)}
-          <div className="mt-4"><SeriesChart data={data} series={series} hidden={hidden} height={480} brush est={est} def={def} yDomain={yDomain} sync={false} /></div>
+          <div className="mt-4"><SeriesChart data={data} series={series} hidden={hidden} height={480} brush est={est} def={def} yDomain={yDomain} sync={false} partialLabel={partialLabel} /></div>
           <p className="mt-2 text-[11px] text-muted-foreground">Arrastra los extremos de la barra de abajo para hacer zoom a un tramo. {note ?? ''}</p>
         </Modal>
       )}
@@ -201,20 +202,22 @@ export function Sparkline({ data, k, color = BLUE }: { data: ChartRow[]; k: stri
 
 // ─── Explorador: cualquier KPI en grande, comparado con otro ─────────────────
 
-export function TrendExplorer({ data, focus, onFocus, compare, onCompare, cur, prev, def, grain, est }: {
+export function TrendExplorer({ data, focus, onFocus, compare, onCompare, cur, prev, def, grain, est, partialLabel }: {
   data: ChartRow[]; focus: string; onFocus: (k: string) => void; compare: string; onCompare: (k: string) => void;
-  cur: KpiValues; prev: KpiValues; def: Definition; grain: Grain; est?: EstRange | null;
+  cur: KpiValues; prev: KpiValues; def: Definition; grain: Grain; est?: EstRange | null; partialLabel?: string | null;
 }) {
   const uid = useId().replace(/:/g, '');
   const main = KPI_BY_KEY[focus] ?? KPI_BY_KEY.totalContribution;
   const other = compare ? KPI_BY_KEY[compare] : undefined;
   const stats = useMemo(() => {
-    const pts = data.map((r) => ({ label: r.label, v: r[main.key] as number | null })).filter((p): p is { label: string; v: number } => typeof p.v === 'number' && Number.isFinite(p.v));
+    // El día de hoy es parcial (el spend llega con retraso, así que infla margen/contribución): se excluye
+    // de promedio/mejor/peor para que no reclame "mejor día". Sigue dibujándose en la línea, marcado "hoy".
+    const pts = data.filter((r) => r.label !== partialLabel).map((r) => ({ label: r.label, v: r[main.key] as number | null })).filter((p): p is { label: string; v: number } => typeof p.v === 'number' && Number.isFinite(p.v));
     if (!pts.length) return null;
     const avg = pts.reduce((s, p) => s + p.v, 0) / pts.length;
     const max = pts.reduce((a, b) => (b.v > a.v ? b : a)); const min = pts.reduce((a, b) => (b.v < a.v ? b : a));
     return { avg, max, min };
-  }, [data, main.key]);
+  }, [data, main.key, partialLabel]);
   const v = cur[main.key] as number | null; const p = prev[main.key] as number | null;
   const delta = v !== null && p !== null && p !== 0 ? (v - p) / Math.abs(p) : null;
   const good = delta === null ? null : main.higherIsBetter === false ? delta <= 0 : delta >= 0;
@@ -269,6 +272,7 @@ export function TrendExplorer({ data, focus, onFocus, compare, onCompare, cur, p
             <Tooltip content={(tp) => <ChartTooltip {...(tp as TooltipLike)} series={series} def={def} />} cursor={{ stroke: '#0086D8', strokeOpacity: 0.3 }} />
             {shadeEst && <ReferenceArea yAxisId="left" x1={est!.x1} x2={est!.x2} fill="#F59E0B" fillOpacity={0.08} stroke="#F59E0B" strokeOpacity={0.25} strokeDasharray="3 3" label={{ value: '≈ incluye estimado', position: 'insideTopRight', fontSize: 10, fill: '#B45309' }} />}
             {stats && <ReferenceLine yAxisId="left" y={stats.avg} stroke={NAVY} strokeOpacity={0.35} strokeDasharray="4 4" label={{ value: 'promedio', position: 'insideBottomLeft', fontSize: 10, fill: '#64748B' }} />}
+            {partialLabel && <ReferenceLine yAxisId="left" x={partialLabel} stroke="#94A3B8" strokeOpacity={0.7} strokeDasharray="3 3" label={{ value: 'hoy', position: 'top', fontSize: 9, fill: '#64748B' }} />}
             <Area yAxisId="left" type="monotone" dataKey={main.key} stroke={BLUE} strokeWidth={2.5} fill={`url(#h${uid})`} dot={false} activeDot={{ r: 5, strokeWidth: 2, stroke: '#fff' }} connectNulls animationDuration={500} />
             {other && <Line yAxisId="right" type="monotone" dataKey={other.key} stroke={ROSE} strokeWidth={2} dot={false} activeDot={{ r: 4, strokeWidth: 2, stroke: '#fff' }} connectNulls animationDuration={500} />}
             {data.length > 20 && <Brush dataKey="label" height={22} stroke="#8EC5EC" travellerWidth={8} fill="#F8FAFC" tickFormatter={() => ''} />}

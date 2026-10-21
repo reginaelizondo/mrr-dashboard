@@ -125,20 +125,22 @@ export function resolveRange(p: PageParams): { preset: Preset; start: string; en
   const today = todayMx();
   let preset = (PRESETS.includes(p.preset as Preset) ? p.preset : '30d') as Preset;
   let start: string; let end = today;
+  // Todos los presets cierran en HOY (end = today) para que el día en curso aparezca en la serie y las
+  // tablas; el último día es parcial (la franja "Hoy" muestra su estimado de cierre). Solo "ayer" es T-1.
   switch (preset) {
     case 'yesterday': start = end = addDays(today, -1); break;
-    case '7d': start = addDays(today, -7); end = addDays(today, -1); break;
+    case '7d': start = addDays(today, -6); break;
     case 'wtd': start = mondayOf(today); break;
     case 'mtd': start = today.slice(0, 8) + '01'; break;
-    case '90d': start = addDays(today, -90); end = addDays(today, -1); break;
+    case '90d': start = addDays(today, -89); break;
     case 'ytd': start = today.slice(0, 4) + '-01-01'; break;
     case '12m': start = addDays(today, -365); break;
     case 'all': start = '2024-01-01'; break;
     case 'custom':
       if (p.start && p.end && /^\d{4}-\d{2}-\d{2}$/.test(p.start) && /^\d{4}-\d{2}-\d{2}$/.test(p.end) && p.start <= p.end) { start = p.start; end = p.end; }
-      else { preset = '30d'; start = addDays(today, -30); end = addDays(today, -1); }
+      else { preset = '30d'; start = addDays(today, -29); }
       break;
-    default: start = addDays(today, -30); end = addDays(today, -1);
+    default: start = addDays(today, -29); // 30d
   }
   const days = Math.round((Date.parse(end) - Date.parse(start)) / 86400000) + 1;
   const autoGrain: Grain = days <= 100 ? 'day' : days <= 400 ? 'week' : 'month';

@@ -2,7 +2,7 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
 
 import { OperativoContent, type OperativoData, type PeriodRow, type GroupRow, type TodayBlock, type DefPair } from '@/components/dashboard/OperativoContent';
-import { computeKpis, scaleAgg, type AggRow } from '@/lib/kpi/replica';
+import { computeKpis, scaleAgg, projectAgg, type AggRow } from '@/lib/kpi/replica';
 import { loadCore, loadDims, loadMeta, loadToday, buildRequest, type PageParams } from '@/lib/kpi/operativo-data';
 import { todayMx, mxDayProgress } from '@/lib/kpi/period';
 export type { Preset } from '@/lib/kpi/operativo-data';
@@ -39,13 +39,18 @@ export default async function OperativoPage({ searchParams }: { searchParams: Pr
     const stale = prog ? prog.dateMx !== today : true;           // el último sync no es de hoy
     const fraction = prog && !stale ? prog.fraction : null;
     const tooEarly = fraction !== null && fraction < MIN_FRACTION;
-    const pf = fraction !== null && !tooEarly && fraction > 0 ? 1 / fraction : null;
+    const canProject = fraction !== null && !tooEarly && fraction > 0;
+    // Afinado: ya-entró-hoy + resto de un día típico (con spend de día típico). Sin base del mismo día
+    // de semana cae al estimado crudo por ritmo (lo que va ÷ fracción).
+    const projected = canProject
+      ? (todayAggs.baselineDays ? pair(projectAgg(todayAggs.today, todayAggs.baseline, fraction!)) : pair(scaleAgg(todayAggs.today, 1 / fraction!)))
+      : null;
     const todayBlock: TodayBlock = {
       date: today,
       cutoffIso: status.lastSyncedAt, cutoffLabel: prog?.label ?? null, fraction,
       stale, tooEarly, hasData, baselineDays: todayAggs.baselineDays,
       running,
-      projected: pf ? pair(scaleAgg(todayAggs.today, pf)) : null,
+      projected,
       baseline: todayAggs.baselineDays ? pair(todayAggs.baseline) : null,
       yesterday: pair(todayAggs.yesterday),
     };

@@ -88,6 +88,9 @@ export function OperativoContent({ data }: { data: OperativoData }) {
 
   const cur = data.totals.current[def]; const prev = data.totals.previous[def];
   const rows = data.series;
+  // Etiqueta del punto de HOY en la serie diaria (parcial): las gráficas lo marcan con una línea "hoy" y
+  // el explorador lo excluye de promedio/mejor/peor. Solo aplica a grano diario con el día en curso presente.
+  const partialLabel = data.grain === 'day' && rows.some((r) => r.period === data.today.date) ? periodLabel(data.today.date, data.grain) : null;
   // Vista Looker a granularidad mensual o mayor: "New Sales / Spend" usa ventas netas, como su gráfica mensual.
   const monthlyLooker = def === 'looker' && ['month', 'quarter', 'year'].includes(data.grain);
   const chartData = useMemo<ChartRow[]>(() => rows.map((r) => ({
@@ -101,7 +104,7 @@ export function OperativoContent({ data }: { data: OperativoData }) {
     const e = chartData.filter((r) => (r.calibration?.estimatedShare ?? 0) > 0.0005);
     return e.length ? { x1: e[0].label, x2: e[e.length - 1].label } : null;
   }, [chartData, def]);
-  const chart = (title: string, series: SeriesDef[], note?: string) => <KpiChart title={title} data={chartData} series={series} note={note} def={def} est={est} totals={curView} />;
+  const chart = (title: string, series: SeriesDef[], note?: string) => <KpiChart title={title} data={chartData} series={series} note={note} def={def} est={est} totals={curView} partialLabel={partialLabel} />;
 
   const toggleDim = (dim: DimKey, value: string) => {
     const d = DIMS.find((x) => x.key === dim)!; const sel = data.filters[d.filter];
@@ -156,7 +159,7 @@ export function OperativoContent({ data }: { data: OperativoData }) {
         </div>
 
         <div ref={explorerRef} className="scroll-mt-48">
-          <TrendExplorer data={chartData} focus={focus} onFocus={setFocus} compare={compare} onCompare={setCompare} cur={curView} prev={prev} def={def} grain={data.grain} est={est} />
+          <TrendExplorer data={chartData} focus={focus} onFocus={setFocus} compare={compare} onCompare={setCompare} cur={curView} prev={prev} def={def} grain={data.grain} est={est} partialLabel={partialLabel} />
         </div>
 
         <Tabs value={tab} onValueChange={setTab}>

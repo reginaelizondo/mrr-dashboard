@@ -92,6 +92,21 @@ export function avgAgg(rows: AggRow[], period = 'total', grp = ''): AggRow {
   return out;
 }
 
+/**
+ * Proyección afinada del cierre del día: lo que YA entró hoy + lo que falta de un día típico del mismo
+ * día de semana (la base). No extrapola el ritmo de la mañana (lo que va ÷ fracción), que dispara el
+ * estimado cuando el día es pesado temprano. El spend es la excepción: se reporta con ~1 día de retraso,
+ * así que el mejor estimado del gasto del día es un día típico completo, no lo poco reportado — de otro
+ * modo el CAC saldría muy bajo y el Total Contribution (ventas − spend) inflado.
+ */
+export function projectAgg(today: AggRow, baseline: AggRow, fraction: number): AggRow {
+  const rest = Math.max(0, 1 - fraction);
+  const out = emptyAgg(today.period, today.grp);
+  for (const k of AGG_NUMERIC_KEYS) out[k] = today[k] + rest * baseline[k];
+  out.spend = baseline.spend; // el gasto real llega con retraso: usa un día típico completo
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Fórmulas (espejo exacto de lib/kpi/formulas.ts)
 // ---------------------------------------------------------------------------

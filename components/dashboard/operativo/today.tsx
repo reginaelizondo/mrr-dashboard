@@ -9,21 +9,23 @@ import { fmt, type Fmt } from './format';
 
 // ─── Franja "Hoy": cómo va el día y hacia dónde pinta (estimado de cierre) ────
 //
-// Por KPI: el estimado de cierre (lo que va ÷ fracción del día ya transcurrida al corte de los
-// datos) como número grande, "lo que va" debajo, y el delta vs el promedio del mismo día de
-// semana (últimos N). Los KPIs que son razones (CAC) no se proyectan: son invariantes a la escala
-// —numerador y denominador crecen parejo—, así que su valor "a ritmo de hoy" ya es el estimado.
+// Por KPI: el estimado de cierre (lo que YA entró hoy + lo que falta de un día típico del mismo día
+// de semana) como número grande, una línea de contexto debajo, y el delta vs ese día típico. El spend
+// se estima con un día típico completo porque el gasto real llega con ~1 día de retraso; por eso el
+// estimado de Total Contribution y CAC (que dependen del spend) usa ese gasto estimado, no el parcial.
 
 type Key = Exclude<keyof KpiValues, 'calibration'>;
-interface Card { key: Key; label: string; fmt: Fmt; higherIsBetter: boolean; project: boolean }
+// sub: qué decir en la línea de contexto — 'van' lo real hasta ahora; 'spendEst' avisa que usa spend
+// estimado (el real va con retraso, así que "van" sería engañoso); 'partial' el gasto reportado va parcial.
+interface Card { key: Key; label: string; fmt: Fmt; higherIsBetter: boolean; sub: 'van' | 'spendEst' | 'partial' }
 
 const CARDS: Card[] = [
-  { key: 'signups', label: 'Signups', fmt: 'int', higherIsBetter: true, project: true },
-  { key: 'newSubs', label: 'New Subs', fmt: 'int', higherIsBetter: true, project: true },
-  { key: 'nsSales', label: 'NS Sales', fmt: 'usd', higherIsBetter: true, project: true },
-  { key: 'totalContribution', label: 'Total Contribution', fmt: 'usd', higherIsBetter: true, project: true },
-  { key: 'spend', label: 'Spend', fmt: 'usd', higherIsBetter: false, project: true },
-  { key: 'cac', label: 'CAC', fmt: 'usd2', higherIsBetter: false, project: false },
+  { key: 'signups', label: 'Signups', fmt: 'int', higherIsBetter: true, sub: 'van' },
+  { key: 'newSubs', label: 'New Subs', fmt: 'int', higherIsBetter: true, sub: 'van' },
+  { key: 'nsSales', label: 'NS Sales', fmt: 'usd', higherIsBetter: true, sub: 'van' },
+  { key: 'totalContribution', label: 'Total Contribution', fmt: 'usd', higherIsBetter: true, sub: 'spendEst' },
+  { key: 'spend', label: 'Spend', fmt: 'usd', higherIsBetter: false, sub: 'partial' },
+  { key: 'cac', label: 'CAC', fmt: 'usd2', higherIsBetter: false, sub: 'spendEst' },
 ];
 
 const DOW = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
@@ -77,27 +79,26 @@ export function TodayStrip({ today, def }: { today: TodayBlock; def: Definition 
       <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         {CARDS.map((c) => {
           const running = run[c.key] as number | null;
-          const projected = c.project && proj ? (proj[c.key] as number | null) : null;
-          // Para una razón (CAC) el valor "a ritmo de hoy" ya es el estimado; para montos/conteos,
-          // el estimado es la proyección si existe, si no cae a lo que va (temprano, sin proyectar).
-          const headline = c.project ? (projected ?? running) : running;
-          const estimated = c.project && projected !== null;
-          // El delta solo es justo cuando se compara día completo contra día completo: proyección
-          // (montos) o razón (invariante). Lo que va a medio día vs un día entero no es comparable.
-          const comparable = c.project ? estimated : true;
+          const projected = proj ? (proj[c.key] as number | null) : null;
+          // Estimado de cierre: la proyección si existe; si es muy temprano, lo que va.
+          const headline = projected ?? running;
+          const estimated = projected !== null;
           const baseVal = base ? (base[c.key] as number | null) : null;
-          const delta = comparable && headline !== null && baseVal !== null && baseVal !== 0 ? (headline - baseVal) / Math.abs(baseVal) : null;
+          // El delta compara el estimado de cierre (día completo) contra el día típico. Sin proyección
+          // (muy temprano) no es comparable; el spend se estima con la base, así que su delta es ≈0 y no aporta.
+          const delta = estimated && c.sub !== 'partial' && headline !== null && baseVal !== null && baseVal !== 0 ? (headline - baseVal) / Math.abs(baseVal) : null;
           const good = delta === null ? null : c.higherIsBetter ? delta >= 0 : delta <= 0;
+          const subText = c.sub === 'spendEst' ? 'incluye spend estimado'
+            : c.sub === 'partial' ? `van ${fmt(running, c.fmt)} · parcial`
+            : `van ${fmt(running, c.fmt)}`;
           return (
             <div key={c.key} className="rounded-lg border border-slate-200/70 bg-white px-3 pb-2 pt-2.5">
               <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">{c.label}</p>
               <div className="mt-0.5 flex items-baseline gap-1">
                 <span className="text-xl font-bold tracking-tight text-[#0E3687] tabular-nums">{fmt(headline, c.fmt)}</span>
-                {estimated && <span className="text-[10px] font-semibold text-amber-600" title="Estimado de cierre a ritmo lineal">est.</span>}
+                {estimated && <span className="text-[10px] font-semibold text-amber-600" title="Estimado de cierre del día">est.</span>}
               </div>
-              <p className="mt-0.5 text-[11px] text-slate-500 tabular-nums">
-                {c.project ? `van ${fmt(running, c.fmt)}` : 'al ritmo de hoy'}
-              </p>
+              <p className="mt-0.5 text-[11px] text-slate-500 tabular-nums">{subText}</p>
               <div className="mt-1 text-[11px]">
                 {delta === null ? <span className="text-slate-300">—</span> : (
                   <span className={cn('inline-flex items-center gap-0.5 font-semibold', good ? 'text-emerald-600' : 'text-rose-600')}>
@@ -111,7 +112,7 @@ export function TodayStrip({ today, def }: { today: TodayBlock; def: Definition 
         })}
       </div>
       <p className="mt-2 text-[11px] text-slate-400">
-        {baselineNote(today)} El estimado proyecta el cierre a ritmo lineal (lo que va ÷ fracción del día al corte); el <b>spend</b> suele llegar con retraso, así que temprano puede quedar corto y el CAC inflado.
+        {baselineNote(today)} El estimado = lo que ya entró hoy + lo que falta de un día típico (no extrapola el ritmo de la mañana). El <b>spend</b> se toma de un día típico porque el gasto real llega con ~1 día de retraso; por eso Total Contribution y CAC usan ese spend estimado.
       </p>
     </section>
   );
