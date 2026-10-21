@@ -12,6 +12,9 @@ import { postChatMessage, type SlackBlock, type SlackMessage } from '@/lib/slack
 import { todayMx } from '@/lib/kpi/period';
 
 export const BRIEF_CHANNEL = () => process.env.BIZOPS_BRIEF_CHANNEL ?? process.env.ESTELA_SLACK_CHANNEL ?? 'C0CAJT405R7';
+/** Agentes con canal propio: sus pendientes no van al brief de finanzas sino a su canal (nómina → #bizops-rh-agentes). */
+const CANAL_POR_AGENTE: Record<string, () => string> = { Quina: () => process.env.BIZOPS_RH_CHANNEL ?? 'C0CAGQN5FKL' };
+export const canalDe = (agente: string) => (CANAL_POR_AGENTE[agente] ?? BRIEF_CHANNEL)();
 export const SEMAFOROS = ['🟢', '🟡', '🔴'] as const;
 export type Semaforo = (typeof SEMAFOROS)[number];
 export type Estado = 'pendiente' | 'manana' | 'hecho' | 'no';
@@ -87,7 +90,7 @@ function itemBlocks(it: Item, hoy: string): SlackBlock[] {
 export async function armarBrief(hoy = todayMx()): Promise<{ message: SlackMessage; pendientes: number }> {
   const sb = createServerClient();
   const { data: its } = await sb.from('bizops_items').select('*').in('estado', ['pendiente', 'manana']);
-  const items = ((its ?? []) as Item[]).sort((a, b) => ORDEN[a.prioridad] - ORDEN[b.prioridad] || a.primera_vez.localeCompare(b.primera_vez));
+  const items = ((its ?? []) as Item[]).filter((i) => !CANAL_POR_AGENTE[i.agente]).sort((a, b) => ORDEN[a.prioridad] - ORDEN[b.prioridad] || a.primera_vez.localeCompare(b.primera_vez));
   const { data: runs } = await sb.from('bizops_runs').select('agente, semaforo, resumen, created_at').eq('fecha', hoy).order('created_at', { ascending: false });
   const ultima = new Map<string, { semaforo: string; resumen: string | null }>();
   for (const r of (runs ?? []) as { agente: string; semaforo: string; resumen: string | null }[]) if (!ultima.has(r.agente)) ultima.set(r.agente, r);
@@ -108,10 +111,10 @@ export async function armarBrief(hoy = todayMx()): Promise<{ message: SlackMessa
   return { message: { text: text.slice(0, 2900), blocks }, pendientes: items.length };
 }
 
-export async function publicar(message: SlackMessage) {
+export async function publicar(message: SlackMessage, canal = BRIEF_CHANNEL()) {
   const token = process.env.SLACK_BOT_TOKEN;
   if (!token) return { ok: false, error: 'SLACK_BOT_TOKEN missing' };
-  return postChatMessage(token, BRIEF_CHANNEL(), message);
+  return postChatMessage(token, canal, message);
 }
 
 /** Pendiente del mismo día que no puede esperar al brief de mañana (VOBO de pagos o de nómina). */
