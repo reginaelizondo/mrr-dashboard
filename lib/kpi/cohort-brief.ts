@@ -353,7 +353,7 @@ export async function buildCohortBrief(opts: CohortBriefOptions = {}): Promise<C
     text: 'Notas',
     blocks: [
       ctx(`Comparaciones: cociente de las sumas de las 4 cohortes previas; 🔴/🟢 con ±${MIN_PCT} % o más y volumen mínimo (${int(MIN_WEEK_SIGNUPS)} signups por semana, ${MIN_DAY_SIGNUPS} por día, ${int(MIN_REFUND_CHARGES)} cobros por semana). El Tableau acumula semanas a conversión, así que sus % de cohortes maduras salen algo más altos; a la misma edad la tendencia es la misma.`),
-      ctx('Este canal no trae ingresos por cohorte: `usd_amount` de `an_conversion_analysis` no cuadra con NS Sales del calendar (≈ 25 % abajo), así que no se usa hasta validarlo.'),
+      ctx('Ingresos por cohorte (LTV, ROAS) solo en la sección mensual, desde kinedu-cohorts (`an_learn_sales`, neto de refunds). `usd_amount` de `an_conversion_analysis` no se usa: no cuadra con NS Sales del calendar (≈ 25 % abajo).'),
     ],
   });
 
