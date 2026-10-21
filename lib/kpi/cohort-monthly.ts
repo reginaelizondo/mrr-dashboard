@@ -10,6 +10,10 @@
  *                      Réplica del Tableau "Churn by Cohort".
  *   - `retention`      notificaciones de tiendas: apagó la renovación automática (≠ dejó de pagar).
  *   - `revenue_dist_m` revenue cobrado (`revenue_cash`) y gasto de adquisición del mes (`spend`, rel 0) → ROAS.
+ *   - `repurchase_m`   réplica del Tableau "Retention by Cohort" (agregada 2026-10-21): de los usuarios cuyo primer
+ *                      mes de servicio fue ese mes, % con servicio pagado k meses después (`active` / `users`).
+ *                      Validada contra el CSV del tablero (meses 1–11 idénticos). Aquí solo cuenta un mes k ya
+ *                      transcurrido; el Tableau también cuenta meses comprometidos que aún no ocurren.
  *
  * Requiere COHORTS_SUPABASE_URL y COHORTS_SUPABASE_SERVICE_ROLE_KEY (las del proyecto kinedu-cohorts). Sin ellas
  * devuelve null y el brief sale sin la sección mensual.
@@ -19,7 +23,7 @@
 import { createClient } from '@supabase/supabase-js';
 
 type Flag = 'mejor' | 'peor' | null;
-const VIEWS = ['ltv', 'churn_cohort_m', 'retention', 'revenue_dist_m'] as const;
+const VIEWS = ['ltv', 'retention', 'revenue_dist_m', 'repurchase_m'] as const;
 const ROWS = 13;      // cohortes en la tabla (el último mes completo y los 12 anteriores)
 const PRIOR = 3;      // base = las 3 cohortes previas a la misma edad
 const MIN_PCT = 10;
@@ -67,7 +71,7 @@ export interface MonthlyCheck { label: string; cohort: string; value: number | n
 export interface MonthlyRow {
   cohort: string; payers: number;
   ltv: Record<0 | 3 | 6 | 12, number | null>;
-  alive6: number | null; renew12: number | null; autoOff: number | null; roas: number | null;
+  ret: Record<1 | 6 | 12, number | null>; autoOff: number | null; roas: number | null;
 }
 export interface CohortMonthly { lastMonth: string; rows: MonthlyRow[]; checks: MonthlyCheck[]; computedNote: string }
 
@@ -90,8 +94,7 @@ export async function buildCohortMonthly(today: string): Promise<CohortMonthly |
   // Numerador y denominador de cada métrica, para comparar con cociente de sumas.
   const parts = {
     ltv: (c: string, k: number) => (age(c) >= k ? { n: sumTo('ltv', 'revenue_net_usd', c, k), d: get('ltv', 'users', c, 0) } : null),
-    alive6: (c: string) => (age(c) >= 6 ? { n: get('churn_cohort_m', 'users', c, 0) - sumTo('churn_cohort_m', 'churned', c, 6), d: get('churn_cohort_m', 'users', c, 0) } : null),
-    renew12: (c: string) => (age(c) >= 12 ? { n: get('ltv', 'users', c, 12), d: get('ltv', 'users', c, 0) } : null),
+    ret: (c: string, k: number) => (age(c) >= k ? { n: get('repurchase_m', 'active', c, k), d: get('repurchase_m', 'users', c, 0) } : null),
     autoOff: (c: string) => (age(c) >= 1 ? { n: sumTo('retention', 'cancels', c, 1), d: get('retention', 'users', c, 0) } : null),
   };
   const ratio = (p: { n: number; d: number } | null) => (p && p.d ? p.n / p.d : null);
@@ -103,8 +106,7 @@ export async function buildCohortMonthly(today: string): Promise<CohortMonthly |
       cohort: c,
       payers: get('ltv', 'users', c, 0),
       ltv: { 0: ratio(parts.ltv(c, 0)), 3: ratio(parts.ltv(c, 3)), 6: ratio(parts.ltv(c, 6)), 12: ratio(parts.ltv(c, 12)) },
-      alive6: ratio(parts.alive6(c)),
-      renew12: ratio(parts.renew12(c)),
+      ret: { 1: ratio(parts.ret(c, 1)), 6: ratio(parts.ret(c, 6)), 12: ratio(parts.ret(c, 12)) },
       autoOff: ratio(parts.autoOff(c)),
       roas: spend ? sumTo('revenue_dist_m', 'revenue_cash', c, age(c)) / spend : null,
     };
@@ -127,8 +129,8 @@ export async function buildCohortMonthly(today: string): Promise<CohortMonthly |
     mk('LTV neto en el mes de compra', 0, (c) => parts.ltv(c, 0), 'usd'),
     mk('LTV neto a 3 meses', 3, (c) => parts.ltv(c, 3), 'usd'),
     mk('Apagó la renovación en sus 2 primeros meses', 1, parts.autoOff, 'pct', false),
-    mk('Sigue pagando a 6 meses', 6, parts.alive6, 'pct'),
-    mk('Volvió a pagar a 12 meses (renovación anual)', 12, parts.renew12, 'pct'),
+    mk('Con servicio a 6 meses', 6, (c) => parts.ret(c, 6), 'pct'),
+    mk('Con servicio a 12 meses (renovación anual)', 12, (c) => parts.ret(c, 12), 'pct'),
   ];
 
   return { lastMonth, rows, checks, computedNote: 'kinedu-cohorts (cálculo nocturno desde BigQuery)' };

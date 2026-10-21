@@ -315,10 +315,10 @@ export async function buildCohortBrief(opts: CohortBriefOptions = {}): Promise<C
       text: 'Cohortes mensuales de compra',
       blocks: [
         sec(`*Cohortes mensuales de compra* — cohorte = mes del primer pago; hasta ${monthLabel(m.lastMonth)}  _(⏳ = la cohorte aún no cumple esa edad)_`),
-        table(['Cohorte', 'Pagadores', 'LTV M0', 'LTV M3', 'LTV M6', 'LTV M12', 'Sigue pagando M6', 'Renovó M12', 'Apagó renov. M0–M1', 'ROAS a la fecha'],
-          m.rows.map((r) => [monthLabel(r.cohort), int(r.payers), usd(r.ltv[0]), usd(r.ltv[3]), usd(r.ltv[6]), usd(r.ltv[12]), pc(r.alive6), pc(r.renew12), pc(r.autoOff), r.roas === null ? '—' : `${r.roas.toFixed(2)}x`])),
-        ctx('LTV = revenue cobrado acumulado por pagador, neto de refunds y de comisiones de tienda (tasas medidas). Sigue pagando = su suscripción no ha expirado (réplica del Tableau "Churn by Cohort"). Renovó M12 = % que volvió a pagar en el mes 12 (anuales). Apagó renov. = % de suscripciones que apagó la renovación automática en sus 2 primeros meses (≠ dejar de pagar). ROAS = revenue cobrado a la fecha ÷ gasto de adquisición de ese mes.'),
-        ctx(`Fuente: ${m.computedNote}, mismas cifras que el dashboard de cohortes. Las cohortes de Tableau "Retention by Cohort" (recompra a N meses) no están aquí todavía.`),
+        table(['Cohorte', 'Pagadores', 'LTV M0', 'LTV M3', 'LTV M6', 'LTV M12', 'Con servicio M1', 'Con servicio M6', 'Con servicio M12', 'Apagó renov. M0–M1', 'ROAS a la fecha'],
+          m.rows.map((r) => [monthLabel(r.cohort), int(r.payers), usd(r.ltv[0]), usd(r.ltv[3]), usd(r.ltv[6]), usd(r.ltv[12]), pc(r.ret[1]), pc(r.ret[6]), pc(r.ret[12]), pc(r.autoOff), r.roas === null ? '—' : `${r.roas.toFixed(2)}x`])),
+        ctx('LTV = revenue cobrado acumulado por pagador, neto de refunds y de comisiones de tienda (tasas medidas). Con servicio Mk = % de la cohorte con un mes de servicio pagado k meses después de su primera compra (réplica del Tableau "Retention by Cohort"; un anual cuenta sus 12 meses, así que M12 es la renovación anual). Apagó renov. = % de suscripciones que apagó la renovación automática en sus 2 primeros meses (≠ dejar de pagar). ROAS = revenue cobrado a la fecha ÷ gasto de adquisición de ese mes.'),
+        ctx(`Fuente: ${m.computedNote}, mismas cifras que el dashboard de cohortes (pestañas NET LTV, Recompra, Retención y Revenue / LTR). El Tableau "Retention by Cohort" se actualizó por última vez el 1-jun-2026: sus renovaciones recientes salen más bajas que aquí.`),
       ],
     });
   }

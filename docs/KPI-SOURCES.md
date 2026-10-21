@@ -255,8 +255,9 @@ manda el aviso de error al canal de cohortes y solo si eso falla, al webhook.
     "CAC & PURCHASES (All Networks)" muestra compras en cero al filtrar por red.
   - **Primer día hábil del mes** (`firstBusinessDay`, lun–vie, sin feriados): **cohortes mensuales de compra**
     (cohorte = mes del primer pago), leídas de `cohort_cells` del proyecto **kinedu-cohorts**
-    (`lib/kpi/cohort-monthly.ts`), sin recalcular: LTV neto a M0/M3/M6/M12, sigue pagando a M6 (réplica de
-    "Churn by Cohort"), volvió a pagar a M12, apagó la renovación en M0–M1 (≠ dejar de pagar) y ROAS a la fecha.
+    (`lib/kpi/cohort-monthly.ts`), sin recalcular: LTV neto a M0/M3/M6/M12, con servicio a M1/M6/M12 (réplica
+    validada de "Retention by Cohort", vista `repurchase_m`; M12 ≈ renovación anual), apagó la renovación en
+    M0–M1 (≠ dejar de pagar) y ROAS a la fecha.
     Cada métrica de la cohorte más reciente que ya la tiene se compara con las 3 cohortes previas a la misma edad.
     Necesita `COHORTS_SUPABASE_URL` y `COHORTS_SUPABASE_SERVICE_ROLE_KEY` (las de kinedu-cohorts); sin ellas la
     sección dice "no disponible" y el resto sale igual.
@@ -265,8 +266,10 @@ manda el aviso de error al canal de cohortes y solo si eso falla, al webhook.
 - **Inventario del Tableau (2026-10-21, sitio andressada, proyecto Kinedu PROD):** de 39 workbooks, los de cohortes
   vivos son "Cohort Subscriptions" (Retention, Churn y Revenue/LTR by Cohort), "Conversion Analysis", "Free Trials",
   "Track Subscriptions" (incluye "Subscriber Sales Accounting - FT Cohort") y "CAC & PURCHASES (All Networks)".
-  kinedu-cohorts replica todos salvo "Retention by Cohort" (recompra a N meses de la primera compra, con filtro de
-  red), "Subscriber Sales Accounting - FT Cohort" y "LTR Projected" (este último por defecto termina en 2022).
+  kinedu-cohorts replica todos salvo "Subscriber Sales Accounting - FT Cohort" y "LTR Projected" (este último por
+  defecto termina en 2022). "Retention by Cohort" se agregó el 2026-10-21 (pestaña Recompra; meses 1–11 idénticos
+  al CSV del tablero). Ojo: el extracto de "Cohort Subscriptions" se actualizó por última vez el 2026-06-01, así que
+  sus renovaciones recientes salen más bajas que en kinedu-cohorts.
 - **Formato:** mensaje principal con "Lo más importante" (cuatro líneas: semanal 8 días,
   diaria 8 días, semanal 30 días, refunds), una gráfica PNG de 12 semanas (iOS y Android a
   8 y 30 días, signups por semana, refunds por semana de cobro), la tabla de las últimas 8
