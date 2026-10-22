@@ -7,7 +7,9 @@ export const maxDuration = 30;
  * Brief BizOps · puerta de entrada de los agentes del correo (repo bandeja-pepis, scripts/brief.py).
  * Auth: Authorization: Bearer BIZOPS_BRIEF_SECRET.
  *
- * POST { agente, semaforo, resumen, items: [{ref, texto, emoji?, prioridad?, link?, estado?}], publicar? }
+ * POST { agente, semaforo, resumen, items: [{ref, texto, emoji?, prioridad?, link?, estado?}], publicar?, nota? }
+ *      nota (markdown de Slack, máx. 2,500 caracteres) se publica tal cual como mensaje propio en el canal del agente
+ *      (ej. Nora: los 5 bullets del P&L para Luis cuando Arrowpoint ya quedó aprobado).
  *      guarda la corrida y sus pendientes; publicar=true los manda a Slack al momento (VOBO del mismo día).
  * GET  ?agente=Oli&dias=7   lo que Pepis decidió en Slack (hecho · manana · no) para que el agente actúe.
  */
@@ -24,7 +26,15 @@ export async function POST(request: NextRequest) {
     const items: ItemIn[] = Array.isArray(b.items) ? b.items.filter((i: ItemIn) => i && i.ref && i.texto).slice(0, 30) : [];
     const guardados = await guardarCorrida(agente, semaforo, String(b.resumen ?? ''), items);
     let posted: { ok: boolean; ts?: string; error?: string } | null = null;
-    if (b.publicar && guardados.some((i) => i.estado === 'pendiente')) {
+    const nota = typeof b.nota === 'string' ? b.nota.trim().slice(0, 2500) : '';
+    if (nota) {
+      const titulo = `${semaforo} ${agente} · ${String(b.resumen ?? '')}`.slice(0, 150);
+      posted = await publicar({ text: `${titulo}\n${nota}`.slice(0, 2900), blocks: [
+        { type: 'header', text: { type: 'plain_text', text: titulo } },
+        { type: 'section', text: { type: 'mrkdwn', text: nota } },
+        { type: 'context', elements: [{ type: 'mrkdwn', text: `🤖 ${agente} · propone, no envía. Pepis decide.` }] },
+      ] }, canalDe(agente));
+    } else if (b.publicar && guardados.some((i) => i.estado === 'pendiente')) {
       posted = await publicar(mensajeInmediato(agente, semaforo, String(b.resumen ?? ''), guardados), canalDe(agente));
     }
     return NextResponse.json({ ok: true, guardados: guardados.length, posted });
