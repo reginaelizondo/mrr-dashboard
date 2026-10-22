@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { guardarCorrida, decisiones, publicar, mensajeInmediato, canalDe, SEMAFOROS, type ItemIn, type Semaforo } from '@/lib/bizops/brief';
+import { guardarCorrida, decisiones, publicar, mensajeInmediato, canalDe, responderEnHiloSiTarde, SEMAFOROS, type ItemIn, type Semaforo } from '@/lib/bizops/brief';
 
 export const maxDuration = 30;
 
@@ -37,6 +37,7 @@ export async function POST(request: NextRequest) {
     } else if (b.publicar && guardados.some((i) => i.estado === 'pendiente')) {
       posted = await publicar(mensajeInmediato(agente, semaforo, String(b.resumen ?? ''), guardados), canalDe(agente));
     }
+    if (!posted) posted = await responderEnHiloSiTarde(agente, semaforo, String(b.resumen ?? ''), guardados);
     return NextResponse.json({ ok: true, guardados: guardados.length, posted });
   } catch (e) {
     return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, { status: 500 });

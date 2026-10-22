@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { armarBrief, publicar } from '@/lib/bizops/brief';
+import { armarBrief, publicar, guardarTsBrief } from '@/lib/bizops/brief';
 
 export const maxDuration = 60;
 
@@ -19,6 +19,7 @@ export async function GET(request: NextRequest) {
     const { message, pendientes } = await armarBrief(sp.get('today') ?? undefined);
     if (sp.get('dry') === '1') return NextResponse.json({ ok: true, posted: false, pendientes, text: message.text, blocks: message.blocks });
     const r = await publicar(message);
+    if (r.ok && r.ts) await guardarTsBrief(r.ts);
     return NextResponse.json({ ok: r.ok, posted: r.ok, pendientes, ts: r.ts, error: r.error }, { status: r.ok ? 200 : 500 });
   } catch (err) {
     return NextResponse.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, { status: 500 });

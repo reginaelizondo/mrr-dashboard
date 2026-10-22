@@ -97,10 +97,13 @@ export async function armarBrief(hoy = todayMx()): Promise<{ message: SlackMessa
   for (const r of (runs ?? []) as { agente: string; semaforo: string; resumen: string | null }[]) if (!ultima.has(r.agente)) ultima.set(r.agente, r);
   const dow = new Date(`${hoy}T12:00:00Z`).getUTCDay();
   const salud: string[] = [];
-  if (dow >= 1 && dow <= 5) for (const a of DIARIOS) if (!ultima.has(a)) salud.push(`🔴 ${a} no corrió`);
-  for (const [a, r] of ultima) salud.push(`${r.semaforo} ${a}`);
+  // A las 9:15 un agente puede seguir pendiente (Mac dormida): no es falla todavía. Cuando corra, contesta en el hilo de este mensaje.
+  if (dow >= 1 && dow <= 5) for (const a of DIARIOS) if (!ultima.has(a)) salud.push(`⏳ ${a} aún no corre`);
+  ultima.delete('__brief__');
+  for (const [a, r] of ultima) if (a !== '__brief__') salud.push(`${r.semaforo} ${a}`);
 
   const urg = items.filter((i) => i.prioridad === 'urgente').length;
+  for (const [a] of ultima) if (a === '__brief__') ultima.delete(a);
   const sem = urg || salud.some((s) => s.startsWith('🔴')) ? '🔴' : items.length ? '🟡' : '🟢';
   const titulo = items.length ? `${sem} BizOps · ${fechaCorta(hoy)} · ${items.length} para ti` : `${sem} BizOps · ${fechaCorta(hoy)} · nada para ti hoy`;
   const blocks: SlackBlock[] = [{ type: 'header', text: { type: 'plain_text', text: titulo } } as SlackBlock];
@@ -131,4 +134,25 @@ export function marcarDecidido(blocks: SlackBlock[], id: number, etiqueta: strin
   return blocks.map((b) => ((b as { block_id?: string }).block_id === `bz_${id}`
     ? ({ type: 'context', block_id: `bz_${id}`, elements: [{ type: 'mrkdwn', text: etiqueta }] } as SlackBlock)
     : b));
+}
+
+/** Guarda el ts del brief de hoy para que los agentes que corren tarde contesten en su hilo. */
+export async function guardarTsBrief(ts: string, hoy = todayMx()) {
+  const sb = createServerClient();
+  await sb.from('bizops_runs').insert({ agente: '__brief__', fecha: hoy, semaforo: '🟢', resumen: ts });
+}
+
+/** Si el brief de hoy ya salió, el agente que corre después contesta en su hilo con su semáforo y sus pendientes. */
+export async function responderEnHiloSiTarde(agente: string, semaforo: Semaforo, resumen: string, items: Item[], hoy = todayMx()) {
+  if (CANAL_POR_AGENTE[agente]) return null;
+  const sb = createServerClient();
+  const { data } = await sb.from('bizops_runs').select('resumen').eq('agente', '__brief__').eq('fecha', hoy).order('created_at', { ascending: false }).limit(1);
+  const ts = (data?.[0] as { resumen?: string } | undefined)?.resumen;
+  const token = process.env.SLACK_BOT_TOKEN;
+  if (!ts || !token) return null;
+  const pend = items.filter((i) => i.estado === 'pendiente');
+  const titulo = `${semaforo} ${agente} ya corrió · ${resumen}`.slice(0, 150);
+  const blocks: SlackBlock[] = [{ type: 'section', text: { type: 'mrkdwn', text: `*${titulo}*` } } as SlackBlock];
+  for (const it of pend.slice(0, 8)) blocks.push(...itemBlocks(it, hoy));
+  return postChatMessage(token, BRIEF_CHANNEL(), { text: titulo, blocks }, ts);
 }
