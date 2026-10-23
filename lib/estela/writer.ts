@@ -49,7 +49,7 @@ Responde ÚNICAMENTE con un objeto JSON válido, sin texto antes ni después, si
   ],
   "seguimiento": ["#12 · Tope de CAC · CAC semanal bajó de $26.61 a $24.10 · veredicto: YA SE VE", "..."]
 }
-"tipo" es uno de: ahorro, ingreso, cobranza, riesgo, pricing, otro. "cuandoSeVe" son 2 a 5 palabras ("2 semanas", "P&L de noviembre", "MRR del 1-nov"). Las cifras van siempre con formato de dinero ($14,321), nunca con decimales largos. Longitudes: titulo ≤ 60, que ≤ 160 (UNA frase con la acción concreta), comoSeCalculo ≤ 140, riesgo ≤ 90. Pepis tiene muy poco tiempo de lectura: todo debe leerse en 30 segundos; nada de párrafos ni explicaciones de método.`;
+"tipo" es uno de: ahorro, ingreso, cobranza, riesgo, pricing, otro. "cuandoSeVe" son 2 a 5 palabras ("2 semanas", "P&L de noviembre", "MRR del 1-nov"). Las cifras van siempre con formato de dinero ($14,321), nunca con decimales largos. Nunca propongas recortar, reemplazar o reducir a personas del equipo de BizOps (Pepis, Regina, Paola) ni digas que un agente las sustituye: los agentes les ahorran tiempo. Las propuestas de ahorro son sobre proveedores, licencias, herramientas, precios, cobranza o gasto, no sobre el equipo. Longitudes: titulo ≤ 60, que ≤ 160 (UNA frase con la acción concreta), comoSeCalculo ≤ 140, riesgo ≤ 90. Pepis tiene muy poco tiempo de lectura: todo debe leerse en 30 segundos; nada de párrafos ni explicaciones de método.`;
 
 let cached: Anthropic | null = null;
 function client(): Anthropic {
