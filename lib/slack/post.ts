@@ -86,6 +86,22 @@ export async function postChatMessage(
   return r;
 }
 
+/** chat.update: reemplaza el contenido de un mensaje que ya publicó el bot. */
+export async function updateChatMessage(token: string, channel: string, ts: string, message: SlackMessage): Promise<PostResult> {
+  try {
+    const res = await fetch('https://slack.com/api/chat.update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ channel, ts, text: message.text, blocks: message.blocks }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) return { ok: false, error: json.error || `HTTP ${res.status}` };
+    return { ok: true, ts: json.ts };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /**
  * Sube imágenes a un canal (en el hilo `threadTs` si se da) con el flujo actual de Slack:
  * files.getUploadURLExternal → POST de los bytes → files.completeUploadExternal. Requiere `files:write`.

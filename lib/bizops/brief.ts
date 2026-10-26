@@ -8,7 +8,7 @@
  * Lo urgente del mismo día (Marco el martes, Quina antes del VOBO) se publica al momento con publicar=true.
  */
 import { createServerClient } from '@/lib/supabase/server';
-import { postChatMessage, type SlackBlock, type SlackMessage } from '@/lib/slack/post';
+import { postChatMessage, updateChatMessage, type SlackBlock, type SlackMessage } from '@/lib/slack/post';
 import { todayMx } from '@/lib/kpi/period';
 
 export const BRIEF_CHANNEL = () => process.env.BIZOPS_BRIEF_CHANNEL ?? process.env.ESTELA_SLACK_CHANNEL ?? 'C0CAJT405R7';
@@ -142,7 +142,11 @@ export async function guardarTsBrief(ts: string, hoy = todayMx()) {
   await sb.from('bizops_runs').insert({ agente: '__brief__', fecha: hoy, semaforo: '🟢', resumen: ts });
 }
 
-/** Si el brief de hoy ya salió, el agente que corre después contesta en su hilo con su semáforo y sus pendientes. */
+/**
+ * Si el brief de hoy ya salió, el agente que corre después (Mac dormida) lo pone al día:
+ * el mensaje de las 9:15 se vuelve a armar (⏳ pasa a 🟢/🟡 y entran sus pendientes) y,
+ * si trae algo para Pepis, además contesta en el hilo para que llegue la notificación.
+ */
 export async function responderEnHiloSiTarde(agente: string, semaforo: Semaforo, resumen: string, items: Item[], hoy = todayMx()) {
   if (CANAL_POR_AGENTE[agente]) return null;
   const sb = createServerClient();
@@ -150,7 +154,10 @@ export async function responderEnHiloSiTarde(agente: string, semaforo: Semaforo,
   const ts = (data?.[0] as { resumen?: string } | undefined)?.resumen;
   const token = process.env.SLACK_BOT_TOKEN;
   if (!ts || !token) return null;
+  const { message } = await armarBrief(hoy);
+  await updateChatMessage(token, BRIEF_CHANNEL(), ts, message);
   const pend = items.filter((i) => i.estado === 'pendiente');
+  if (!pend.length && semaforo === '🟢') return { ok: true, ts };
   const titulo = `${semaforo} ${agente} ya corrió · ${resumen}`.slice(0, 150);
   const blocks: SlackBlock[] = [{ type: 'section', text: { type: 'mrkdwn', text: `*${titulo}*` } } as SlackBlock];
   for (const it of pend.slice(0, 8)) blocks.push(...itemBlocks(it, hoy));
