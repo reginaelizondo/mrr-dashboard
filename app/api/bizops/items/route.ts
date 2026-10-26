@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { guardarCorrida, decisiones, publicar, mensajeInmediato, canalDe, responderEnHiloSiTarde, SEMAFOROS, type ItemIn, type Semaforo } from '@/lib/bizops/brief';
+import { guardarCorrida, decisiones, publicar, mensajeInmediato, canalDe, esRH, RH_CHANNEL, responderEnHiloSiTarde, SEMAFOROS, type ItemIn, type Semaforo } from '@/lib/bizops/brief';
 
 export const maxDuration = 30;
 
@@ -35,8 +35,11 @@ export async function POST(request: NextRequest) {
         { type: 'context', elements: [{ type: 'mrkdwn', text: `🤖 ${agente} · propone, no envía. Pepis decide.` }] },
       ] }, canalDe(agente));
     } else if (b.publicar && guardados.some((i) => i.estado === 'pendiente')) {
-      posted = await publicar(mensajeInmediato(agente, semaforo, String(b.resumen ?? ''), guardados), canalDe(agente));
+      posted = await publicar(mensajeInmediato(agente, semaforo, String(b.resumen ?? ''), canalDe(agente) === RH_CHANNEL() ? guardados : guardados.filter((i) => !esRH(i))), canalDe(agente));
     }
+    // Pendientes "rh:" de un agente de finanzas (Dalia → Coba): salen al momento en #bizops-rh-agentes, donde los sigue Paola.
+    const rh = canalDe(agente) === RH_CHANNEL() ? [] : guardados.filter((i) => esRH(i) && i.estado === 'pendiente');
+    if (rh.length) await publicar(mensajeInmediato(agente, semaforo, 'para RH', rh), RH_CHANNEL());
     if (!posted) posted = await responderEnHiloSiTarde(agente, semaforo, String(b.resumen ?? ''), guardados);
     return NextResponse.json({ ok: true, guardados: guardados.length, posted });
   } catch (e) {

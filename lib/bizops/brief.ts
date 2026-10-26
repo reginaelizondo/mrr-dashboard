@@ -16,6 +16,9 @@ export const BRIEF_CHANNEL = () => process.env.BIZOPS_BRIEF_CHANNEL ?? process.e
 const RH = () => process.env.BIZOPS_RH_CHANNEL ?? 'C0CAGQN5FKL';
 const CANAL_POR_AGENTE: Record<string, () => string> = { Quina: RH, Rosa: RH, Coco: RH };
 export const canalDe = (agente: string) => (CANAL_POR_AGENTE[agente] ?? BRIEF_CHANNEL)();
+/** Un pendiente con ref "rh:…" va a #bizops-rh-agentes aunque lo mande un agente de finanzas (Dalia: todo lo de Coba es de Paola). */
+export const esRH = (i: { agente: string; ref: string }) => !!CANAL_POR_AGENTE[i.agente] || i.ref.startsWith('rh:');
+export const RH_CHANNEL = RH;
 export const SEMAFOROS = ['🟢', '🟡', '🔴'] as const;
 export type Semaforo = (typeof SEMAFOROS)[number];
 export type Estado = 'pendiente' | 'manana' | 'hecho' | 'no';
@@ -33,6 +36,12 @@ const DIAS = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
 const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 const fechaCorta = (d: string) => { const t = new Date(`${d}T12:00:00Z`); return `${DIAS[t.getUTCDay()]} ${t.getUTCDate()}-${MESES[t.getUTCMonth()]}`; };
 const limpia = (s: unknown, max: number) => (typeof s === 'string' ? s.replace(/\s+/g, ' ').trim().slice(0, max) : '');
+/** Gmail: "#…?compose=thread-f:123%2Bmsg-a:…" abre un correo nuevo en blanco; "#all/thread-f:123" abre el hilo (con su borrador). */
+export function linkHilo(link: string): string {
+  const m = link.match(/[?&]compose=(thread-f(?::|%3A)\d+)/i);
+  if (!m) return link;
+  return `${link.split('#')[0]}#all/${decodeURIComponent(m[1])}`;
+}
 
 export async function guardarCorrida(agente: string, semaforo: Semaforo, resumen: string, items: ItemIn[]) {
   const sb = createServerClient();
@@ -46,7 +55,7 @@ export async function guardarCorrida(agente: string, semaforo: Semaforo, resumen
   const rows = items.map((i) => ({
     agente, ref: limpia(i.ref, 200), texto: limpia(i.texto, 140), emoji: limpia(i.emoji, 4) || null,
     prioridad: ['urgente', 'decide', 'info'].includes(i.prioridad ?? '') ? i.prioridad : 'decide',
-    link: limpia(i.link, 500) || null, ultima_vez: hoy,
+    link: linkHilo(limpia(i.link, 500)) || null, ultima_vez: hoy,
     estado: i.estado ?? (prev.get(i.ref) === 'manana' ? 'pendiente' : prev.get(i.ref) ?? 'pendiente'),
   }));
   const { data, error } = await sb.from('bizops_items').upsert(rows, { onConflict: 'agente,ref' }).select('*');
@@ -91,7 +100,7 @@ function itemBlocks(it: Item, hoy: string): SlackBlock[] {
 export async function armarBrief(hoy = todayMx()): Promise<{ message: SlackMessage; pendientes: number }> {
   const sb = createServerClient();
   const { data: its } = await sb.from('bizops_items').select('*').in('estado', ['pendiente', 'manana']);
-  const items = ((its ?? []) as Item[]).filter((i) => !CANAL_POR_AGENTE[i.agente]).sort((a, b) => ORDEN[a.prioridad] - ORDEN[b.prioridad] || a.primera_vez.localeCompare(b.primera_vez));
+  const items = ((its ?? []) as Item[]).filter((i) => !esRH(i)).sort((a, b) => ORDEN[a.prioridad] - ORDEN[b.prioridad] || a.primera_vez.localeCompare(b.primera_vez));
   const { data: runs } = await sb.from('bizops_runs').select('agente, semaforo, resumen, created_at').eq('fecha', hoy).order('created_at', { ascending: false });
   const ultima = new Map<string, { semaforo: string; resumen: string | null }>();
   for (const r of (runs ?? []) as { agente: string; semaforo: string; resumen: string | null }[]) if (!ultima.has(r.agente)) ultima.set(r.agente, r);
@@ -100,7 +109,7 @@ export async function armarBrief(hoy = todayMx()): Promise<{ message: SlackMessa
   // A las 9:15 un agente puede seguir pendiente (Mac dormida): no es falla todavía. Cuando corra, contesta en el hilo de este mensaje.
   if (dow >= 1 && dow <= 5) for (const a of DIARIOS) if (!ultima.has(a)) salud.push(`⏳ ${a} aún no corre`);
   ultima.delete('__brief__');
-  for (const [a, r] of ultima) if (a !== '__brief__') salud.push(`${r.semaforo} ${a}`);
+  for (const [a, r] of ultima) if (a !== '__brief__') salud.push(`${r.semaforo} ${a}${r.resumen ? `: ${r.resumen.slice(0, 50)}` : ''}`);
 
   const urg = items.filter((i) => i.prioridad === 'urgente').length;
   for (const [a] of ultima) if (a === '__brief__') ultima.delete(a);
@@ -110,7 +119,7 @@ export async function armarBrief(hoy = todayMx()): Promise<{ message: SlackMessa
   const MAX = 12;
   for (const it of items.slice(0, MAX)) blocks.push(...itemBlocks(it, hoy));
   if (items.length > MAX) blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `+${items.length - MAX} más: aparecen mañana o en los borradores de Gmail.` }] } as SlackBlock);
-  blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `${salud.join(' · ') || 'Sin corridas hoy todavía'}\n🤖 Los agentes no envían ni pagan. ✅ Hecho = ya lo resolviste · ⏭️ Mañana = vuelve a salir · ✖ No aplica = el agente aprende` }] } as SlackBlock);
+  blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `${salud.join('\n') || 'Sin corridas hoy todavía'}\n🤖 Los agentes no envían ni pagan. ✅ Hecho = ya lo resolviste · ⏭️ Mañana = vuelve a salir · ✖ No aplica = el agente aprende` }] } as SlackBlock);
   const text = `${titulo}\n${items.slice(0, MAX).map((i) => `${i.emoji ?? '•'} ${i.texto} (${i.agente})`).join('\n')}`;
   return { message: { text: text.slice(0, 2900), blocks }, pendientes: items.length };
 }
@@ -156,7 +165,7 @@ export async function responderEnHiloSiTarde(agente: string, semaforo: Semaforo,
   if (!ts || !token) return null;
   const { message } = await armarBrief(hoy);
   await updateChatMessage(token, BRIEF_CHANNEL(), ts, message);
-  const pend = items.filter((i) => i.estado === 'pendiente');
+  const pend = items.filter((i) => i.estado === 'pendiente' && !esRH(i));
   if (!pend.length && semaforo === '🟢') return { ok: true, ts };
   const titulo = `${semaforo} ${agente} ya corrió · ${resumen}`.slice(0, 150);
   const blocks: SlackBlock[] = [{ type: 'section', text: { type: 'mrkdwn', text: `*${titulo}*` } } as SlackBlock];
