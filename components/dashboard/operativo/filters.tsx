@@ -51,8 +51,10 @@ export function FilterBar({ preset, start, end, grain, days, priorStart, priorEn
 
   return (
     <div className="z-30 -mx-6 bg-[#F2F2F4]/90 px-6 py-3 backdrop-blur-md md:sticky md:top-0">
-      <div className="relative overflow-hidden rounded-xl border border-slate-200/80 bg-white shadow-sm">
-        {pending && <div className="absolute inset-x-0 top-0 h-0.5 overflow-hidden bg-[#0086D8]/10"><div className="op-progress h-full w-1/3 bg-[#0086D8]" /></div>}
+      {/* Sin overflow-hidden: los desplegables de dimensión (MultiSelect) son un div absoluto dentro de esta
+          tarjeta y el recorte dejaba la lista de opciones oculta debajo del buscador (reportado 2026-10-27). */}
+      <div className="relative rounded-xl border border-slate-200/80 bg-white shadow-sm">
+        {pending && <div className="absolute inset-x-0 top-0 h-0.5 overflow-hidden rounded-t-xl bg-[#0086D8]/10"><div className="op-progress h-full w-1/3 bg-[#0086D8]" /></div>}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 pt-3">
           <CalendarDays className="h-4 w-4 text-[#0086D8]" />
           <div className="max-w-full overflow-x-auto">
