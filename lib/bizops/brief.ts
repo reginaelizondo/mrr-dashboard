@@ -14,7 +14,7 @@ import { todayMx } from '@/lib/kpi/period';
 export const BRIEF_CHANNEL = () => process.env.BIZOPS_BRIEF_CHANNEL ?? process.env.ESTELA_SLACK_CHANNEL ?? 'C0CAJT405R7';
 /** Agentes con canal propio: sus pendientes no van al brief de finanzas sino a su canal (nómina → #bizops-rh-agentes). */
 const RH = () => process.env.BIZOPS_RH_CHANNEL ?? 'C0CAGQN5FKL';
-const CANAL_POR_AGENTE: Record<string, () => string> = { Quina: RH, Rosa: RH, Coco: RH };
+const CANAL_POR_AGENTE: Record<string, () => string> = { Quina: RH, Rosa: RH, Coco: RH, Fito: RH };
 export const canalDe = (agente: string) => (CANAL_POR_AGENTE[agente] ?? BRIEF_CHANNEL)();
 /** Un pendiente con ref "rh:…" va a #bizops-rh-agentes aunque lo mande un agente de finanzas (Dalia: todo lo de Coba es de Paola). */
 export const esRH = (i: { agente: string; ref: string }) => !!CANAL_POR_AGENTE[i.agente] || i.ref.startsWith('rh:');
