@@ -5,7 +5,7 @@ import { postChatMessage } from '@/lib/slack/post';
 import { runKpiGuard, formatGuardRun } from '@/lib/audit/kpi-guard';
 import { runKpiFix, formatFixResult, fixInProgress } from '@/lib/audit/kpi-fix';
 import { setProposalStatus } from '@/lib/estela/estela';
-import { decidir, marcarDecidido } from '@/lib/bizops/brief';
+import { decidir, marcarDecidido, propuestaDe } from '@/lib/bizops/brief';
 
 // Correcciones largas (re-sincronizar réplica + tiendas ≈ 2–4 min) corren en waitUntil después de responder a Slack.
 export const maxDuration = 300;
@@ -30,6 +30,20 @@ export async function POST(request: NextRequest) {
   if (!ok) return new NextResponse('Invalid signature', { status: 401 });
 
   const payload = JSON.parse(new URLSearchParams(rawBody).get('payload') ?? '{}');
+  // "✏️ Otra carpeta": Pepis escribe dónde guardar; el agente lo lee en su siguiente corrida (estado hecho + respuesta)
+  if (payload.type === 'view_submission' && payload.view?.callback_id === 'bizops_otra') {
+    const meta = JSON.parse(payload.view.private_metadata || '{}') as { id?: number; channel?: string; ts?: string };
+    const ruta = String(payload.view.state?.values?.ruta?.valor?.value ?? '').trim();
+    const quien = payload.user?.username ? `@${payload.user.username}` : undefined;
+    const tok = process.env.SLACK_BOT_TOKEN;
+    waitUntil((async () => {
+      if (!meta.id || !ruta) return;
+      const r = await decidir(meta.id, 'hecho', quien, ruta);
+      if (tok && meta.channel) await postChatMessage(tok, meta.channel, { text: `✏️ ${r.ok ? `${r.agente} guardará en: ${ruta}` : 'No pude guardar la carpeta'}`,
+        blocks: [{ type: 'section', text: { type: 'mrkdwn', text: r.ok ? `✏️ *${r.texto}*\n${r.agente} guardará en: \`${ruta}\`${quien ? ` · ${quien}` : ''}` : `⚠️ No pude guardar: ${r.error}` } }] }, meta.ts);
+    })());
+    return new NextResponse('', { status: 200 });
+  }
   const action = payload.actions?.[0]?.action_id as string | undefined;
   const channel: string | undefined = payload.channel?.id;
   const threadTs: string | undefined = payload.message?.thread_ts ?? payload.message?.ts ?? payload.container?.message_ts;
@@ -38,6 +52,23 @@ export async function POST(request: NextRequest) {
   if (!action || action === 'kpi_open_dashboard' || !channel || !token) return new NextResponse('', { status: 200 });
 
   const reply = (text: string) => postChatMessage(token, channel, { text, blocks: [{ type: 'section', text: { type: 'mrkdwn', text } }] }, threadTs);
+
+  if (action === 'bizops_otra') {
+    const id = Number(payload.actions?.[0]?.value);
+    const p = Number.isFinite(id) ? await propuestaDe(id) : {};
+    await fetch('https://slack.com/api/views.open', {
+      method: 'POST', headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ trigger_id: payload.trigger_id, view: {
+        type: 'modal', callback_id: 'bizops_otra', private_metadata: JSON.stringify({ id, channel, ts: threadTs }),
+        title: { type: 'plain_text', text: 'Otra carpeta' }, submit: { type: 'plain_text', text: 'Guardar ahí' }, close: { type: 'plain_text', text: 'Cancelar' },
+        blocks: [
+          { type: 'section', text: { type: 'mrkdwn', text: `*${(p.texto ?? '').slice(0, 140)}*\nEscribe la carpeta (o una nota de dónde va mejor).` } },
+          { type: 'input', block_id: 'ruta', label: { type: 'plain_text', text: 'Carpeta' },
+            element: { type: 'plain_text_input', action_id: 'valor', multiline: true, ...(p.propuesta ? { initial_value: p.propuesta } : {}) } },
+        ] } }),
+    });
+    return new NextResponse('', { status: 200 });
+  }
 
   waitUntil((async () => {
     try {

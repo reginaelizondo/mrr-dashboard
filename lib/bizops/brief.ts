@@ -23,10 +23,11 @@ export const SEMAFOROS = ['🟢', '🟡', '🔴'] as const;
 export type Semaforo = (typeof SEMAFOROS)[number];
 export type Estado = 'pendiente' | 'manana' | 'hecho' | 'no';
 
-export interface ItemIn { ref: string; texto: string; emoji?: string; prioridad?: 'urgente' | 'decide' | 'info'; link?: string; estado?: Estado }
+export interface ItemIn { ref: string; texto: string; emoji?: string; prioridad?: 'urgente' | 'decide' | 'info'; link?: string; estado?: Estado; propuesta?: string }
 export interface Item extends Required<Pick<ItemIn, 'ref' | 'texto'>> {
   id: number; agente: string; emoji: string | null; prioridad: 'urgente' | 'decide' | 'info'; link: string | null;
   estado: Estado; decidido_por: string | null; decidido_en: string | null; primera_vez: string; ultima_vez: string;
+  propuesta?: string | null; respuesta?: string | null;
 }
 
 /** Agentes que deben correr cada día hábil: si no reportan, el brief lo dice. */
@@ -56,6 +57,7 @@ export async function guardarCorrida(agente: string, semaforo: Semaforo, resumen
     agente, ref: limpia(i.ref, 200), texto: limpia(i.texto, 140), emoji: limpia(i.emoji, 4) || null,
     prioridad: ['urgente', 'decide', 'info'].includes(i.prioridad ?? '') ? i.prioridad : 'decide',
     link: linkHilo(limpia(i.link, 500)) || null, ultima_vez: hoy,
+    ...(i.propuesta ? { propuesta: limpia(i.propuesta, 400) } : {}),
     estado: i.estado ?? (prev.get(i.ref) === 'manana' ? 'pendiente' : prev.get(i.ref) ?? 'pendiente'),
   }));
   const { data, error } = await sb.from('bizops_items').upsert(rows, { onConflict: 'agente,ref' }).select('*');
@@ -66,16 +68,17 @@ export async function guardarCorrida(agente: string, semaforo: Semaforo, resumen
 export async function decisiones(agente: string, dias: number) {
   const sb = createServerClient();
   const desde = new Date(Date.now() - dias * 86400000).toISOString();
-  const { data, error } = await sb.from('bizops_items').select('ref, texto, estado, decidido_por, decidido_en')
+  const { data, error } = await sb.from('bizops_items').select('ref, texto, estado, decidido_por, decidido_en, propuesta, respuesta')
     .eq('agente', agente).gte('decidido_en', desde).order('decidido_en', { ascending: false });
   if (error) throw new Error(error.message);
   return data ?? [];
 }
 
-export async function decidir(id: number, estado: Estado, quien?: string) {
+export async function decidir(id: number, estado: Estado, quien?: string, respuesta?: string) {
   const sb = createServerClient();
   const { data, error } = await sb.from('bizops_items')
-    .update({ estado, decidido_por: quien ?? null, decidido_en: new Date().toISOString() }).eq('id', id).select('texto, agente').single();
+    .update({ estado, decidido_por: quien ?? null, decidido_en: new Date().toISOString(), ...(respuesta !== undefined ? { respuesta } : {}) })
+    .eq('id', id).select('texto, agente').single();
   if (error) return { ok: false as const, error: error.message };
   return { ok: true as const, texto: (data as { texto: string }).texto, agente: (data as { agente: string }).agente };
 }
@@ -84,6 +87,20 @@ function itemBlocks(it: Item, hoy: string): SlackBlock[] {
   const dias = Math.round((Date.parse(hoy) - Date.parse(it.primera_vez)) / 86400000);
   const edad = dias <= 0 ? 'nuevo' : dias === 1 ? 'desde ayer' : `hace ${dias} días`;
   const abrir = it.link ? ` · <${it.link}|abrir>` : '';
+  if (it.propuesta) {
+    // Propuesta con destino (Tere): Pepis acepta, escribe otra carpeta o dice que no se guarda
+    return [
+      { type: 'section', text: { type: 'mrkdwn', text: `${it.emoji ?? '📁'} *${it.texto}*\nPropongo guardar en: \`${it.propuesta}\`\n${it.agente} · ${edad}${abrir}` } },
+      {
+        type: 'actions', block_id: `bz_${it.id}`,
+        elements: [
+          { type: 'button', style: 'primary', action_id: 'bizops_hecho', value: String(it.id), text: { type: 'plain_text', text: '✅ Guardar ahí' } },
+          { type: 'button', action_id: 'bizops_otra', value: String(it.id), text: { type: 'plain_text', text: '✏️ Otra carpeta' } },
+          { type: 'button', action_id: 'bizops_no', value: String(it.id), text: { type: 'plain_text', text: '✖ No guardar' } },
+        ],
+      },
+    ] as SlackBlock[];
+  }
   return [
     { type: 'section', text: { type: 'mrkdwn', text: `${it.emoji ?? '•'} *${it.texto}*\n${it.agente} · ${edad}${abrir}` } },
     {
@@ -171,4 +188,11 @@ export async function responderEnHiloSiTarde(agente: string, semaforo: Semaforo,
   const blocks: SlackBlock[] = [{ type: 'section', text: { type: 'mrkdwn', text: `*${titulo}*` } } as SlackBlock];
   for (const it of pend.slice(0, 8)) blocks.push(...itemBlocks(it, hoy));
   return postChatMessage(token, BRIEF_CHANNEL(), { text: titulo, blocks }, ts);
+}
+
+/** Propuesta de un pendiente (para prellenar "✏️ Otra carpeta"). */
+export async function propuestaDe(id: number) {
+  const sb = createServerClient();
+  const { data } = await sb.from('bizops_items').select('propuesta, texto').eq('id', id).single();
+  return (data ?? {}) as { propuesta?: string | null; texto?: string };
 }
