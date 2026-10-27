@@ -126,6 +126,33 @@ export async function computeMonthlySnapshot(date: string): Promise<void> {
 
   const otherTx = (monthTx || []) as Transaction[];
 
+  // Refunds of THIS month per store, from `store_daily` (what each store reports per
+  // day, synced hourly — migration 037/041). Two bases: `paid` = returned to the
+  // customer (gross, what total_refunds always showed); `net` = what the store
+  // claws back from our deposit (no commission) — this is what mrr_net subtracts.
+  // (The old source — 'refund' rows in `transactions` — was a one-off load that
+  // stopped at 2026-05, so total_refunds silently read $0 after that.)
+  const { data: refundRows, error: refundError } = await supabase.rpc('store_refunds_by_store', {
+    p_start: monthStartStr,
+    p_end: monthEndStr,
+  });
+  if (refundError) {
+    throw new Error(`Snapshot store_refunds_by_store error: ${refundError.message}`);
+  }
+  type StoreRefunds = { paid: number; net: number; n: number };
+  const refundsBySource: Record<'apple' | 'google' | 'stripe', StoreRefunds> = {
+    apple: { paid: 0, net: 0, n: 0 },
+    google: { paid: 0, net: 0, n: 0 },
+    stripe: { paid: 0, net: 0, n: 0 },
+  };
+  for (const r of (refundRows || []) as { store: string; refunds_paid_usd: number; refunds_net_usd: number; refunds_n: number }[]) {
+    const bucket = refundsBySource[r.store as keyof typeof refundsBySource];
+    if (!bucket) continue;
+    bucket.paid += Number(r.refunds_paid_usd) || 0;
+    bucket.net += Number(r.refunds_net_usd) || 0;
+    bucket.n += Number(r.refunds_n) || 0;
+  }
+
   // Filter charges to only those whose subscription period covers this month
   const activeCharges: Transaction[] = [];
   for (const charge of charges) {
@@ -173,7 +200,6 @@ export async function computeMonthlySnapshot(date: string): Promise<void> {
     }, 0);
   }
 
-  const refunds = otherTx.filter((t) => t.transaction_type === 'refund');
   const taxes = otherTx.filter((t) => t.transaction_type === 'tax');
   const disputes = otherTx.filter((t) => t.transaction_type === 'dispute');
 
@@ -181,20 +207,30 @@ export async function computeMonthlySnapshot(date: string): Promise<void> {
     return txs.reduce((acc, t) => acc + Number(t[field] || 0), 0);
   }
 
-  // MRR from active charges (spreading)
-  const mrrGross = mrrSum(activeCharges, 'amount_gross');
-  const mrrNet = mrrSum(activeCharges, 'amount_net');
-  const totalCommissions = mrrCommission(activeCharges);
-  const totalTaxes = sumField(taxes, 'tax_amount');
-  const totalRefunds = sumField(refunds, 'amount_gross');
-  const totalDisputes = sumField(disputes, 'amount_gross');
-
   // By source
   const appleCharges = activeCharges.filter((t) => t.source === 'apple');
   const googleCharges = activeCharges.filter((t) => t.source === 'google');
   const stripeCharges = activeCharges.filter((t) => t.source === 'stripe');
 
-  console.log(`[Snapshot ${monthStartStr}] MRR Net: $${mrrNet.toFixed(2)} | Apple: $${mrrSum(appleCharges, 'amount_net').toFixed(2)} | Google: $${mrrSum(googleCharges, 'amount_net').toFixed(2)} | Stripe: $${mrrSum(stripeCharges, 'amount_net').toFixed(2)}`);
+  // MRR from active charges (spreading). Gross and commissions are untouched;
+  // NET = gross − commissions − refunds (net basis) of the month, per store.
+  const mrrGross = mrrSum(activeCharges, 'amount_gross');
+  const appleNet = mrrSum(appleCharges, 'amount_net') - refundsBySource.apple.net;
+  const googleNet = mrrSum(googleCharges, 'amount_net') - refundsBySource.google.net;
+  const stripeNet = mrrSum(stripeCharges, 'amount_net') - refundsBySource.stripe.net;
+  const otherSourceNet = mrrSum(
+    activeCharges.filter((t) => t.source !== 'apple' && t.source !== 'google' && t.source !== 'stripe'),
+    'amount_net'
+  );
+  const mrrNet = appleNet + googleNet + stripeNet + otherSourceNet;
+  const totalCommissions = mrrCommission(activeCharges);
+  const totalTaxes = sumField(taxes, 'tax_amount');
+  const totalRefunds = refundsBySource.apple.paid + refundsBySource.google.paid + refundsBySource.stripe.paid;
+  const totalRefundsNet = refundsBySource.apple.net + refundsBySource.google.net + refundsBySource.stripe.net;
+  const refundCount = refundsBySource.apple.n + refundsBySource.google.n + refundsBySource.stripe.n;
+  const totalDisputes = sumField(disputes, 'amount_gross');
+
+  console.log(`[Snapshot ${monthStartStr}] MRR Net (after refunds): $${mrrNet.toFixed(2)} | Apple: $${appleNet.toFixed(2)} | Google: $${googleNet.toFixed(2)} | Stripe: $${stripeNet.toFixed(2)} | Refunds net: $${totalRefundsNet.toFixed(2)} (gross $${totalRefunds.toFixed(2)})`);
 
   // By region
   const usCanadaCharges = activeCharges.filter((t) => t.region === 'us_canada');
@@ -225,7 +261,7 @@ export async function computeMonthlySnapshot(date: string): Promise<void> {
   ).length;
   const totalRenewals = explicitRenewals + unlabeledCharges;
 
-  console.log(`[Snapshot ${monthStartStr}] Subs: ${newSubs} new, ${totalRenewals} renewals, ${trialConversions} trial, ${refunds.length} refunds`);
+  console.log(`[Snapshot ${monthStartStr}] Subs: ${newSubs} new, ${totalRenewals} renewals, ${trialConversions} trial, ${refundCount} refunds`);
 
   const snapshotDateStr = monthStartStr;
 
@@ -241,14 +277,22 @@ export async function computeMonthlySnapshot(date: string): Promise<void> {
     total_commissions: totalCommissions,
     total_taxes: totalTaxes,
     total_refunds: totalRefunds,
+    total_refunds_net: totalRefundsNet,
     total_disputes: totalDisputes,
 
+    refunds_apple: refundsBySource.apple.paid,
+    refunds_google: refundsBySource.google.paid,
+    refunds_stripe: refundsBySource.stripe.paid,
+    refunds_net_apple: refundsBySource.apple.net,
+    refunds_net_google: refundsBySource.google.net,
+    refunds_net_stripe: refundsBySource.stripe.net,
+
     mrr_apple_gross: mrrSum(appleCharges, 'amount_gross'),
-    mrr_apple_net: mrrSum(appleCharges, 'amount_net'),
+    mrr_apple_net: appleNet,
     mrr_google_gross: mrrSum(googleCharges, 'amount_gross'),
-    mrr_google_net: mrrSum(googleCharges, 'amount_net'),
+    mrr_google_net: googleNet,
     mrr_stripe_gross: mrrSum(stripeCharges, 'amount_gross'),
-    mrr_stripe_net: mrrSum(stripeCharges, 'amount_net'),
+    mrr_stripe_net: stripeNet,
 
     mrr_us_canada: mrrSum(usCanadaCharges, 'amount_gross'),
     mrr_mexico: mrrSum(mexicoCharges, 'amount_gross'),
@@ -266,7 +310,7 @@ export async function computeMonthlySnapshot(date: string): Promise<void> {
     new_subscriptions: newSubs,
     renewals: totalRenewals,
     trial_conversions: trialConversions,
-    refund_count: refunds.length,
+    refund_count: refundCount,
     active_subscriptions: activeCharges.length,
 
     // Cash basis fields kept for backward compat

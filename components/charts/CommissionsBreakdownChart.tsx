@@ -45,15 +45,20 @@ function CustomTooltip({ active, payload, label }: { active?: boolean; payload?:
 export function CommissionsBreakdownChart({ data }: CommissionsBreakdownChartProps) {
   const bundle = useMemo(() => buildProjectionBundle(data), [data]);
 
-  // Commission per source = gross - net for each source. For stale months
-  // we use projected gross/net to estimate the commission that would land.
+  // Commission per source = gross - net - refunds(net basis) for each source
+  // (per-store net already subtracts that store's refunds — migration 041).
+  // For stale months we use projected gross/net to estimate the commission
+  // that would land.
   const chartData = data.map((s) => {
     const row = bundle.rows.get(s.snapshot_date);
     const is_stale = row?.is_stale || false;
 
-    const appleComm = Number(s.mrr_apple_gross) - Number(s.mrr_apple_net);
-    const googleComm = Number(s.mrr_google_gross) - Number(s.mrr_google_net);
-    const stripeComm = Number(s.mrr_stripe_gross) - Number(s.mrr_stripe_net);
+    const appleRef = Number(s.refunds_net_apple || 0);
+    const googleRef = Number(s.refunds_net_google || 0);
+    const stripeRef = Number(s.refunds_net_stripe || 0);
+    const appleComm = Number(s.mrr_apple_gross) - Number(s.mrr_apple_net) - appleRef;
+    const googleComm = Number(s.mrr_google_gross) - Number(s.mrr_google_net) - googleRef;
+    const stripeComm = Number(s.mrr_stripe_gross) - Number(s.mrr_stripe_net) - stripeRef;
     const totalGross = Number(s.mrr_gross);
     const totalComm = Number(s.total_commissions);
     const rate = totalGross > 0 ? (totalComm / totalGross) * 100 : 0;
@@ -61,11 +66,14 @@ export function CommissionsBreakdownChart({ data }: CommissionsBreakdownChartPro
     let projectedExtra = 0;
     if (is_stale && row) {
       const projAppleComm =
-        (row.fields.mrr_apple_gross?.projected || 0) - (row.fields.mrr_apple_net?.projected || 0);
+        (row.fields.mrr_apple_gross?.projected || 0) - (row.fields.mrr_apple_net?.projected || 0) -
+        (row.fields.refunds_net_apple?.projected ?? appleRef);
       const projGoogleComm =
-        (row.fields.mrr_google_gross?.projected || 0) - (row.fields.mrr_google_net?.projected || 0);
+        (row.fields.mrr_google_gross?.projected || 0) - (row.fields.mrr_google_net?.projected || 0) -
+        (row.fields.refunds_net_google?.projected ?? googleRef);
       const projStripeComm =
-        (row.fields.mrr_stripe_gross?.projected || 0) - (row.fields.mrr_stripe_net?.projected || 0);
+        (row.fields.mrr_stripe_gross?.projected || 0) - (row.fields.mrr_stripe_net?.projected || 0) -
+        (row.fields.refunds_net_stripe?.projected ?? stripeRef);
       const projTotalComm = projAppleComm + projGoogleComm + projStripeComm;
       projectedExtra = Math.max(0, Math.round(projTotalComm - totalComm));
     }

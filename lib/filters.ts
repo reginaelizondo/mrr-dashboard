@@ -21,6 +21,20 @@ const SOURCE_NET_FIELDS: Record<Source, keyof MrrDailySnapshot> = {
   stripe: 'mrr_stripe_net',
 };
 
+// Refunds per store (migration 041): gross basis (returned to the customer) and
+// net basis (what the store claws back from the deposit — subtracted in *_net).
+const SOURCE_REFUNDS_FIELDS: Record<Source, keyof MrrDailySnapshot> = {
+  apple: 'refunds_apple',
+  google: 'refunds_google',
+  stripe: 'refunds_stripe',
+};
+
+const SOURCE_REFUNDS_NET_FIELDS: Record<Source, keyof MrrDailySnapshot> = {
+  apple: 'refunds_net_apple',
+  google: 'refunds_net_google',
+  stripe: 'refunds_net_stripe',
+};
+
 const REGION_FIELDS: Record<Region, keyof MrrDailySnapshot> = {
   us_canada: 'mrr_us_canada',
   mexico: 'mrr_mexico',
@@ -70,13 +84,23 @@ export function applyFilters(
       filtered.mrr_net = sources.reduce(
         (sum, s) => sum + Number(snapshot[SOURCE_NET_FIELDS[s]] || 0), 0
       );
-      filtered.total_commissions = filtered.mrr_gross - filtered.mrr_net;
+      // Per-store net already has that store's refunds (net basis) subtracted
+      // (migration 041), so commissions = gross − net − refunds_net.
+      filtered.total_refunds = sources.reduce(
+        (sum, s) => sum + Number(snapshot[SOURCE_REFUNDS_FIELDS[s]] || 0), 0
+      );
+      filtered.total_refunds_net = sources.reduce(
+        (sum, s) => sum + Number(snapshot[SOURCE_REFUNDS_NET_FIELDS[s]] || 0), 0
+      );
+      filtered.total_commissions = filtered.mrr_gross - filtered.mrr_net - filtered.total_refunds_net;
 
       // Zero out excluded source fields
       for (const src of ALL_SOURCES) {
         if (!sources.includes(src)) {
           (filtered as Record<string, unknown>)[SOURCE_GROSS_FIELDS[src]] = 0;
           (filtered as Record<string, unknown>)[SOURCE_NET_FIELDS[src]] = 0;
+          (filtered as Record<string, unknown>)[SOURCE_REFUNDS_FIELDS[src]] = 0;
+          (filtered as Record<string, unknown>)[SOURCE_REFUNDS_NET_FIELDS[src]] = 0;
         }
       }
     }
@@ -170,6 +194,7 @@ export function computeTotals(snapshots: MrrDailySnapshot[]) {
       commissions: 0,
       taxes: 0,
       refunds: 0,
+      refundsNet: 0,
       disputes: 0,
       newSubs: 0,
       renewals: 0,
@@ -200,6 +225,7 @@ export function computeTotals(snapshots: MrrDailySnapshot[]) {
     commissions: sumField(snapshots, 'total_commissions'),
     taxes: sumField(snapshots, 'total_taxes'),
     refunds: sumField(snapshots, 'total_refunds'),
+    refundsNet: sumField(snapshots, 'total_refunds_net'),
     disputes: sumField(snapshots, 'total_disputes'),
     newSubs: sumField(snapshots, 'new_subscriptions'),
     renewals: sumField(snapshots, 'renewals'),

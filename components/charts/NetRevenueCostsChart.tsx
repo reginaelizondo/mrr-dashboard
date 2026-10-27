@@ -20,9 +20,11 @@ import type { MrrDailySnapshot } from '@/types';
 
 /**
  * Net MRR view: same shape as RevenueCostsChart but uses mrr_net on top
- * and stacks all gross→net deductions (commissions + taxes + refunds + disputes)
- * as a single negative bar so the visual identity holds: positive bar + extra
- * (projection) + negative deductions.
+ * (gross − commissions − refunds of the month, migration 041) and stacks all
+ * gross→net deductions (commissions + taxes + refunds + disputes) as a single
+ * negative bar so the visual identity holds: positive bar + extra (projection)
+ * + negative deductions. Refunds in the stack are the gross basis (what the
+ * customer got back); mrr_net subtracts the net basis (total_refunds_net).
  */
 
 interface NetRevenueCostsChartProps {

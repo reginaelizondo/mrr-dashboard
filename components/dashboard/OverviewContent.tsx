@@ -90,7 +90,7 @@ export function OverviewContent({ snapshots }: { snapshots: MrrDailySnapshot[] }
           value={netRunRate}
           icon={TrendingUp}
           accentColor="teal"
-          subtitle={`Net run-rate · last full month (${runRateMonth}) × 12`}
+          subtitle={`After commissions & refunds · last full month (${runRateMonth}) × 12`}
         />
         <MetricCard
           label="Gross Revenue"
@@ -111,6 +111,7 @@ export function OverviewContent({ snapshots }: { snapshots: MrrDailySnapshot[] }
           value={totals.refunds}
           icon={RotateCcw}
           accentColor="rose"
+          subtitle={`Returned to customers · $${Math.round(totals.refundsNet).toLocaleString()} net deducted from MRR`}
         />
       </div>
 
