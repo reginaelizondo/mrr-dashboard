@@ -13,7 +13,7 @@ export const maxDuration = 30;
  *      guarda la corrida y sus pendientes; publicar=true los manda a Slack al momento (VOBO del mismo día).
  * GET  ?agente=Oli&dias=7   lo que Pepis decidió en Slack (hecho · manana · no) para que el agente actúe.
  */
-const AGENTES = new Set(['Oli', 'Tere', 'Marco', 'Quina', 'Sol', 'Ciro', 'Dalia', 'Mila', 'Rosa', 'Coco', 'Nora', 'Paco', 'Flor', 'Cobra', 'Leo']);
+const AGENTES = new Set(['Oli', 'Tere', 'Marco', 'Quina', 'Sol', 'Ciro', 'Dalia', 'Mila', 'Rosa', 'Coco', 'Nora', 'Paco', 'Flor', 'Cobra', 'Leo', 'Tesa', 'Sela']);
 const auth = (r: NextRequest) => !!process.env.BIZOPS_BRIEF_SECRET && r.headers.get('authorization') === `Bearer ${process.env.BIZOPS_BRIEF_SECRET}`;
 
 export async function POST(request: NextRequest) {
