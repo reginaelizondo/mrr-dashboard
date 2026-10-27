@@ -12,7 +12,11 @@ import { countSyncedRecords } from '@/lib/sync/sync-log';
 import { repriceAppleIntroSkus } from '@/lib/sync/reprice-intro';
 import { applyRealNetFromMV } from '@/lib/sync/apply-real-net';
 
-export const maxDuration = 300;
+// 800s (Pro + Fluid compute). Was 300 and the run sat at 287-296s on good days
+// and timed out (sync_log stuck in 'running') about half the days of Oct-2026;
+// the kinedu-db task alone (sync → reprice → realNet → refunds → 3 snapshots)
+// takes ~4-5 min now that the tables are bigger.
+export const maxDuration = 800;
 
 /**
  * Consolidated daily cron — replaces the 5 individual daily crons so we stay
