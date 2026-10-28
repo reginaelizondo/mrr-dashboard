@@ -14,7 +14,7 @@ import { todayMx } from '@/lib/kpi/period';
 export const BRIEF_CHANNEL = () => process.env.BIZOPS_BRIEF_CHANNEL ?? process.env.ESTELA_SLACK_CHANNEL ?? 'C0CAJT405R7';
 /** Agentes con canal propio: sus pendientes no van al brief de finanzas sino a su canal (nómina → #bizops-rh-agentes). */
 const RH = () => process.env.BIZOPS_RH_CHANNEL ?? 'C0CAGQN5FKL';
-const CANAL_POR_AGENTE: Record<string, () => string> = { Quina: RH, Rosa: RH, Coco: RH, Fito: RH };
+const CANAL_POR_AGENTE: Record<string, () => string> = { Quina: RH, Rosa: RH, Coco: RH, Fito: RH, Ruth: RH };
 export const canalDe = (agente: string) => (CANAL_POR_AGENTE[agente] ?? BRIEF_CHANNEL)();
 /** Un pendiente con ref "rh:…" va a #bizops-rh-agentes aunque lo mande un agente de finanzas (Dalia: todo lo de Coba es de Paola). */
 export const esRH = (i: { agente: string; ref: string }) => !!CANAL_POR_AGENTE[i.agente] || i.ref.startsWith('rh:');
@@ -31,7 +31,15 @@ export interface Item extends Required<Pick<ItemIn, 'ref' | 'texto'>> {
 }
 
 /** Agentes que deben correr cada día hábil: si no reportan, el brief lo dice. */
-const DIARIOS = ['Oli', 'Tere'];
+const DIARIOS = ['Oli', 'Tina', 'Celia', 'Ruth'];
+/** Pepis habla con 4 jefas (27-oct); los agentes de cada equipo no salen con su nombre en Slack. */
+export const JEFAS: Record<string, { area: string; emoji: string; equipo: string[] }> = {
+  Oli: { area: 'Bandeja', emoji: '📥', equipo: ['Oli', 'Tere', 'Dalia'] },
+  Tina: { area: 'Tesorería', emoji: '💸', equipo: ['Marco', 'Flor', 'Mila', 'Sol', 'Sela', 'Cobra'] },
+  Celia: { area: 'Cierre y cumplimiento', emoji: '📚', equipo: ['Ciro', 'Tesa', 'Greta', 'Nora', 'Paco', 'Vera', 'Leo'] },
+  Ruth: { area: 'RH', emoji: '👥', equipo: ['Quina', 'Rosa', 'Coco', 'Fito'] },
+};
+export const jefaDe = (agente: string) => Object.keys(JEFAS).find((j) => j === agente || JEFAS[j].equipo.includes(agente)) ?? agente;
 const ORDEN: Record<string, number> = { urgente: 0, decide: 1, info: 2 };
 const DIAS = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
 const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
@@ -90,7 +98,7 @@ function itemBlocks(it: Item, hoy: string): SlackBlock[] {
   if (it.propuesta) {
     // Propuesta con destino (Tere): Pepis acepta, escribe otra carpeta o dice que no se guarda
     return [
-      { type: 'section', text: { type: 'mrkdwn', text: `${it.emoji ?? '📁'} *${it.texto}*\nPropongo guardar en: \`${it.propuesta}\`\n${it.agente} · ${edad}${abrir}` } },
+      { type: 'section', text: { type: 'mrkdwn', text: `${it.emoji ?? '📁'} *${it.texto}*\nPropongo guardar en: \`${it.propuesta}\`\n${jefaDe(it.agente)} · ${edad}${abrir}` } },
       {
         type: 'actions', block_id: `bz_${it.id}`,
         elements: [
@@ -102,7 +110,7 @@ function itemBlocks(it: Item, hoy: string): SlackBlock[] {
     ] as SlackBlock[];
   }
   return [
-    { type: 'section', text: { type: 'mrkdwn', text: `${it.emoji ?? '•'} *${it.texto}*\n${it.agente} · ${edad}${abrir}` } },
+    { type: 'section', text: { type: 'mrkdwn', text: `${it.emoji ?? '•'} *${it.texto}*\n${jefaDe(it.agente)} · ${edad}${abrir}` } },
     {
       type: 'actions', block_id: `bz_${it.id}`,
       elements: [
@@ -117,16 +125,26 @@ function itemBlocks(it: Item, hoy: string): SlackBlock[] {
 export async function armarBrief(hoy = todayMx()): Promise<{ message: SlackMessage; pendientes: number }> {
   const sb = createServerClient();
   const { data: its } = await sb.from('bizops_items').select('*').in('estado', ['pendiente', 'manana']);
-  const items = ((its ?? []) as Item[]).filter((i) => !esRH(i)).sort((a, b) => ORDEN[a.prioridad] - ORDEN[b.prioridad] || a.primera_vez.localeCompare(b.primera_vez));
+  const orden = Object.keys(JEFAS);
+  const items = ((its ?? []) as Item[]).filter((i) => !esRH(i)).sort((a, b) => ORDEN[a.prioridad] - ORDEN[b.prioridad] || orden.indexOf(jefaDe(a.agente)) - orden.indexOf(jefaDe(b.agente)) || a.primera_vez.localeCompare(b.primera_vez));
   const { data: runs } = await sb.from('bizops_runs').select('agente, semaforo, resumen, created_at').eq('fecha', hoy).order('created_at', { ascending: false });
   const ultima = new Map<string, { semaforo: string; resumen: string | null }>();
   for (const r of (runs ?? []) as { agente: string; semaforo: string; resumen: string | null }[]) if (!ultima.has(r.agente)) ultima.set(r.agente, r);
   const dow = new Date(`${hoy}T12:00:00Z`).getUTCDay();
   const salud: string[] = [];
   // A las 9:15 un agente puede seguir pendiente (Mac dormida): no es falla todavía. Cuando corra, contesta en el hilo de este mensaje.
-  if (dow >= 1 && dow <= 5) for (const a of DIARIOS) if (!ultima.has(a)) salud.push(`⏳ ${a} aún no corre`);
   ultima.delete('__brief__');
-  for (const [a, r] of ultima) if (a !== '__brief__') salud.push(`${r.semaforo} ${a}${r.resumen ? `: ${r.resumen.slice(0, 50)}` : ''}`);
+  // Una línea por jefa: el peor semáforo de su equipo hoy y el resumen de la jefa (o "N corrieron")
+  const peso: Record<string, number> = { '🟢': 0, '🟡': 1, '🔴': 2 };
+  for (const [j, { emoji, equipo }] of Object.entries(JEFAS)) {
+    const corrieron = equipo.filter((a) => ultima.has(a));
+    const propia = ultima.get(j);
+    if (!corrieron.length && !propia) { if (dow >= 1 && dow <= 5) salud.push(`⏳ ${emoji} ${j} aún no corre`); continue; }
+    const sems = [...corrieron.map((a) => ultima.get(a)!.semaforo), propia?.semaforo].filter(Boolean) as string[];
+    const peor = sems.sort((a, b) => (peso[b] ?? 0) - (peso[a] ?? 0))[0] ?? '🟢';
+    const res = propia?.resumen && j !== 'Oli' ? propia.resumen : `${corrieron.length} de su equipo corrieron hoy`;
+    salud.push(`${peor} ${emoji} ${j}: ${res.slice(0, 60)}`);
+  }
 
   const urg = items.filter((i) => i.prioridad === 'urgente').length;
   for (const [a] of ultima) if (a === '__brief__') ultima.delete(a);
@@ -137,7 +155,7 @@ export async function armarBrief(hoy = todayMx()): Promise<{ message: SlackMessa
   for (const it of items.slice(0, MAX)) blocks.push(...itemBlocks(it, hoy));
   if (items.length > MAX) blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `+${items.length - MAX} más: aparecen mañana o en los borradores de Gmail.` }] } as SlackBlock);
   blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `${salud.join('\n') || 'Sin corridas hoy todavía'}\n🤖 Los agentes no envían ni pagan. ✅ Hecho = ya lo resolviste · ⏭️ Mañana = vuelve a salir · ✖ No aplica = el agente aprende` }] } as SlackBlock);
-  const text = `${titulo}\n${items.slice(0, MAX).map((i) => `${i.emoji ?? '•'} ${i.texto} (${i.agente})`).join('\n')}`;
+  const text = `${titulo}\n${items.slice(0, MAX).map((i) => `${i.emoji ?? '•'} ${i.texto} (${jefaDe(i.agente)})`).join('\n')}`;
   return { message: { text: text.slice(0, 2900), blocks }, pendientes: items.length };
 }
 
@@ -149,7 +167,7 @@ export async function publicar(message: SlackMessage, canal = BRIEF_CHANNEL()) {
 
 /** Pendiente del mismo día que no puede esperar al brief de mañana (VOBO de pagos o de nómina). */
 export function mensajeInmediato(agente: string, semaforo: Semaforo, resumen: string, items: Item[], hoy = todayMx()): SlackMessage {
-  const titulo = `${semaforo} ${agente} · ${resumen}`.slice(0, 150);
+  const titulo = `${semaforo} ${jefaDe(agente)} · ${resumen}`.slice(0, 150);
   const blocks: SlackBlock[] = [{ type: 'header', text: { type: 'plain_text', text: titulo } } as SlackBlock];
   for (const it of items.filter((i) => i.estado === 'pendiente').slice(0, 8)) blocks.push(...itemBlocks(it, hoy));
   return { text: titulo, blocks };
@@ -184,7 +202,7 @@ export async function responderEnHiloSiTarde(agente: string, semaforo: Semaforo,
   await updateChatMessage(token, BRIEF_CHANNEL(), ts, message);
   const pend = items.filter((i) => i.estado === 'pendiente' && !esRH(i));
   if (!pend.length && semaforo === '🟢') return { ok: true, ts };
-  const titulo = `${semaforo} ${agente} ya corrió · ${resumen}`.slice(0, 150);
+  const titulo = `${semaforo} ${jefaDe(agente)} · ${resumen}`.slice(0, 150);
   const blocks: SlackBlock[] = [{ type: 'section', text: { type: 'mrkdwn', text: `*${titulo}*` } } as SlackBlock];
   for (const it of pend.slice(0, 8)) blocks.push(...itemBlocks(it, hoy));
   return postChatMessage(token, BRIEF_CHANNEL(), { text: titulo, blocks }, ts);

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { guardarCorrida, decisiones, publicar, mensajeInmediato, canalDe, esRH, RH_CHANNEL, responderEnHiloSiTarde, SEMAFOROS, type ItemIn, type Semaforo } from '@/lib/bizops/brief';
+import { jefaDe, guardarCorrida, decisiones, publicar, mensajeInmediato, canalDe, esRH, RH_CHANNEL, responderEnHiloSiTarde, SEMAFOROS, type ItemIn, type Semaforo } from '@/lib/bizops/brief';
 
 export const maxDuration = 30;
 
@@ -13,7 +13,7 @@ export const maxDuration = 30;
  *      guarda la corrida y sus pendientes; publicar=true los manda a Slack al momento (VOBO del mismo día).
  * GET  ?agente=Oli&dias=7   lo que Pepis decidió en Slack (hecho · manana · no) para que el agente actúe.
  */
-const AGENTES = new Set(['Oli', 'Tere', 'Marco', 'Quina', 'Sol', 'Ciro', 'Dalia', 'Mila', 'Rosa', 'Coco', 'Nora', 'Paco', 'Flor', 'Cobra', 'Leo', 'Tesa', 'Sela', 'Greta', 'Vera', 'Fito']);
+const AGENTES = new Set(['Oli', 'Tere', 'Marco', 'Quina', 'Sol', 'Ciro', 'Dalia', 'Mila', 'Rosa', 'Coco', 'Nora', 'Paco', 'Flor', 'Cobra', 'Leo', 'Tesa', 'Sela', 'Greta', 'Vera', 'Fito', 'Tina', 'Celia', 'Ruth']);
 const auth = (r: NextRequest) => !!process.env.BIZOPS_BRIEF_SECRET && r.headers.get('authorization') === `Bearer ${process.env.BIZOPS_BRIEF_SECRET}`;
 
 export async function POST(request: NextRequest) {
@@ -28,11 +28,11 @@ export async function POST(request: NextRequest) {
     let posted: { ok: boolean; ts?: string; error?: string } | null = null;
     const nota = typeof b.nota === 'string' ? b.nota.trim().slice(0, 2500) : '';
     if (nota) {
-      const titulo = `${semaforo} ${agente} · ${String(b.resumen ?? '')}`.slice(0, 150);
+      const titulo = `${semaforo} ${jefaDe(agente)} · ${String(b.resumen ?? '')}`.slice(0, 150);
       posted = await publicar({ text: `${titulo}\n${nota}`.slice(0, 2900), blocks: [
         { type: 'header', text: { type: 'plain_text', text: titulo } },
         { type: 'section', text: { type: 'mrkdwn', text: nota } },
-        { type: 'context', elements: [{ type: 'mrkdwn', text: `🤖 ${agente} · propone, no envía. Pepis decide.` }] },
+        { type: 'context', elements: [{ type: 'mrkdwn', text: `🤖 ${jefaDe(agente)} · propone, no envía. Pepis decide.` }] },
       ] }, canalDe(agente));
     } else if (b.publicar && guardados.some((i) => i.estado === 'pendiente')) {
       posted = await publicar(mensajeInmediato(agente, semaforo, String(b.resumen ?? ''), canalDe(agente) === RH_CHANNEL() ? guardados : guardados.filter((i) => !esRH(i))), canalDe(agente));
