@@ -17,6 +17,13 @@ import { unstable_cache } from 'next/cache';
  *
  * Validated 2026-06-16: per-month total matches mrr_gross within ~$12 (0.00%),
  * the residual being pre-lookback lifetime charges (negligible).
+ *
+ * 2026-10-27: the aggregation moved to Postgres (RPC `sku_breakdown_monthly`,
+ * migration 043). Pulling every charge of the window into Node (272K rows in
+ * 272 sequential pages) was dropping the connection mid-way on Vercel
+ * ("fetch failed") and the tab would not open. Until the migration is applied
+ * the legacy path still runs, now fetching months in parallel with retries and
+ * FAILING LOUDLY instead of silently rendering partial (understated) numbers.
  */
 
 const PLAN_PERIOD_MONTHS: Record<string, number> = {
@@ -49,6 +56,16 @@ export type SkuBreakdown = {
   totals: { rev: number[]; vol: number[] }; // per-month grand totals (== mrr_gross / active_subscriptions)
 };
 
+/** One aggregated cell: a SKU's contribution to one month (what the RPC returns). */
+type AggRow = {
+  sku: string;
+  plan_type: string;
+  month: string; // 'YYYY-MM-DD' (first of month)
+  new_rev: number;
+  rec_rev: number;
+  vol: number;
+};
+
 // Month math on 'YYYY-MM' strings — TIMEZONE-SAFE (no Date objects, which would
 // shift across UTC/local boundaries and silently drop a month from the range).
 function addMonthsStr(ym: string, delta: number): string {
@@ -74,58 +91,101 @@ function monthList(start: string, end: string): string[] {
   return out;
 }
 
-async function compute(startMonth: string, endMonth: string): Promise<SkuBreakdown> {
+// ─── Primary path: Postgres does the spreading (migration 043) ───────────────
+
+async function loadAggViaRpc(startMonth: string, endMonth: string): Promise<AggRow[] | null> {
   const supabase = createServerClient();
+  const { data, error } = await supabase.rpc('sku_breakdown_monthly', {
+    p_start_month: `${startMonth}-01`,
+    p_end_month: `${endMonth}-01`,
+  });
+  if (error) {
+    // Function not created yet (migration 043 pending) → legacy path. Anything
+    // else is a real failure and must surface.
+    const msg = `${error.code || ''} ${error.message || ''}`;
+    if (/PGRST202|42883|Could not find the function|does not exist/i.test(msg)) {
+      console.warn('[sku-breakdown] RPC sku_breakdown_monthly missing (run migration 043) — using legacy fetch');
+      return null;
+    }
+    throw new Error(`[sku-breakdown] RPC error: ${error.message}`);
+  }
+  const rows = (data || []) as AggRow[];
+  console.log(`[sku-breakdown] RPC returned ${rows.length} sku×month cells (${startMonth} → ${endMonth})`);
+  return rows;
+}
 
-  // Lookback: 13 months before the first displayed month captures every yearly
-  // sub still spreading into it. Lifetime (60mo) is negligible (~$12/mo total).
-  const lookbackFrom = addMonthsStr(startMonth, -13);
-  // Exclusive upper bound = first day of the month AFTER endMonth (avoids
-  // building invalid dates like "2026-06-31").
-  const fetchToExclusive = addMonthsStr(endMonth, 1);
+// ─── Legacy path: pull charges and spread in Node (parallel by month, retries) ─
 
-  type Row = {
-    id: number;
-    sku: string | null;
-    plan_type: string | null;
-    plan_name: string | null;
-    source: string | null;
-    amount_gross: number | null;
-    transaction_date: string;
-    is_new_subscription: boolean | null;
-  };
+type Row = {
+  id: number;
+  sku: string | null;
+  plan_type: string | null;
+  plan_name: string | null;
+  source: string | null;
+  amount_gross: number | null;
+  transaction_date: string;
+  is_new_subscription: boolean | null;
+};
 
+async function fetchChargesForMonth(fromIncl: string, toExcl: string): Promise<Row[]> {
+  const supabase = createServerClient();
   const rows: Row[] = [];
   let lastId = 0;
   for (;;) {
-    const { data, error } = await supabase
-      .from('transactions')
-      .select('id,sku,plan_type,plan_name,source,amount_gross,transaction_date,is_new_subscription')
-      .eq('transaction_type', 'charge')
-      .gte('transaction_date', lookbackFrom)
-      .lt('transaction_date', fetchToExclusive)
-      .gt('id', lastId)
-      .order('id', { ascending: true })
-      .limit(1000);
-    if (error) {
-      console.error('[sku-breakdown] query error:', error.message);
-      break;
+    let page: Row[] | null = null;
+    let lastErr = '';
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      const { data, error } = await supabase
+        .from('transactions')
+        .select('id,sku,plan_type,plan_name,source,amount_gross,transaction_date,is_new_subscription')
+        .eq('transaction_type', 'charge')
+        .gte('transaction_date', fromIncl)
+        .lt('transaction_date', toExcl)
+        .gt('id', lastId)
+        .order('id', { ascending: true })
+        .limit(1000);
+      if (!error) {
+        page = (data || []) as Row[];
+        break;
+      }
+      lastErr = error.message;
+      await new Promise((r) => setTimeout(r, 300 * attempt));
     }
-    if (!data || data.length === 0) break;
-    rows.push(...(data as Row[]));
-    lastId = Number(data[data.length - 1].id);
-    if (data.length < 1000) break;
+    if (page === null) throw new Error(`[sku-breakdown] transactions query failed (${fromIncl}): ${lastErr}`);
+    if (page.length === 0) break;
+    rows.push(...page);
+    lastId = Number(page[page.length - 1].id);
+    if (page.length < 1000) break;
   }
-  console.log(`[sku-breakdown] fetched ${rows.length} charges (${lookbackFrom} → <${fetchToExclusive})`);
+  return rows;
+}
+
+async function loadAggLegacy(startMonth: string, endMonth: string): Promise<AggRow[]> {
+  // Lookback: 13 months before the first displayed month captures every yearly
+  // sub still spreading into it. Lifetime (60mo) is negligible (~$12/mo total).
+  const lookbackFrom = addMonthsStr(startMonth, -13);
+  // Exclusive upper bound = first day of the month AFTER endMonth.
+  const fetchToExclusive = addMonthsStr(endMonth, 1);
+
+  // One paginated fetch per calendar month, 6 at a time.
+  const fetchMonths = monthList(lookbackFrom.slice(0, 7), addMonthsStr(fetchToExclusive.slice(0, 7), -1).slice(0, 7));
+  const rows: Row[] = [];
+  const queue = [...fetchMonths];
+  await Promise.all(
+    Array.from({ length: 6 }, async () => {
+      for (;;) {
+        const m = queue.shift();
+        if (!m) return;
+        const got = await fetchChargesForMonth(m, addMonthsStr(m.slice(0, 7), 1));
+        rows.push(...got);
+      }
+    })
+  );
+  console.log(`[sku-breakdown] legacy fetched ${rows.length} charges (${lookbackFrom} → <${fetchToExclusive})`);
 
   const months = monthList(startMonth, endMonth);
-  const mIdx: Record<string, number> = {};
-  months.forEach((m, i) => (mIdx[m.slice(0, 7)] = i));
-
-  const series: Record<string, SkuSeries> = {};
-  const planBySku: Record<string, string> = {};
-  const totalsRev = months.map(() => 0);
-  const totalsVol = months.map(() => 0);
+  const wanted = new Set(months.map((m) => m.slice(0, 7)));
+  const cells = new Map<string, AggRow>();
 
   for (const t of rows) {
     const planName = (t.plan_name || '').toLowerCase();
@@ -136,15 +196,13 @@ async function compute(startMonth: string, endMonth: string): Promise<SkuBreakdo
       if (planName === 'none') continue;
     }
     // Match the snapshot exactly: drop ONLY literal plan_type='other'. Charges
-    // with a null plan_type are KEPT (treated as monthly, pm=1) — the snapshot
-    // counts them too, so dropping them would understate the total.
+    // with a null plan_type are KEPT (treated as monthly, pm=1).
     if (t.plan_type === 'other') continue;
     const planType = t.plan_type || 'other';
 
     const pm = PLAN_PERIOD_MONTHS[planType] || 1;
-    const d = new Date(t.transaction_date + 'T00:00:00Z');
-    const ty = d.getUTCFullYear();
-    const tm = d.getUTCMonth();
+    const [ty, tm1] = t.transaction_date.split('-').map(Number);
+    const tm = tm1 - 1;
     const contrib = (Number(t.amount_gross) || 0) / pm;
     const nCov = pm < 1 ? 1 : Math.ceil(pm);
     const sku = t.sku || '(sin SKU)';
@@ -153,27 +211,62 @@ async function compute(startMonth: string, endMonth: string): Promise<SkuBreakdo
       const cy = ty + Math.floor((tm + k) / 12);
       const cm = (tm + k) % 12;
       const key = `${cy}-${String(cm + 1).padStart(2, '0')}`;
-      const i = mIdx[key];
-      if (i === undefined) continue;
-
-      if (!series[sku]) {
-        series[sku] = { newRev: months.map(() => 0), recRev: months.map(() => 0), vol: months.map(() => 0) };
-        planBySku[sku] = planType;
+      if (!wanted.has(key)) continue;
+      const cellKey = `${sku}\u0000${planType}\u0000${key}`;
+      let cell = cells.get(cellKey);
+      if (!cell) {
+        cell = { sku, plan_type: planType, month: `${key}-01`, new_rev: 0, rec_rev: 0, vol: 0 };
+        cells.set(cellKey, cell);
       }
-      if (t.is_new_subscription) series[sku].newRev[i] += contrib;
-      else series[sku].recRev[i] += contrib;
-      series[sku].vol[i] += 1;
-      totalsRev[i] += contrib;
-      totalsVol[i] += 1;
+      if (t.is_new_subscription) cell.new_rev += contrib;
+      else cell.rec_rev += contrib;
+      cell.vol += 1;
     }
+  }
+  return [...cells.values()];
+}
+
+// ─── Assemble the series the chart consumes ──────────────────────────────────
+
+async function compute(startMonth: string, endMonth: string): Promise<SkuBreakdown> {
+  const agg = (await loadAggViaRpc(startMonth, endMonth)) ?? (await loadAggLegacy(startMonth, endMonth));
+
+  const months = monthList(startMonth, endMonth);
+  const mIdx: Record<string, number> = {};
+  months.forEach((m, i) => (mIdx[m.slice(0, 7)] = i));
+
+  const series: Record<string, SkuSeries> = {};
+  // A SKU can carry more than one plan_type in the data; label it with the one
+  // that brings the most revenue.
+  const revByPlan: Record<string, Record<string, number>> = {};
+  const totalsRev = months.map(() => 0);
+  const totalsVol = months.map(() => 0);
+
+  for (const r of agg) {
+    const i = mIdx[String(r.month).slice(0, 7)];
+    if (i === undefined) continue;
+    const newRev = Number(r.new_rev) || 0;
+    const recRev = Number(r.rec_rev) || 0;
+    const vol = Number(r.vol) || 0;
+    if (!series[r.sku]) {
+      series[r.sku] = { newRev: months.map(() => 0), recRev: months.map(() => 0), vol: months.map(() => 0) };
+      revByPlan[r.sku] = {};
+    }
+    series[r.sku].newRev[i] += newRev;
+    series[r.sku].recRev[i] += recRev;
+    series[r.sku].vol[i] += vol;
+    revByPlan[r.sku][r.plan_type] = (revByPlan[r.sku][r.plan_type] || 0) + newRev + recRev;
+    totalsRev[i] += newRev + recRev;
+    totalsVol[i] += vol;
   }
 
   const skus: SkuMeta[] = Object.keys(series)
     .map((sku) => {
       const s = series[sku];
+      const planType = Object.entries(revByPlan[sku]).sort((a, b) => b[1] - a[1])[0]?.[0] || 'other';
       return {
         sku,
-        planType: planBySku[sku],
+        planType,
         totalRev: s.newRev.reduce((a, b) => a + b, 0) + s.recRev.reduce((a, b) => a + b, 0),
         totalVol: s.vol.reduce((a, b) => a + b, 0),
       };
@@ -190,7 +283,7 @@ async function compute(startMonth: string, endMonth: string): Promise<SkuBreakdo
   };
 }
 
-const cached = unstable_cache(compute, ['sku-breakdown', 'v3'], { revalidate: 3600, tags: ['snapshots'] });
+const cached = unstable_cache(compute, ['sku-breakdown', 'v4'], { revalidate: 3600, tags: ['snapshots'] });
 
 /** start/end are 'YYYY-MM' month strings. */
 export function getSkuBreakdown(startMonth: string, endMonth: string): Promise<SkuBreakdown> {

@@ -1,4 +1,7 @@
 export const dynamic = 'force-dynamic';
+// Headroom for the legacy (pre-migration-043) path, which still pulls every
+// charge of the window; the RPC path answers in a few seconds.
+export const maxDuration = 120;
 
 import { Suspense } from 'react';
 import { format, subMonths } from 'date-fns';
