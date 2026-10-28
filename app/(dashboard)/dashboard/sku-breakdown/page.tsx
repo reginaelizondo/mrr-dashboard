@@ -6,6 +6,8 @@ export const maxDuration = 120;
 import { Suspense } from 'react';
 import { format, subMonths } from 'date-fns';
 import { getSkuBreakdown } from '@/lib/sku-breakdown';
+import { getSkuMix } from '@/lib/sku-mix';
+import { SkuMixByStore } from '@/components/dashboard/SkuMixByStore';
 import { SkuBreakdownContent } from '@/components/dashboard/SkuBreakdownContent';
 import { ManualSyncButton } from '@/components/dashboard/ManualSyncButton';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -20,7 +22,7 @@ export default async function SkuBreakdownPage({
   const endMonth = params.end || format(now, 'yyyy-MM');
   const startMonth = params.start || format(subMonths(now, 17), 'yyyy-MM');
 
-  const data = await getSkuBreakdown(startMonth, endMonth);
+  const [data, mix] = await Promise.all([getSkuBreakdown(startMonth, endMonth), getSkuMix(startMonth, endMonth)]);
 
   return (
     <div className="space-y-6">
@@ -39,6 +41,8 @@ export default async function SkuBreakdownPage({
       </div>
 
       <Suspense fallback={<Skeleton className="h-96 w-full" />}>
+        <SkuMixByStore data={mix} />
+        <div className="h-6" />
         <SkuBreakdownContent data={data} />
       </Suspense>
     </div>
