@@ -1,5 +1,6 @@
 import { createServerClient } from '@/lib/supabase/server';
 import { unstable_cache } from 'next/cache';
+import { hasSkuFilters, type SkuFilters } from '@/lib/sku-filters';
 
 /**
  * SKU-level breakdown of MRR, on the SAME accrual basis as the daily snapshots
@@ -93,18 +94,23 @@ function monthList(start: string, end: string): string[] {
 
 // ─── Primary path: Postgres does the spreading (migration 043) ───────────────
 
-async function loadAggViaRpc(startMonth: string, endMonth: string): Promise<AggRow[] | null> {
+async function loadAggViaRpc(startMonth: string, endMonth: string, filters: SkuFilters): Promise<AggRow[] | null> {
   const supabase = createServerClient();
+  // Filter params exist since migration 045; with the 043 signature this call
+  // fails with PGRST202 and we fall back to the legacy path (which filters in Node).
   const { data, error } = await supabase.rpc('sku_breakdown_monthly', {
     p_start_month: `${startMonth}-01`,
     p_end_month: `${endMonth}-01`,
+    p_sources: filters.sources.length ? filters.sources : null,
+    p_regions: filters.regions.length ? filters.regions : null,
+    p_countries: filters.countries.length ? filters.countries : null,
   });
   if (error) {
     // Function not created yet (migration 043 pending) → legacy path. Anything
     // else is a real failure and must surface.
     const msg = `${error.code || ''} ${error.message || ''}`;
-    if (/PGRST202|42883|Could not find the function|does not exist/i.test(msg)) {
-      console.warn('[sku-breakdown] RPC sku_breakdown_monthly missing (run migration 043) — using legacy fetch');
+    if (/PGRST202|PGRST203|42883|Could not find the function|does not exist|best candidate/i.test(msg)) {
+      console.warn('[sku-breakdown] RPC sku_breakdown_monthly missing or old signature (run migration 045) — using legacy fetch');
       return null;
     }
     throw new Error(`[sku-breakdown] RPC error: ${error.message}`);
@@ -122,10 +128,19 @@ type Row = {
   plan_type: string | null;
   plan_name: string | null;
   source: string | null;
+  region: string | null;
+  country_code: string | null;
   amount_gross: number | null;
   transaction_date: string;
   is_new_subscription: boolean | null;
 };
+
+function rowPassesFilters(t: { source: string | null; region: string | null; country_code: string | null }, f: SkuFilters): boolean {
+  if (f.sources.length && !f.sources.includes(t.source || '')) return false;
+  if (f.regions.length && !f.regions.includes(t.region || '')) return false;
+  if (f.countries.length && !f.countries.includes(t.country_code || '')) return false;
+  return true;
+}
 
 async function fetchChargesForMonth(fromIncl: string, toExcl: string): Promise<Row[]> {
   const supabase = createServerClient();
@@ -137,7 +152,7 @@ async function fetchChargesForMonth(fromIncl: string, toExcl: string): Promise<R
     for (let attempt = 1; attempt <= 4; attempt++) {
       const { data, error } = await supabase
         .from('transactions')
-        .select('id,sku,plan_type,plan_name,source,amount_gross,transaction_date,is_new_subscription')
+        .select('id,sku,plan_type,plan_name,source,region,country_code,amount_gross,transaction_date,is_new_subscription')
         .eq('transaction_type', 'charge')
         .gte('transaction_date', fromIncl)
         .lt('transaction_date', toExcl)
@@ -160,7 +175,7 @@ async function fetchChargesForMonth(fromIncl: string, toExcl: string): Promise<R
   return rows;
 }
 
-async function loadAggLegacy(startMonth: string, endMonth: string): Promise<AggRow[]> {
+async function loadAggLegacy(startMonth: string, endMonth: string, filters: SkuFilters): Promise<AggRow[]> {
   // Lookback: 13 months before the first displayed month captures every yearly
   // sub still spreading into it. Lifetime (60mo) is negligible (~$12/mo total).
   const lookbackFrom = addMonthsStr(startMonth, -13);
@@ -188,6 +203,7 @@ async function loadAggLegacy(startMonth: string, endMonth: string): Promise<AggR
   const cells = new Map<string, AggRow>();
 
   for (const t of rows) {
+    if (!rowPassesFilters(t, filters)) continue;
     const planName = (t.plan_name || '').toLowerCase();
     if (planName.includes('test')) continue;
     if (t.source === 'stripe') {
@@ -228,8 +244,9 @@ async function loadAggLegacy(startMonth: string, endMonth: string): Promise<AggR
 
 // ─── Assemble the series the chart consumes ──────────────────────────────────
 
-async function compute(startMonth: string, endMonth: string): Promise<SkuBreakdown> {
-  const agg = (await loadAggViaRpc(startMonth, endMonth)) ?? (await loadAggLegacy(startMonth, endMonth));
+async function compute(startMonth: string, endMonth: string, filtersJson: string): Promise<SkuBreakdown> {
+  const filters = JSON.parse(filtersJson) as SkuFilters;
+  const agg = (await loadAggViaRpc(startMonth, endMonth, filters)) ?? (await loadAggLegacy(startMonth, endMonth, filters));
 
   const months = monthList(startMonth, endMonth);
   const mIdx: Record<string, number> = {};
@@ -283,9 +300,15 @@ async function compute(startMonth: string, endMonth: string): Promise<SkuBreakdo
   };
 }
 
-const cached = unstable_cache(compute, ['sku-breakdown', 'v4'], { revalidate: 3600, tags: ['snapshots'] });
+const cached = unstable_cache(compute, ['sku-breakdown', 'v5'], { revalidate: 3600, tags: ['snapshots'] });
 
-/** start/end are 'YYYY-MM' month strings. */
-export function getSkuBreakdown(startMonth: string, endMonth: string): Promise<SkuBreakdown> {
-  return cached(startMonth, endMonth);
+const NO_FILTERS: SkuFilters = { sources: [], regions: [], countries: [] };
+
+/** start/end are 'YYYY-MM' month strings. Filters (store / region / country) are optional. */
+export function getSkuBreakdown(startMonth: string, endMonth: string, filters: SkuFilters = NO_FILTERS): Promise<SkuBreakdown> {
+  // Serialized so the cache key is stable and the args stay JSON-serializable.
+  const f: SkuFilters = hasSkuFilters(filters)
+    ? { sources: [...filters.sources].sort(), regions: [...filters.regions].sort(), countries: [...filters.countries].sort() }
+    : NO_FILTERS;
+  return cached(startMonth, endMonth, JSON.stringify(f));
 }

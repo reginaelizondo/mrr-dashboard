@@ -16,13 +16,32 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatCurrency, SOURCE_COLORS, SOURCE_LABELS } from '@/lib/constants';
 import { ChartExportButton } from '@/components/charts/ChartExportButton';
-import { MIX_STORES, type MixFamily, type MixStore, type SkuMix } from '@/lib/sku-mix';
+import { MIX_STORES, type MixCell, type MixFamily, type MixStore, type SkuMix } from '@/lib/sku-mix';
+import { bucketKey, bucketize, currentYM, fmtPeriod, type SkuGrain } from '@/lib/sku-filters';
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const fmtMonth = (val: string) => {
-  const [y, m] = val.split('-').map(Number);
-  return `${MONTHS[m - 1]} ${String(y).slice(2)}`;
-};
+const fmtMonth = fmtPeriod;
+
+/** Re-bucket monthly cells by period grain (cash counts and gross simply add up). */
+function aggregateByGrain(data: SkuMix, grain: SkuGrain): SkuMix {
+  if (grain === 'month') return data;
+  const { keys, idxOf } = bucketize(data.months, grain);
+  const bucketOfMonth: Record<string, string> = {};
+  data.months.forEach((m, i) => (bucketOfMonth[m] = keys[idxOf[i]]));
+  const map = new Map<string, MixCell>();
+  for (const c of data.cells) {
+    const b = bucketOfMonth[c.month];
+    if (!b) continue;
+    const key = `${b}|${c.source}|${c.family}|${c.kind}`;
+    let cell = map.get(key);
+    if (!cell) {
+      cell = { ...c, month: b, n: 0, gross: 0 };
+      map.set(key, cell);
+    }
+    cell.n += c.n;
+    cell.gross += c.gross;
+  }
+  return { months: keys, cells: [...map.values()] };
+}
 
 const FAMILIES: MixFamily[] = ['anual', 'mensual', 'otro'];
 const FAMILY_LABEL: Record<MixFamily, string> = { anual: 'Yearly', mensual: 'Monthly', otro: 'Other' };
@@ -40,8 +59,8 @@ const emptyAgg = (): Agg => ({
 
 const pct = (part: number, total: number) => (total > 0 ? (100 * part) / total : 0);
 
-export function SkuMixByStore({ data }: { data: SkuMix }) {
-  const { months, cells } = data;
+export function SkuMixByStore({ data, grain = 'month' }: { data: SkuMix; grain?: SkuGrain }) {
+  const { months, cells } = useMemo(() => aggregateByGrain(data, grain), [data, grain]);
   const [scope, setScope] = useState<Scope>('new');
   const [metric, setMetric] = useState<Metric>('n');
 
@@ -64,9 +83,15 @@ export function SkuMixByStore({ data }: { data: SkuMix }) {
     return a;
   }, [months, byMonth]);
 
-  // Latest month is usually the current (partial) one; headline the last full month too.
-  const nowYM = new Date().toISOString().slice(0, 7);
-  const fullMonths = months.filter((m) => m.slice(0, 7) < nowYM);
+  // With a store filter active the other stores are all zeros: hide them.
+  const stores = useMemo(() => {
+    const withData = MIX_STORES.filter((s) => FAMILIES.some((f) => windowAgg[s][f] > 0));
+    return withData.length ? withData : MIX_STORES;
+  }, [windowAgg]);
+
+  // Latest period usually contains the current (partial) month; headline the last full one too.
+  const currentBucket = bucketKey(`${currentYM()}-01`, grain);
+  const fullMonths = months.filter((m) => m !== currentBucket);
   const lastFull = fullMonths[fullMonths.length - 1] || months[months.length - 1];
 
   const fmtVal = (v: number) => (metric === 'gross' ? formatCurrency(v) : Math.round(v).toLocaleString());
@@ -126,8 +151,8 @@ export function SkuMixByStore({ data }: { data: SkuMix }) {
       </CardHeader>
       <CardContent className="space-y-6">
         {/* Headline tiles */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {MIX_STORES.map((s) => {
+        <div className={`grid grid-cols-1 gap-4 ${stores.length === 3 ? 'md:grid-cols-3' : stores.length === 2 ? 'md:grid-cols-2' : ''}`}>
+          {stores.map((s) => {
             const w = windowAgg[s];
             const wTot = w.anual + w.mensual + w.otro;
             const l = byMonth[lastFull]?.[s] || { anual: 0, mensual: 0, otro: 0 };
@@ -157,8 +182,8 @@ export function SkuMixByStore({ data }: { data: SkuMix }) {
         </div>
 
         {/* 100% stacked bars per store */}
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-          {MIX_STORES.map((s) => (
+        <div className={`grid grid-cols-1 gap-4 ${stores.length === 3 ? 'xl:grid-cols-3' : stores.length === 2 ? 'xl:grid-cols-2' : ''}`}>
+          {stores.map((s) => (
             <div key={s}>
               <p className="text-xs font-semibold text-[#0E3687] mb-1">{SOURCE_LABELS[s]} — share by family</p>
               <div className="h-[220px]">
@@ -219,7 +244,7 @@ export function SkuMixByStore({ data }: { data: SkuMix }) {
                   contentStyle={{ borderRadius: 12, border: '1px solid #E2E8F0', fontSize: 12 }}
                 />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
-                {MIX_STORES.map((s) => (
+                {stores.map((s) => (
                   <Line key={s} type="monotone" dataKey={`${s}_pctYearly`} name={SOURCE_LABELS[s]} stroke={SOURCE_COLORS[s]} strokeWidth={2} dot={{ r: 2.5 }} activeDot={{ r: 4 }} />
                 ))}
               </LineChart>

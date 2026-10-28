@@ -1,28 +1,39 @@
 export const dynamic = 'force-dynamic';
-// Headroom for the legacy (pre-migration-043) path, which still pulls every
+// Headroom for the legacy (pre-migration-045) path, which still pulls every
 // charge of the window; the RPC path answers in a few seconds.
 export const maxDuration = 120;
 
 import { Suspense } from 'react';
-import { format, subMonths } from 'date-fns';
 import { getSkuBreakdown } from '@/lib/sku-breakdown';
-import { getSkuMix } from '@/lib/sku-mix';
-import { SkuMixByStore } from '@/components/dashboard/SkuMixByStore';
+import { getSkuDims, getSkuMix } from '@/lib/sku-mix';
+import { parseSkuFilters, resolveSkuGrain, resolveSkuRange } from '@/lib/sku-filters';
 import { SkuBreakdownContent } from '@/components/dashboard/SkuBreakdownContent';
+import { SkuMixByStore } from '@/components/dashboard/SkuMixByStore';
+import { SkuFilterBar } from '@/components/dashboard/SkuFilterBar';
 import { ManualSyncButton } from '@/components/dashboard/ManualSyncButton';
 import { Skeleton } from '@/components/ui/skeleton';
 
 export default async function SkuBreakdownPage({
   searchParams,
 }: {
-  searchParams: Promise<{ start?: string; end?: string }>;
+  searchParams: Promise<{
+    preset?: string; start?: string; end?: string; grain?: string;
+    sources?: string; regions?: string; countries?: string;
+  }>;
 }) {
   const params = await searchParams;
-  const now = new Date();
-  const endMonth = params.end || format(now, 'yyyy-MM');
-  const startMonth = params.start || format(subMonths(now, 17), 'yyyy-MM');
+  const range = resolveSkuRange(params);
+  const grain = resolveSkuGrain(params.grain);
+  const filters = parseSkuFilters(params);
 
-  const [data, mix] = await Promise.all([getSkuBreakdown(startMonth, endMonth), getSkuMix(startMonth, endMonth)]);
+  const [data, mix, dimsRpc] = await Promise.all([
+    getSkuBreakdown(range.start, range.end, filters),
+    getSkuMix(range.start, range.end, filters),
+    getSkuDims(),
+  ]);
+  // Dropdown values: from the RPC (migration 045); before that, from whatever
+  // the legacy mix fetch saw in the window.
+  const dims = dimsRpc ?? mix.dims ?? null;
 
   return (
     <div className="space-y-6">
@@ -40,10 +51,12 @@ export default async function SkuBreakdownPage({
         <ManualSyncButton />
       </div>
 
+      <SkuFilterBar preset={range.preset} start={range.start} end={range.end} grain={grain} filters={filters} dims={dims} monthCount={data.months.length} />
+
       <Suspense fallback={<Skeleton className="h-96 w-full" />}>
-        <SkuMixByStore data={mix} />
+        <SkuMixByStore data={mix} grain={grain} />
         <div className="h-6" />
-        <SkuBreakdownContent data={data} />
+        <SkuBreakdownContent key={`${range.start}-${range.end}-${JSON.stringify(filters)}`} data={data} grain={grain} />
       </Suspense>
     </div>
   );

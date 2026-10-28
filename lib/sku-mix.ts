@@ -1,5 +1,6 @@
 import { createServerClient } from '@/lib/supabase/server';
 import { unstable_cache } from 'next/cache';
+import { hasSkuFilters, type SkuDims, type SkuFilters } from '@/lib/sku-filters';
 
 /**
  * Yearly vs monthly mix by store — CASH basis (charges dated in the month, not
@@ -32,6 +33,9 @@ export type MixCell = {
 export type SkuMix = {
   months: string[]; // 'YYYY-MM-01', same window as the SKU breakdown
   cells: MixCell[];
+  /** Region / country values seen in the window — only on the legacy path (the
+   *  RPC path gets them from transactions_dim_values instead). */
+  dims?: SkuDims;
 };
 
 export const MIX_STORES: MixStore[] = ['apple', 'google', 'stripe'];
@@ -62,13 +66,20 @@ function monthList(start: string, end: string): string[] {
   return out;
 }
 
-async function loadViaRpc(fromIncl: string, toExcl: string): Promise<MixCell[] | null> {
+async function loadViaRpc(fromIncl: string, toExcl: string, filters: SkuFilters): Promise<MixCell[] | null> {
   const supabase = createServerClient();
-  const { data, error } = await supabase.rpc('sku_mix_by_store_monthly', { p_from: fromIncl, p_to: toExcl });
+  // Filter params exist since migration 045; an older signature → PGRST202 → legacy path.
+  const { data, error } = await supabase.rpc('sku_mix_by_store_monthly', {
+    p_from: fromIncl,
+    p_to: toExcl,
+    p_sources: filters.sources.length ? filters.sources : null,
+    p_regions: filters.regions.length ? filters.regions : null,
+    p_countries: filters.countries.length ? filters.countries : null,
+  });
   if (error) {
     const msg = `${error.code || ''} ${error.message || ''}`;
-    if (/PGRST202|42883|Could not find the function|does not exist/i.test(msg)) {
-      console.warn('[sku-mix] RPC sku_mix_by_store_monthly missing (run migration 044) — using legacy fetch');
+    if (/PGRST202|PGRST203|42883|Could not find the function|does not exist|best candidate/i.test(msg)) {
+      console.warn('[sku-mix] RPC sku_mix_by_store_monthly missing or old signature (run migration 045) — using legacy fetch');
       return null;
     }
     throw new Error(`[sku-mix] RPC error: ${error.message}`);
@@ -84,6 +95,8 @@ type Row = {
   sku: string | null;
   plan_type: string | null;
   plan_name: string | null;
+  region: string | null;
+  country_code: string | null;
   amount_gross: number | null;
   transaction_date: string;
   is_new_subscription: boolean | null;
@@ -99,7 +112,7 @@ async function fetchMonth(fromIncl: string, toExcl: string): Promise<Row[]> {
     for (let attempt = 1; attempt <= 4; attempt++) {
       const { data, error } = await supabase
         .from('transactions')
-        .select('id,source,sku,plan_type,plan_name,amount_gross,transaction_date,is_new_subscription')
+        .select('id,source,sku,plan_type,plan_name,region,country_code,amount_gross,transaction_date,is_new_subscription')
         .eq('transaction_type', 'charge')
         .gte('transaction_date', fromIncl)
         .lt('transaction_date', toExcl)
@@ -122,7 +135,7 @@ async function fetchMonth(fromIncl: string, toExcl: string): Promise<Row[]> {
   return rows;
 }
 
-async function loadLegacy(months: string[]): Promise<MixCell[]> {
+async function loadLegacy(months: string[], filters: SkuFilters): Promise<{ cells: MixCell[]; dims: SkuDims }> {
   const rows: Row[] = [];
   const queue = [...months];
   await Promise.all(
@@ -136,7 +149,14 @@ async function loadLegacy(months: string[]): Promise<MixCell[]> {
   );
   console.log(`[sku-mix] legacy fetched ${rows.length} charges`);
   const cells = new Map<string, MixCell>();
+  const regionN: Record<string, number> = {};
+  const countryN: Record<string, number> = {};
   for (const t of rows) {
+    if (t.region) regionN[t.region] = (regionN[t.region] || 0) + 1;
+    if (t.country_code) countryN[t.country_code] = (countryN[t.country_code] || 0) + 1;
+    if (filters.sources.length && !filters.sources.includes(t.source || '')) continue;
+    if (filters.regions.length && !filters.regions.includes(t.region || '')) continue;
+    if (filters.countries.length && !filters.countries.includes(t.country_code || '')) continue;
     const planName = (t.plan_name || '').toLowerCase();
     if (planName.includes('test')) continue;
     if (t.source === 'stripe') {
@@ -156,20 +176,56 @@ async function loadLegacy(months: string[]): Promise<MixCell[]> {
     c.n += 1;
     c.gross += Number(t.amount_gross) || 0;
   }
-  return [...cells.values()];
+  const toList = (o: Record<string, number>) => Object.entries(o).map(([value, n]) => ({ value, n })).sort((a, b) => b.n - a.n);
+  return { cells: [...cells.values()], dims: { regions: toList(regionN), countries: toList(countryN) } };
 }
 
-async function compute(startMonth: string, endMonth: string): Promise<SkuMix> {
+async function compute(startMonth: string, endMonth: string, filtersJson: string): Promise<SkuMix> {
+  const filters = JSON.parse(filtersJson) as SkuFilters;
   const months = monthList(startMonth, endMonth);
   const fromIncl = months[0];
   const toExcl = addMonthsStr(endMonth, 1);
-  const cells = (await loadViaRpc(fromIncl, toExcl)) ?? (await loadLegacy(months));
-  return { months, cells };
+  const viaRpc = await loadViaRpc(fromIncl, toExcl, filters);
+  if (viaRpc) return { months, cells: viaRpc };
+  const legacy = await loadLegacy(months, filters);
+  return { months, cells: legacy.cells, dims: legacy.dims };
 }
 
-const cached = unstable_cache(compute, ['sku-mix', 'v1'], { revalidate: 3600, tags: ['snapshots'] });
+const cached = unstable_cache(compute, ['sku-mix', 'v2'], { revalidate: 3600, tags: ['snapshots'] });
 
-/** start/end are 'YYYY-MM' month strings. */
-export function getSkuMix(startMonth: string, endMonth: string): Promise<SkuMix> {
-  return cached(startMonth, endMonth);
+const NO_FILTERS: SkuFilters = { sources: [], regions: [], countries: [] };
+
+/** start/end are 'YYYY-MM' month strings. Filters (store / region / country) are optional. */
+export function getSkuMix(startMonth: string, endMonth: string, filters: SkuFilters = NO_FILTERS): Promise<SkuMix> {
+  const f: SkuFilters = hasSkuFilters(filters)
+    ? { sources: [...filters.sources].sort(), regions: [...filters.regions].sort(), countries: [...filters.countries].sort() }
+    : NO_FILTERS;
+  return cached(startMonth, endMonth, JSON.stringify(f));
+}
+
+// ─── Dimension values for the filter dropdowns ───────────────────────────────
+
+async function computeDims(): Promise<SkuDims | null> {
+  const supabase = createServerClient();
+  const { data, error } = await supabase.rpc('transactions_dim_values');
+  if (error) {
+    const msg = `${error.code || ''} ${error.message || ''}`;
+    if (/PGRST202|42883|Could not find the function|does not exist/i.test(msg)) {
+      console.warn('[sku-mix] RPC transactions_dim_values missing (run migration 045)');
+      return null;
+    }
+    throw new Error(`[sku-mix] transactions_dim_values error: ${error.message}`);
+  }
+  const d = (data || {}) as { regions?: { value: string; n: number }[]; countries?: { value: string; n: number }[] };
+  return {
+    regions: (d.regions || []).map((r) => ({ value: String(r.value), n: Number(r.n) || 0 })),
+    countries: (d.countries || []).map((r) => ({ value: String(r.value), n: Number(r.n) || 0 })),
+  };
+}
+
+const cachedDims = unstable_cache(computeDims, ['sku-dims', 'v1'], { revalidate: 86400, tags: ['snapshots'] });
+
+/** Region / country values for the filter bar; null until migration 045 is applied. */
+export function getSkuDims(): Promise<SkuDims | null> {
+  return cachedDims();
 }

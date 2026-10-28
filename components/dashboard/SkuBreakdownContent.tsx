@@ -14,12 +14,34 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatCurrency } from '@/lib/constants';
 import { ChartExportButton } from '@/components/charts/ChartExportButton';
 import type { SkuBreakdown } from '@/lib/sku-breakdown';
+import { bucketize, fmtPeriod, type SkuGrain } from '@/lib/sku-filters';
 
-const MONTHS_ES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const fmtMonth = (val: string) => {
-  const d = new Date(val + 'T00:00:00Z');
-  return `${MONTHS_ES[d.getUTCMonth()]} ${d.getUTCFullYear().toString().slice(2)}`;
-};
+// Axis / banner labels handle months ('Oct 26'), quarters ('Q4 26') and years.
+const fmtMonth = fmtPeriod;
+
+/**
+ * Re-bucket the monthly series by period grain (client-side). Revenue sums
+ * across the months of the bucket; volume (active subs, a stock) takes the
+ * LAST month of the bucket (end-of-period), not a sum.
+ */
+function aggregateByGrain(data: SkuBreakdown, grain: SkuGrain): SkuBreakdown {
+  if (grain === 'month') return data;
+  const { keys, idxOf } = bucketize(data.months, grain);
+  const fold = (arr: number[], mode: 'sum' | 'last') => {
+    const out = keys.map(() => 0);
+    arr.forEach((v, i) => {
+      const b = idxOf[i];
+      if (mode === 'sum') out[b] += v || 0;
+      else out[b] = v || 0;
+    });
+    return out;
+  };
+  const series: SkuBreakdown['series'] = {};
+  for (const [sku, sr] of Object.entries(data.series)) {
+    series[sku] = { newRev: fold(sr.newRev, 'sum'), recRev: fold(sr.recRev, 'sum'), vol: fold(sr.vol, 'last') };
+  }
+  return { months: keys, skus: data.skus, series, totals: { rev: fold(data.totals.rev, 'sum'), vol: fold(data.totals.vol, 'last') } };
+}
 
 type Family = 'yearly' | 'monthly' | 'other';
 
@@ -63,8 +85,8 @@ function shade(hex: string, f: number): string {
 
 type Metric = 'total' | 'vol' | 'new' | 'rec';
 
-export function SkuBreakdownContent({ data }: { data: SkuBreakdown }) {
-  const { months, skus, series, totals } = data;
+export function SkuBreakdownContent({ data, grain = 'month' }: { data: SkuBreakdown; grain?: SkuGrain }) {
+  const { months, skus, series, totals } = useMemo(() => aggregateByGrain(data, grain), [data, grain]);
 
   // Default broken-out set: top 15 SKUs by revenue.
   const [selected, setSelected] = useState<Set<string>>(
@@ -136,10 +158,10 @@ export function SkuBreakdownContent({ data }: { data: SkuBreakdown }) {
       {/* Reconciliation banner */}
       <div className="rounded-xl border border-[#45C94E]/40 bg-[#45C94E]/5 px-4 py-3 text-sm">
         <span className="font-semibold text-[#0E3687]">
-          Total MRR ({fmtMonth(months[lastIdx])}): {formatCurrency(lastTotal)}
+          {grain === 'month' ? 'Total MRR' : 'Total revenue'} ({fmtMonth(months[lastIdx])}): {formatCurrency(lastTotal)}
         </span>
         <span className="text-muted-foreground">
-          {' '}· {lastVol.toLocaleString()} active subs · sum of all {skus.length} SKUs ={' '}
+          {' '}· {lastVol.toLocaleString()} active subs{grain !== 'month' && ' (end of period)'} · sum of all {skus.length} SKUs ={' '}
           <span className="text-[#45C94E] font-medium">matches the MRR tab ✓</span>
         </span>
         <p className="text-xs text-muted-foreground mt-1">
