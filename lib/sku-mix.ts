@@ -205,15 +205,16 @@ export function getSkuMix(startMonth: string, endMonth: string, filters: SkuFilt
 
 // ─── Dimension values for the filter dropdowns ───────────────────────────────
 
-async function computeDims(): Promise<SkuDims | null> {
+class DimsMissing extends Error {}
+
+async function computeDims(): Promise<SkuDims> {
   const supabase = createServerClient();
   const { data, error } = await supabase.rpc('transactions_dim_values');
   if (error) {
     const msg = `${error.code || ''} ${error.message || ''}`;
-    if (/PGRST202|42883|Could not find the function|does not exist/i.test(msg)) {
-      console.warn('[sku-mix] RPC transactions_dim_values missing (run migration 045)');
-      return null;
-    }
+    // Thrown (not returned as null) so unstable_cache does NOT store the miss:
+    // a cached null would hide the dropdowns for 24h after the migration lands.
+    if (/PGRST202|42883|Could not find the function|does not exist/i.test(msg)) throw new DimsMissing('run migration 045');
     throw new Error(`[sku-mix] transactions_dim_values error: ${error.message}`);
   }
   const d = (data || {}) as { regions?: { value: string; n: number }[]; countries?: { value: string; n: number }[] };
@@ -223,9 +224,17 @@ async function computeDims(): Promise<SkuDims | null> {
   };
 }
 
-const cachedDims = unstable_cache(computeDims, ['sku-dims', 'v1'], { revalidate: 86400, tags: ['snapshots'] });
+const cachedDims = unstable_cache(computeDims, ['sku-dims', 'v2'], { revalidate: 86400, tags: ['snapshots'] });
 
 /** Region / country values for the filter bar; null until migration 045 is applied. */
-export function getSkuDims(): Promise<SkuDims | null> {
-  return cachedDims();
+export async function getSkuDims(): Promise<SkuDims | null> {
+  try {
+    return await cachedDims();
+  } catch (err) {
+    if (err instanceof DimsMissing || /run migration 045/.test((err as Error).message)) {
+      console.warn('[sku-mix] RPC transactions_dim_values missing (run migration 045)');
+      return null;
+    }
+    throw err;
+  }
 }
