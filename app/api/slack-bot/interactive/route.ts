@@ -5,7 +5,7 @@ import { postChatMessage } from '@/lib/slack/post';
 import { runKpiGuard, formatGuardRun } from '@/lib/audit/kpi-guard';
 import { runKpiFix, formatFixResult, fixInProgress } from '@/lib/audit/kpi-fix';
 import { setProposalStatus } from '@/lib/estela/estela';
-import { decidir, marcarDecidido, propuestaDe } from '@/lib/bizops/brief';
+import { decidir, marcarDecidido, propuestaDe, mensajeDe } from '@/lib/bizops/brief';
 
 // Correcciones largas (re-sincronizar réplica + tiendas ≈ 2–4 min) corren en waitUntil después de responder a Slack.
 export const maxDuration = 300;
@@ -18,6 +18,7 @@ export const maxDuration = 300;
  *   estela_accept / estela_reject / estela_close  Pepis decide o cierra una propuesta de Estela (value = id en estela_proposals)
  *   bizops_hecho / bizops_manana / bizops_no      Pepis decide un pendiente del Brief BizOps (value = id en bizops_items);
  *                                                 los botones se reemplazan por la decisión en el mismo mensaje
+ *   bizops_publicar / bizops_editar               el bot publica el mensaje aprobado en su canal (solo PUBLICABLES)
  */
 export async function POST(request: NextRequest) {
   const rawBody = await request.text();
@@ -41,6 +42,22 @@ export async function POST(request: NextRequest) {
       const r = await decidir(meta.id, 'hecho', quien, ruta);
       if (tok && meta.channel) await postChatMessage(tok, meta.channel, { text: `✏️ ${r.ok ? `${r.agente} guardará en: ${ruta}` : 'No pude guardar la carpeta'}`,
         blocks: [{ type: 'section', text: { type: 'mrkdwn', text: r.ok ? `✏️ *${r.texto}*\n${r.agente} guardará en: \`${ruta}\`${quien ? ` · ${quien}` : ''}` : `⚠️ No pude guardar: ${r.error}` } }] }, meta.ts);
+    })());
+    return new NextResponse('', { status: 200 });
+  }
+  // "✏️ Cambiar texto": se publica el texto editado y queda como respuesta para que el agente aprenda
+  if (payload.type === 'view_submission' && payload.view?.callback_id === 'bizops_editar') {
+    const meta = JSON.parse(payload.view.private_metadata || '{}') as { id?: number; channel?: string; ts?: string };
+    const texto = String(payload.view.state?.values?.msg?.valor?.value ?? '').trim();
+    const quien = payload.user?.username ? `@${payload.user.username}` : undefined;
+    const tok = process.env.SLACK_BOT_TOKEN;
+    waitUntil((async () => {
+      if (!meta.id || !texto || !tok) return;
+      const m = mensajeDe((await propuestaDe(meta.id)).propuesta);
+      if (!m) return;
+      const r = await postChatMessage(tok, m.canal, { text: texto });
+      if (r.ok) await decidir(meta.id, 'hecho', quien, texto);
+      if (meta.channel) await postChatMessage(tok, meta.channel, { text: r.ok ? `📤 Publicado en #${m.nombre}${quien ? ` · ${quien}` : ''}` : `⚠️ No pude publicar en #${m.nombre}: ${r.error ?? ''}` }, meta.ts);
     })());
     return new NextResponse('', { status: 200 });
   }
@@ -70,9 +87,41 @@ export async function POST(request: NextRequest) {
     return new NextResponse('', { status: 200 });
   }
 
+  if (action === 'bizops_editar') {
+    const id = Number(payload.actions?.[0]?.value);
+    const m = Number.isFinite(id) ? mensajeDe((await propuestaDe(id)).propuesta) : null;
+    if (!m) { await reply('⚠️ Ese mensaje ya no está disponible'); return new NextResponse('', { status: 200 }); }
+    await fetch('https://slack.com/api/views.open', {
+      method: 'POST', headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ trigger_id: payload.trigger_id, view: {
+        type: 'modal', callback_id: 'bizops_editar', private_metadata: JSON.stringify({ id, channel, ts: threadTs }),
+        title: { type: 'plain_text', text: 'Cambiar texto' }, submit: { type: 'plain_text', text: 'Publicar' }, close: { type: 'plain_text', text: 'Cancelar' },
+        blocks: [
+          { type: 'section', text: { type: 'mrkdwn', text: `Se publica en *#${m.nombre}* al picar Publicar.` } },
+          { type: 'input', block_id: 'msg', label: { type: 'plain_text', text: 'Mensaje' },
+            element: { type: 'plain_text_input', action_id: 'valor', multiline: true, initial_value: m.texto } },
+        ] } }),
+    });
+    return new NextResponse('', { status: 200 });
+  }
+
   waitUntil((async () => {
     try {
-      if (action === 'bizops_hecho' || action === 'bizops_manana' || action === 'bizops_no') {
+      if (action === 'bizops_publicar') {
+        const id = Number(payload.actions?.[0]?.value);
+        const m = Number.isFinite(id) ? mensajeDe((await propuestaDe(id)).propuesta) : null;
+        const r = m ? await postChatMessage(token, m.canal, { text: m.texto }) : { ok: false, error: 'mensaje no disponible' };
+        if (r.ok) await decidir(id, 'hecho', who, 'publicado');
+        const etiqueta = r.ok ? `📤 Publicado en #${m!.nombre}${who ? ` · ${who}` : ''}` : `⚠️ No pude publicar: ${r.error ?? ''} (¿el bot está en el canal?)`;
+        const responseUrl: string | undefined = payload.response_url;
+        const blocks = payload.message?.blocks;
+        if (responseUrl && Array.isArray(blocks)) {
+          await fetch(responseUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ replace_original: true, text: payload.message?.text ?? 'Brief BizOps', blocks: marcarDecidido(blocks, id, etiqueta) }) });
+        } else {
+          await reply(etiqueta);
+        }
+      } else if (action === 'bizops_hecho' || action === 'bizops_manana' || action === 'bizops_no') {
         const id = Number(payload.actions?.[0]?.value);
         const estado = action === 'bizops_hecho' ? 'hecho' : action === 'bizops_manana' ? 'manana' : 'no';
         const r = Number.isFinite(id) ? await decidir(id, estado, who) : { ok: false as const, error: 'id inválido' };

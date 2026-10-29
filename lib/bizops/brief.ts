@@ -23,7 +23,9 @@ export const SEMAFOROS = ['🟢', '🟡', '🔴'] as const;
 export type Semaforo = (typeof SEMAFOROS)[number];
 export type Estado = 'pendiente' | 'manana' | 'hecho' | 'no';
 
-export interface ItemIn { ref: string; texto: string; emoji?: string; prioridad?: 'urgente' | 'decide' | 'info'; link?: string; estado?: Estado; propuesta?: string }
+export interface ItemIn { ref: string; texto: string; emoji?: string; prioridad?: 'urgente' | 'decide' | 'info'; link?: string; estado?: Estado; propuesta?: string;
+  /** Mensaje listo para que el bot lo publique en otro canal SOLO cuando Pepis o Regina pican "📤 Publicar" (Ciro → aviso de cierre a Arrowpoint). */
+  mensaje?: { canal: string; texto: string } }
 export interface Item extends Required<Pick<ItemIn, 'ref' | 'texto'>> {
   id: number; agente: string; emoji: string | null; prioridad: 'urgente' | 'decide' | 'info'; link: string | null;
   estado: Estado; decidido_por: string | null; decidido_en: string | null; primera_vez: string; ultima_vez: string;
@@ -44,6 +46,14 @@ const ORDEN: Record<string, number> = { urgente: 0, decide: 1, info: 2 };
 const DIAS = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
 const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 const fechaCorta = (d: string) => { const t = new Date(`${d}T12:00:00Z`); return `${DIAS[t.getUTCDay()]} ${t.getUTCDate()}-${MESES[t.getUTCMonth()]}`; };
+/** Canales donde el bot puede publicar un mensaje aprobado (nombre → id). Ningún otro. */
+export const PUBLICABLES: Record<string, string> = { 'arrowpoint-kinedu': 'C0A7SUTMNFQ' };
+const nombreCanal = (id: string) => Object.keys(PUBLICABLES).find((k) => PUBLICABLES[k] === id) ?? id;
+/** El mensaje se guarda en propuesta como "slack:<canal>|<texto>" (sin columna nueva). */
+export function mensajeDe(propuesta?: string | null): { canal: string; nombre: string; texto: string } | null {
+  const m = propuesta?.match(/^slack:([A-Z0-9]+)\|([\s\S]+)$/);
+  return m && Object.values(PUBLICABLES).includes(m[1]) ? { canal: m[1], nombre: nombreCanal(m[1]), texto: m[2] } : null;
+}
 const limpia = (s: unknown, max: number) => (typeof s === 'string' ? s.replace(/\s+/g, ' ').trim().slice(0, max) : '');
 /** Gmail: "#…?compose=thread-f:123%2Bmsg-a:…" abre un correo nuevo en blanco; "#all/thread-f:123" abre el hilo (con su borrador). */
 export function linkHilo(link: string): string {
@@ -66,6 +76,8 @@ export async function guardarCorrida(agente: string, semaforo: Semaforo, resumen
     prioridad: ['urgente', 'decide', 'info'].includes(i.prioridad ?? '') ? i.prioridad : 'decide',
     link: linkHilo(limpia(i.link, 500)) || null, ultima_vez: hoy,
     ...(i.propuesta ? { propuesta: limpia(i.propuesta, 400) } : {}),
+    ...(i.mensaje && PUBLICABLES[i.mensaje.canal] && typeof i.mensaje.texto === 'string'
+      ? { propuesta: `slack:${PUBLICABLES[i.mensaje.canal]}|${i.mensaje.texto.replace(/[ \t]+/g, ' ').trim().slice(0, 800)}` } : {}),
     estado: i.estado ?? (prev.get(i.ref) === 'manana' ? 'pendiente' : prev.get(i.ref) ?? 'pendiente'),
   }));
   const { data, error } = await sb.from('bizops_items').upsert(rows, { onConflict: 'agente,ref' }).select('*');
@@ -95,6 +107,22 @@ function itemBlocks(it: Item, hoy: string): SlackBlock[] {
   const dias = Math.round((Date.parse(hoy) - Date.parse(it.primera_vez)) / 86400000);
   const edad = dias <= 0 ? 'nuevo' : dias === 1 ? 'desde ayer' : `hace ${dias} días`;
   const abrir = it.link ? ` · <${it.link}|abrir>` : '';
+  const msg = mensajeDe(it.propuesta);
+  if (msg) {
+    // Mensaje listo para otro canal: el bot lo publica solo cuando alguien pica "📤 Publicar"
+    const cita = msg.texto.split('\n').map((l) => `> ${l}`).join('\n');
+    return [
+      { type: 'section', text: { type: 'mrkdwn', text: `${it.emoji ?? '✍️'} *${it.texto}*\nLo publico en #${msg.nombre}:\n${cita}\n${jefaDe(it.agente)} · ${edad}${abrir}` } },
+      {
+        type: 'actions', block_id: `bz_${it.id}`,
+        elements: [
+          { type: 'button', style: 'primary', action_id: 'bizops_publicar', value: String(it.id), text: { type: 'plain_text', text: '📤 Publicar' } },
+          { type: 'button', action_id: 'bizops_editar', value: String(it.id), text: { type: 'plain_text', text: '✏️ Cambiar texto' } },
+          { type: 'button', action_id: 'bizops_no', value: String(it.id), text: { type: 'plain_text', text: '✖ No' } },
+        ],
+      },
+    ] as SlackBlock[];
+  }
   if (it.propuesta) {
     // Propuesta con destino (Tere): Pepis acepta, escribe otra carpeta o dice que no se guarda
     return [
