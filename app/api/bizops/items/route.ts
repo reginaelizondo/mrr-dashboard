@@ -28,10 +28,14 @@ export async function POST(request: NextRequest) {
     let posted: { ok: boolean; ts?: string; error?: string } | null = null;
     const nota = typeof b.nota === 'string' ? b.nota.trim().slice(0, 2500) : '';
     if (nota) {
+      // Contexto + botones en un solo mensaje (Pepis, 29-oct: el detalle del VOBO llega a Slack, no a un borrador)
       const titulo = `${semaforo} ${jefaDe(agente)} · ${String(b.resumen ?? '')}`.slice(0, 150);
+      const propios = canalDe(agente) === RH_CHANNEL() ? guardados : guardados.filter((i) => !esRH(i));
+      const conBotones = b.publicar ? mensajeInmediato(agente, semaforo, String(b.resumen ?? ''), propios).blocks?.slice(1) ?? [] : [];
       posted = await publicar({ text: `${titulo}\n${nota}`.slice(0, 2900), blocks: [
         { type: 'header', text: { type: 'plain_text', text: titulo } },
         { type: 'section', text: { type: 'mrkdwn', text: nota } },
+        ...conBotones,
         { type: 'context', elements: [{ type: 'mrkdwn', text: `🤖 ${jefaDe(agente)} · propone, no envía. Pepis decide.` }] },
       ] }, canalDe(agente));
     } else if (b.publicar && guardados.some((i) => i.estado === 'pendiente')) {
