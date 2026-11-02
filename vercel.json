@@ -53,10 +53,6 @@
       "schedule": "15 3 * * *"
     },
     {
-      "path": "/api/cron/estela-weekly",
-      "schedule": "0 14 * * 1"
-    },
-    {
       "path": "/api/cron/cal-daily",
       "schedule": "5 14 * * *"
     },
