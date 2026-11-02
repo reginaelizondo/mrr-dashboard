@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { jefaDe, guardarCorrida, decisiones, publicar, mensajeInmediato, canalDe, esRH, RH_CHANNEL, responderEnHiloSiTarde, SEMAFOROS, type ItemIn, type Semaforo } from '@/lib/bizops/brief';
+import { jefaDe, guardarCorrida, decisiones, publicar, mensajeInmediato, canalDe, esRH, RH_CHANNEL, responderEnHiloSiTarde, briefYaSalio, SEMAFOROS, type ItemIn, type Semaforo } from '@/lib/bizops/brief';
 
 export const maxDuration = 30;
 
@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
       // Contexto + botones en un solo mensaje (Pepis, 29-oct: el detalle del VOBO llega a Slack, no a un borrador)
       const titulo = `${semaforo} ${jefaDe(agente)} · ${String(b.resumen ?? '')}`.slice(0, 150);
       const propios = canalDe(agente) === RH_CHANNEL() ? guardados : guardados.filter((i) => !esRH(i));
-      const conBotones = b.publicar ? mensajeInmediato(agente, semaforo, String(b.resumen ?? ''), propios).blocks?.slice(1) ?? [] : [];
+      const conBotones = (b.publicar || await briefYaSalio()) ? mensajeInmediato(agente, semaforo, String(b.resumen ?? ''), propios).blocks?.slice(1) ?? [] : [];
       posted = await publicar({ text: `${titulo}\n${nota}`.slice(0, 2900), blocks: [
         { type: 'header', text: { type: 'plain_text', text: titulo } },
         { type: 'section', text: { type: 'mrkdwn', text: nota } },

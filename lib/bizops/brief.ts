@@ -208,6 +208,13 @@ export function marcarDecidido(blocks: SlackBlock[], id: number, etiqueta: strin
     : b));
 }
 
+/** ¿Ya salió el brief de hoy? Lo que llegue después necesita sus botones en su propio mensaje (Pepis, 2-nov: la pregunta de Supabase no se veía). */
+export async function briefYaSalio(hoy = todayMx()) {
+  const sb = createServerClient();
+  const { data } = await sb.from('bizops_runs').select('id').eq('agente', '__brief__').eq('fecha', hoy).limit(1);
+  return !!data?.length;
+}
+
 /** Guarda el ts del brief de hoy para que los agentes que corren tarde contesten en su hilo. */
 export async function guardarTsBrief(ts: string, hoy = todayMx()) {
   const sb = createServerClient();
