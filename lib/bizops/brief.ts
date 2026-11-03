@@ -307,27 +307,6 @@ export async function responderEnHiloSiTarde(agente: string, semaforo: Semaforo,
   return postChatMessage(token, BRIEF_CHANNEL(), { text: titulo, blocks }, ts);
 }
 
-/** Órdenes escritas en el canal: "Tina, ya no me avises de X". Solo de Pepis y Regina; en RH también de Paola. Las lee la jefa al arrancar. */
-const QUIENES: Record<string, string> = { U043LK1JQMT: 'Pepis', U06V90A0Q86: 'Regina', U08PLJEPHTR: 'Paola' };
-export async function instrucciones(jefa: string, dias: number) {
-  const token = process.env.SLACK_BOT_TOKEN;
-  if (!token) throw new Error('SLACK_BOT_TOKEN missing');
-  const desde = String(Date.now() / 1000 - dias * 86400);
-  const re = new RegExp(`^\\s*@?${jefa}\\b[,:\\s]+`, 'i');
-  const out: { ts: string; quien: string; texto: string }[] = [];
-  for (const canal of [BRIEF_CHANNEL(), RH()]) {
-    const res = await fetch(`https://slack.com/api/conversations.history?channel=${canal}&oldest=${desde}&limit=200`, { headers: { Authorization: `Bearer ${token}` } });
-    const j = await res.json() as { ok: boolean; error?: string; messages?: { ts: string; user?: string; bot_id?: string; text?: string }[] };
-    if (!j.ok) throw new Error(`conversations.history: ${j.error}`);
-    for (const m of j.messages ?? []) {
-      const quien = m.user && !m.bot_id ? QUIENES[m.user] : undefined;
-      if (!quien || (quien === 'Paola' && (canal !== RH() || jefa !== 'Ruth')) || !re.test(m.text ?? '')) continue;
-      out.push({ ts: m.ts, quien, texto: (m.text ?? '').replace(re, '').slice(0, 800) });
-    }
-  }
-  return out.sort((a, b) => a.ts.localeCompare(b.ts));
-}
-
 /** Propuesta de un pendiente (para prellenar "✏️ Otra carpeta"). */
 export async function propuestaDe(id: number) {
   const sb = createServerClient();

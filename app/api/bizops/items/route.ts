@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { jefaDe, guardarCorrida, decisiones, publicar, mensajeInmediato, canalDe, esRH, RH_CHANNEL, responderEnHiloSiTarde, briefYaSalio, guardarNota, instrucciones, JEFAS, SEMAFOROS, type ItemIn, type Semaforo } from '@/lib/bizops/brief';
+import { jefaDe, guardarCorrida, decisiones, publicar, mensajeInmediato, canalDe, esRH, RH_CHANNEL, responderEnHiloSiTarde, briefYaSalio, guardarNota, SEMAFOROS, type ItemIn, type Semaforo } from '@/lib/bizops/brief';
 
 export const maxDuration = 30;
 
@@ -12,7 +12,6 @@ export const maxDuration = 30;
  *      trae botones después del brief; si no, entra al brief siguiente (Ya quedó + detalle en el hilo).
  *      guarda la corrida y sus pendientes; publicar=true los manda a Slack al momento (VOBO del mismo día).
  * GET  ?agente=Oli&dias=7   lo que Pepis decidió en Slack (hecho · manana · no) para que el agente actúe.
- * GET  ?jefa=Tina&dias=3    órdenes escritas en el canal ("Tina, …"); las lee la jefa al arrancar.
  */
 const AGENTES = new Set(['Oli', 'Tere', 'Marco', 'Quina', 'Sol', 'Ciro', 'Dalia', 'Mila', 'Rosa', 'Coco', 'Nora', 'Paco', 'Flor', 'Cobra', 'Leo', 'Tesa', 'Sela', 'Greta', 'Vera', 'Fito', 'Tina', 'Celia', 'Ruth']);
 const auth = (r: NextRequest) => !!process.env.BIZOPS_BRIEF_SECRET && r.headers.get('authorization') === `Bearer ${process.env.BIZOPS_BRIEF_SECRET}`;
@@ -61,15 +60,6 @@ export async function POST(request: NextRequest) {
 export async function GET(request: NextRequest) {
   if (!auth(request)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const sp = request.nextUrl.searchParams;
-  const jefa = sp.get('jefa') ?? '';
-  if (jefa) {
-    if (!JEFAS[jefa]) return NextResponse.json({ error: 'jefa desconocida' }, { status: 400 });
-    try {
-      return NextResponse.json({ ok: true, instrucciones: await instrucciones(jefa, Math.min(14, Number(sp.get('dias') ?? 3) || 3)) });
-    } catch (e) {
-      return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, { status: 500 });
-    }
-  }
   const agente = sp.get('agente') ?? '';
   if (!AGENTES.has(agente)) return NextResponse.json({ error: 'agente requerido' }, { status: 400 });
   try {
