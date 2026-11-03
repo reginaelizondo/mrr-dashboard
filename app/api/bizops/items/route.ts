@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { jefaDe, guardarCorrida, decisiones, publicar, mensajeInmediato, canalDe, esRH, RH_CHANNEL, responderEnHiloSiTarde, briefYaSalio, SEMAFOROS, type ItemIn, type Semaforo } from '@/lib/bizops/brief';
+import { jefaDe, guardarCorrida, decisiones, publicar, mensajeInmediato, canalDe, esRH, RH_CHANNEL, responderEnHiloSiTarde, briefYaSalio, guardarNota, instrucciones, JEFAS, SEMAFOROS, type ItemIn, type Semaforo } from '@/lib/bizops/brief';
 
 export const maxDuration = 30;
 
@@ -8,10 +8,11 @@ export const maxDuration = 30;
  * Auth: Authorization: Bearer BIZOPS_BRIEF_SECRET.
  *
  * POST { agente, semaforo, resumen, items: [{ref, texto, emoji?, prioridad?, link?, estado?}], publicar?, nota? }
- *      nota (markdown de Slack, máx. 2,500 caracteres) se publica tal cual como mensaje propio en el canal del agente
- *      (ej. Nora: los 5 bullets del P&L para Luis cuando Arrowpoint ya quedó aprobado).
+ *      nota (markdown de Slack, máx. 2,500 caracteres): sale como mensaje propio solo si es 🔴, publicar=true, de RH o
+ *      trae botones después del brief; si no, entra al brief siguiente (Ya quedó + detalle en el hilo).
  *      guarda la corrida y sus pendientes; publicar=true los manda a Slack al momento (VOBO del mismo día).
  * GET  ?agente=Oli&dias=7   lo que Pepis decidió en Slack (hecho · manana · no) para que el agente actúe.
+ * GET  ?jefa=Tina&dias=3    órdenes escritas en el canal ("Tina, …"); las lee la jefa al arrancar.
  */
 const AGENTES = new Set(['Oli', 'Tere', 'Marco', 'Quina', 'Sol', 'Ciro', 'Dalia', 'Mila', 'Rosa', 'Coco', 'Nora', 'Paco', 'Flor', 'Cobra', 'Leo', 'Tesa', 'Sela', 'Greta', 'Vera', 'Fito', 'Tina', 'Celia', 'Ruth']);
 const auth = (r: NextRequest) => !!process.env.BIZOPS_BRIEF_SECRET && r.headers.get('authorization') === `Bearer ${process.env.BIZOPS_BRIEF_SECRET}`;
@@ -27,11 +28,17 @@ export async function POST(request: NextRequest) {
     const guardados = await guardarCorrida(agente, semaforo, String(b.resumen ?? ''), items);
     let posted: { ok: boolean; ts?: string; error?: string } | null = null;
     const nota = typeof b.nota === 'string' ? b.nota.trim().slice(0, 2500) : '';
-    if (nota) {
+    const rhPropio = canalDe(agente) === RH_CHANNEL();
+    const yaSalio = await briefYaSalio();
+    const hayBotones = guardados.some((i) => i.estado === 'pendiente' && !esRH(i));
+    const suelta = !!b.publicar || semaforo === '🔴' || rhPropio || (yaSalio && hayBotones);
+    if (nota && !suelta) {
+      await guardarNota(agente, semaforo, String(b.resumen ?? ''), nota);
+    } else if (nota) {
       // Contexto + botones en un solo mensaje (Pepis, 29-oct: el detalle del VOBO llega a Slack, no a un borrador)
       const titulo = `${semaforo} ${jefaDe(agente)} · ${String(b.resumen ?? '')}`.slice(0, 150);
       const propios = canalDe(agente) === RH_CHANNEL() ? guardados : guardados.filter((i) => !esRH(i));
-      const conBotones = (b.publicar || await briefYaSalio()) ? mensajeInmediato(agente, semaforo, String(b.resumen ?? ''), propios).blocks?.slice(1) ?? [] : [];
+      const conBotones = (b.publicar || yaSalio || rhPropio) ? mensajeInmediato(agente, semaforo, String(b.resumen ?? ''), propios).blocks?.slice(1) ?? [] : [];
       posted = await publicar({ text: `${titulo}\n${nota}`.slice(0, 2900), blocks: [
         { type: 'header', text: { type: 'plain_text', text: titulo } },
         { type: 'section', text: { type: 'mrkdwn', text: nota } },
@@ -54,6 +61,15 @@ export async function POST(request: NextRequest) {
 export async function GET(request: NextRequest) {
   if (!auth(request)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const sp = request.nextUrl.searchParams;
+  const jefa = sp.get('jefa') ?? '';
+  if (jefa) {
+    if (!JEFAS[jefa]) return NextResponse.json({ error: 'jefa desconocida' }, { status: 400 });
+    try {
+      return NextResponse.json({ ok: true, instrucciones: await instrucciones(jefa, Math.min(14, Number(sp.get('dias') ?? 3) || 3)) });
+    } catch (e) {
+      return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, { status: 500 });
+    }
+  }
   const agente = sp.get('agente') ?? '';
   if (!AGENTES.has(agente)) return NextResponse.json({ error: 'agente requerido' }, { status: 400 });
   try {

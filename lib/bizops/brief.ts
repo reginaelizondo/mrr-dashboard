@@ -2,14 +2,15 @@
  * Brief BizOps · un solo reporte diario en Slack con lo que Pepis tiene que decidir.
  *
  * 1. Los agentes del correo (repo bandeja-pepis) mandan sus "para ti" a POST /api/bizops/items.
- * 2. A las 9:15 MX (lun–vie) el cron /api/cron/bizops-brief publica UN mensaje en #bizops-finanzas-agentes:
- *    semáforo + cada pendiente con botones ✅ Hecho · ⏭️ Mañana · ✖ No aplica + la salud de cada agente.
+ * 2. A las 10:00 MX (lun–vie) el cron /api/cron/bizops-brief publica UN mensaje en #bizops-finanzas-agentes:
+ *    Decide (pendientes con botones) · Ya quedó (lo informativo, con detalle en el hilo) · Viene (7 días) + salud.
  * 3. Los botones guardan la decisión (bizops_items.estado); los agentes la leen con GET /api/bizops/items.
  * Lo urgente del mismo día (Marco el martes, Quina antes del VOBO) se publica al momento con publicar=true.
  */
 import { createServerClient } from '@/lib/supabase/server';
 import { postChatMessage, updateChatMessage, type SlackBlock, type SlackMessage } from '@/lib/slack/post';
 import { todayMx } from '@/lib/kpi/period';
+import { runCal, fmtFecha } from '@/lib/cal/cal';
 
 export const BRIEF_CHANNEL = () => process.env.BIZOPS_BRIEF_CHANNEL ?? process.env.ESTELA_SLACK_CHANNEL ?? 'C0CAJT405R7';
 /** Agentes con canal propio: sus pendientes no van al brief de finanzas sino a su canal (nómina → #bizops-rh-agentes). */
@@ -42,6 +43,11 @@ export const JEFAS: Record<string, { area: string; emoji: string; equipo: string
   Ruth: { area: 'RH', emoji: '👥', equipo: ['Quina', 'Rosa', 'Coco', 'Fito'] },
 };
 export const jefaDe = (agente: string) => Object.keys(JEFAS).find((j) => j === agente || JEFAS[j].equipo.includes(agente)) ?? agente;
+/** Lo que debe correr en un día hábil. Si a la hora del brief no reportó, sale en palabras de Pepis (sin nombre de agente). dias = día de la semana (2 = martes). */
+const ESPERADOS: { agente: string; tarea: string; dias?: number[] }[] = [
+  { agente: 'Tere', tarea: 'archivo' }, { agente: 'Mila', tarea: 'facturas INC' }, { agente: 'Nora', tarea: 'Arrowpoint' },
+  { agente: 'Coco', tarea: 'esperados de RH' }, { agente: 'Dalia', tarea: 'seguimiento a despachos', dias: [4] },
+];
 const ORDEN: Record<string, number> = { urgente: 0, decide: 1, info: 2 };
 const DIAS = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
 const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
@@ -108,6 +114,7 @@ function itemBlocks(it: Item, hoy: string): SlackBlock[] {
   const edad = dias <= 0 ? 'nuevo' : dias === 1 ? 'desde ayer' : `hace ${dias} días`;
   const abrir = it.link ? ` · <${it.link}|abrir>` : '';
   const msg = mensajeDe(it.propuesta);
+  const porMandar = it.emoji === '✍️' && !!it.link;
   if (msg) {
     // Mensaje listo para otro canal: el bot lo publica solo cuando alguien pica "📤 Publicar"
     const cita = msg.texto.split('\n').map((l) => `> ${l}`).join('\n');
@@ -142,7 +149,8 @@ function itemBlocks(it: Item, hoy: string): SlackBlock[] {
     {
       type: 'actions', block_id: `bz_${it.id}`,
       elements: [
-        { type: 'button', style: 'primary', action_id: 'bizops_hecho', value: String(it.id), text: { type: 'plain_text', text: '✅ Hecho' } },
+        ...(porMandar ? [{ type: 'button', style: 'primary', action_id: 'bizops_abrir', url: it.link, text: { type: 'plain_text', text: '📤 Abrir y mandar' } }] : []),
+        { type: 'button', ...(porMandar ? {} : { style: 'primary' }), action_id: 'bizops_hecho', value: String(it.id), text: { type: 'plain_text', text: '✅ Hecho' } },
         { type: 'button', action_id: 'bizops_manana', value: String(it.id), text: { type: 'plain_text', text: '⏭️ Mañana' } },
         { type: 'button', action_id: 'bizops_no', value: String(it.id), text: { type: 'plain_text', text: '✖ No aplica' } },
       ],
@@ -150,24 +158,75 @@ function itemBlocks(it: Item, hoy: string): SlackBlock[] {
   ] as SlackBlock[];
 }
 
+/** Enfriamiento: lo no urgente con 7 días abierto, o que ya pospusiste y lleva 3, solo sale los lunes (Acceleron salió 6 días seguidos). */
+function enfriado(it: Item, hoy: string) {
+  const dias = Math.round((Date.parse(hoy) - Date.parse(it.primera_vez)) / 86400000);
+  return it.prioridad !== 'urgente' && (dias >= 7 || (!!it.decidido_en && dias >= 3));
+}
+
+interface Nota { id: number; semaforo: Semaforo; jefa: string; titulo: string; nota: string }
+const NOTA_NUEVA = '__nota__';
+const NOTA_ENTREGADA = '__nota_ok__';
+
+/** Nota sin nada que decidir: no sale suelta, entra al brief de mañana (Ya quedó + detalle en el hilo). 59% de los mensajes salía fuera del brief. */
+export async function guardarNota(agente: string, semaforo: Semaforo, resumen: string, nota: string) {
+  const sb = createServerClient();
+  const { error } = await sb.from('bizops_runs').insert({ agente: NOTA_NUEVA, fecha: todayMx(), semaforo, resumen: JSON.stringify({ jefa: jefaDe(agente), titulo: limpia(resumen, 120), nota }) });
+  if (error) throw new Error(`bizops_runs: ${error.message}`);
+}
+
+async function leerNotas(agente: string, fecha?: string): Promise<Nota[]> {
+  const sb = createServerClient();
+  let q = sb.from('bizops_runs').select('id, semaforo, resumen').eq('agente', agente).order('created_at').limit(15);
+  if (fecha) q = q.eq('fecha', fecha);
+  const { data } = await q;
+  return ((data ?? []) as { id: number; semaforo: Semaforo; resumen: string }[]).map((r) => ({ id: r.id, semaforo: r.semaforo, ...JSON.parse(r.resumen) as { jefa: string; titulo: string; nota: string } }));
+}
+
+/** Después de publicar el brief: cada nota va como detalle en su hilo, sin notificar. */
+export async function entregarNotas(ts: string, hoy = todayMx()) {
+  const token = process.env.SLACK_BOT_TOKEN;
+  if (!token) return;
+  const sb = createServerClient();
+  for (const n of await leerNotas(NOTA_NUEVA)) {
+    await postChatMessage(token, BRIEF_CHANNEL(), { text: `${n.jefa} · ${n.titulo}\n${n.nota}`.slice(0, 2900), blocks: [
+      { type: 'section', text: { type: 'mrkdwn', text: `*${n.semaforo} ${n.jefa} · ${n.titulo}*\n${n.nota}`.slice(0, 2900) } } as SlackBlock,
+    ] }, ts);
+    await sb.from('bizops_runs').update({ agente: NOTA_ENTREGADA, fecha: hoy }).eq('id', n.id);
+  }
+}
+
+/** Fechas de cumplimiento de los próximos 7 días, en una línea cada una. */
+async function viene(hoy: string): Promise<string[]> {
+  try {
+    const { proximas45 } = await runCal(hoy);
+    return proximas45.filter(({ dias }) => dias <= 7).slice(0, 3).map(({ item }) => `${fmtFecha(item.fecha).replace(/-\d{4}$/, '')} · ${item.titulo.slice(0, 60)}`);
+  } catch { return []; }
+}
+
 export async function armarBrief(hoy = todayMx()): Promise<{ message: SlackMessage; pendientes: number }> {
   const sb = createServerClient();
   const { data: its } = await sb.from('bizops_items').select('*').in('estado', ['pendiente', 'manana']);
   const orden = Object.keys(JEFAS);
-  const items = ((its ?? []) as Item[]).filter((i) => !esRH(i)).sort((a, b) => ORDEN[a.prioridad] - ORDEN[b.prioridad] || orden.indexOf(jefaDe(a.agente)) - orden.indexOf(jefaDe(b.agente)) || a.primera_vez.localeCompare(b.primera_vez));
+  const dowHoy = new Date(`${hoy}T12:00:00Z`).getUTCDay();
+  const abiertos = ((its ?? []) as Item[]).filter((i) => !esRH(i));
+  const enEspera = dowHoy === 1 ? 0 : abiertos.filter((i) => enfriado(i, hoy)).length;
+  const items = abiertos.filter((i) => dowHoy === 1 || !enfriado(i, hoy)).sort((a, b) => ORDEN[a.prioridad] - ORDEN[b.prioridad] || orden.indexOf(jefaDe(a.agente)) - orden.indexOf(jefaDe(b.agente)) || a.primera_vez.localeCompare(b.primera_vez));
   const { data: runs } = await sb.from('bizops_runs').select('agente, semaforo, resumen, created_at').eq('fecha', hoy).order('created_at', { ascending: false });
   const ultima = new Map<string, { semaforo: string; resumen: string | null }>();
   for (const r of (runs ?? []) as { agente: string; semaforo: string; resumen: string | null }[]) if (!ultima.has(r.agente)) ultima.set(r.agente, r);
-  const dow = new Date(`${hoy}T12:00:00Z`).getUTCDay();
+  const dow = dowHoy;
   const salud: string[] = [];
-  // A las 9:15 un agente puede seguir pendiente (Mac dormida): no es falla todavía. Cuando corra, contesta en el hilo de este mensaje.
+  // A las 10:00 ya debieron correr las 4 jefas: lo que falte es falla. Si corre tarde, este mensaje se actualiza solo.
   ultima.delete('__brief__');
   // Una línea por jefa: el peor semáforo de su equipo hoy y el resumen de la jefa (o "N corrieron")
   const peso: Record<string, number> = { '🟢': 0, '🟡': 1, '🔴': 2 };
   for (const [j, { emoji, equipo }] of Object.entries(JEFAS)) {
     const corrieron = equipo.filter((a) => ultima.has(a));
     const propia = ultima.get(j);
-    if (!corrieron.length && !propia) { if (dow >= 1 && dow <= 5) salud.push(`⏳ ${emoji} ${j} aún no corre`); continue; }
+    if (!corrieron.length && !propia) { if (dow >= 1 && dow <= 5) salud.push(`⚠️ ${emoji} ${j} no corrió`); continue; }
+    const faltan = dow >= 1 && dow <= 5 ? ESPERADOS.filter((e) => equipo.includes(e.agente) && (!e.dias || e.dias.includes(dow)) && !ultima.has(e.agente)).map((e) => e.tarea) : [];
+    if (faltan.length) salud.push(`⚠️ ${emoji} ${j}: no corrió ${faltan.join(', ')}`);
     const sems = [...corrieron.map((a) => ultima.get(a)!.semaforo), propia?.semaforo].filter(Boolean) as string[];
     const peor = sems.sort((a, b) => (peso[b] ?? 0) - (peso[a] ?? 0))[0] ?? '🟢';
     const res = propia?.resumen && j !== 'Oli' ? propia.resumen : `${corrieron.length} de su equipo corrieron hoy`;
@@ -176,12 +235,17 @@ export async function armarBrief(hoy = todayMx()): Promise<{ message: SlackMessa
 
   const urg = items.filter((i) => i.prioridad === 'urgente').length;
   for (const [a] of ultima) if (a === '__brief__') ultima.delete(a);
-  const sem = urg || salud.some((s) => s.startsWith('🔴')) ? '🔴' : items.length ? '🟡' : '🟢';
+  const sem = urg || salud.some((s) => s.startsWith('🔴')) ? '🔴' : items.length || salud.some((s) => s.startsWith('⚠️')) ? '🟡' : '🟢';
   const titulo = items.length ? `${sem} BizOps · ${fechaCorta(hoy)} · ${items.length} para ti` : `${sem} BizOps · ${fechaCorta(hoy)} · nada para ti hoy`;
   const blocks: SlackBlock[] = [{ type: 'header', text: { type: 'plain_text', text: titulo } } as SlackBlock];
   const MAX = 12;
   for (const it of items.slice(0, MAX)) blocks.push(...itemBlocks(it, hoy));
   if (items.length > MAX) blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `+${items.length - MAX} más: aparecen mañana o en los borradores de Gmail.` }] } as SlackBlock);
+  if (enEspera) blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `🧊 ${enEspera} en espera: salen el lunes.` }] } as SlackBlock);
+  const notas = await briefYaSalio(hoy) ? await leerNotas(NOTA_ENTREGADA, hoy) : await leerNotas(NOTA_NUEVA);
+  if (notas.length) blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `*Ya quedó* (detalle en el hilo)\n${notas.map((n) => `• ${n.jefa}: ${n.titulo}`).join('\n')}`.slice(0, 2900) } } as SlackBlock);
+  const proximas = await viene(hoy);
+  if (proximas.length) blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `*Viene*\n${proximas.map((v) => `⏰ ${v}`).join('\n')}` } } as SlackBlock);
   blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `${salud.join('\n') || 'Sin corridas hoy todavía'}\n🤖 Los agentes no envían ni pagan. ✅ Hecho = ya lo resolviste · ⏭️ Mañana = vuelve a salir · ✖ No aplica = el agente aprende` }] } as SlackBlock);
   const text = `${titulo}\n${items.slice(0, MAX).map((i) => `${i.emoji ?? '•'} ${i.texto} (${jefaDe(i.agente)})`).join('\n')}`;
   return { message: { text: text.slice(0, 2900), blocks }, pendientes: items.length };
@@ -227,7 +291,6 @@ export async function guardarTsBrief(ts: string, hoy = todayMx()) {
  * si trae algo para Pepis, además contesta en el hilo para que llegue la notificación.
  */
 export async function responderEnHiloSiTarde(agente: string, semaforo: Semaforo, resumen: string, items: Item[], hoy = todayMx()) {
-  if (CANAL_POR_AGENTE[agente]) return null;
   const sb = createServerClient();
   const { data } = await sb.from('bizops_runs').select('resumen').eq('agente', '__brief__').eq('fecha', hoy).order('created_at', { ascending: false }).limit(1);
   const ts = (data?.[0] as { resumen?: string } | undefined)?.resumen;
@@ -235,12 +298,34 @@ export async function responderEnHiloSiTarde(agente: string, semaforo: Semaforo,
   if (!ts || !token) return null;
   const { message } = await armarBrief(hoy);
   await updateChatMessage(token, BRIEF_CHANNEL(), ts, message);
+  if (CANAL_POR_AGENTE[agente]) return null;
   const pend = items.filter((i) => i.estado === 'pendiente' && !esRH(i));
   if (!pend.length && semaforo === '🟢') return { ok: true, ts };
   const titulo = `${semaforo} ${jefaDe(agente)} · ${resumen}`.slice(0, 150);
   const blocks: SlackBlock[] = [{ type: 'section', text: { type: 'mrkdwn', text: `*${titulo}*` } } as SlackBlock];
   for (const it of pend.slice(0, 8)) blocks.push(...itemBlocks(it, hoy));
   return postChatMessage(token, BRIEF_CHANNEL(), { text: titulo, blocks }, ts);
+}
+
+/** Órdenes escritas en el canal: "Tina, ya no me avises de X". Solo de Pepis y Regina; en RH también de Paola. Las lee la jefa al arrancar. */
+const QUIENES: Record<string, string> = { U043LK1JQMT: 'Pepis', U06V90A0Q86: 'Regina', U08PLJEPHTR: 'Paola' };
+export async function instrucciones(jefa: string, dias: number) {
+  const token = process.env.SLACK_BOT_TOKEN;
+  if (!token) throw new Error('SLACK_BOT_TOKEN missing');
+  const desde = String(Date.now() / 1000 - dias * 86400);
+  const re = new RegExp(`^\\s*@?${jefa}\\b[,:\\s]+`, 'i');
+  const out: { ts: string; quien: string; texto: string }[] = [];
+  for (const canal of [BRIEF_CHANNEL(), RH()]) {
+    const res = await fetch(`https://slack.com/api/conversations.history?channel=${canal}&oldest=${desde}&limit=200`, { headers: { Authorization: `Bearer ${token}` } });
+    const j = await res.json() as { ok: boolean; error?: string; messages?: { ts: string; user?: string; bot_id?: string; text?: string }[] };
+    if (!j.ok) throw new Error(`conversations.history: ${j.error}`);
+    for (const m of j.messages ?? []) {
+      const quien = m.user && !m.bot_id ? QUIENES[m.user] : undefined;
+      if (!quien || (quien === 'Paola' && (canal !== RH() || jefa !== 'Ruth')) || !re.test(m.text ?? '')) continue;
+      out.push({ ts: m.ts, quien, texto: (m.text ?? '').replace(re, '').slice(0, 800) });
+    }
+  }
+  return out.sort((a, b) => a.ts.localeCompare(b.ts));
 }
 
 /** Propuesta de un pendiente (para prellenar "✏️ Otra carpeta"). */

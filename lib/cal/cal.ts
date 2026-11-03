@@ -2,8 +2,8 @@
  * Cal · calendario único de cumplimiento (INC y SAPI).
  *
  * Fuente de verdad: data/cal/compliance.json. Cal no decide ni presenta nada: avisa en
- * #bizops-finanzas-agentes con la anticipación definida por cada fecha, y los lunes deja
- * el resumen de lo que viene en 45 días. Quien ejecuta sigue siendo la persona o el
+ * #bizops-finanzas-agentes (lo de RH en #bizops-rh-agentes, donde lo ve Paola) con la anticipación
+ * definida por cada fecha, y los lunes deja el resumen de lo que viene en 45 días. Quien ejecuta sigue siendo la persona o el
  * despacho que dice cada fecha.
  */
 import fs from 'fs';
@@ -27,6 +27,9 @@ export interface CalItem {
 export interface CalData { items: CalItem[]; pendientes: string[] }
 
 export const CAL_CHANNEL = () => process.env.CAL_SLACK_CHANNEL ?? process.env.ESTELA_SLACK_CHANNEL ?? 'C0CAJT405R7';
+const CAL_RH_CHANNEL = () => process.env.BIZOPS_RH_CHANNEL ?? 'C0CAGQN5FKL';
+/** Fechas que ejecuta Paola o que son de RH: van a su canal (regla "todo lo de RH va a #bizops-rh-agentes"). */
+const esRHCal = (i: CalItem) => /^paola/i.test(i.ejecuta) || /n[oó]mina|aguinaldo|evaluaciones? 360|payment freeze|hr policies/i.test(i.titulo);
 
 export function loadCal(): CalData {
   const file = path.join(process.cwd(), 'data', 'cal', 'compliance.json');
@@ -113,8 +116,24 @@ export function buildCalMessage(run: CalRun): SlackMessage | null {
   return { text: text.slice(0, 2900), blocks };
 }
 
-export async function postCal(message: SlackMessage): Promise<{ ok: boolean; ts?: string; error?: string }> {
+/** Parte el aviso del día por canal: finanzas y RH. Sin mensaje vacío. */
+export function mensajesCal(run: CalRun): Array<{ canal: string; message: SlackMessage }> {
+  const parte = (f: (i: CalItem) => boolean) => ({
+    ...run,
+    alertasHoy: run.alertasHoy.filter((x) => f(x.item)),
+    vencidas: run.vencidas.filter((x) => f(x.item)),
+    proximas45: run.proximas45.filter((x) => f(x.item)),
+  });
+  const rh = parte(esRHCal);
+  const mensajes = [
+    { canal: CAL_CHANNEL(), message: buildCalMessage(parte((i) => !esRHCal(i))) },
+    { canal: CAL_RH_CHANNEL(), message: buildCalMessage({ ...rh, pendientes: [], esLunes: run.esLunes && rh.proximas45.length > 0 }) },
+  ];
+  return mensajes.filter((m): m is { canal: string; message: SlackMessage } => !!m.message);
+}
+
+export async function postCal(message: SlackMessage, canal = CAL_CHANNEL()): Promise<{ ok: boolean; ts?: string; error?: string }> {
   const token = process.env.SLACK_BOT_TOKEN;
   if (!token) return { ok: false, error: 'SLACK_BOT_TOKEN not set' };
-  return postChatMessage(token, CAL_CHANNEL(), message);
+  return postChatMessage(token, canal, message);
 }
