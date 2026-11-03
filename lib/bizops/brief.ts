@@ -300,7 +300,7 @@ export async function responderEnHiloSiTarde(agente: string, semaforo: Semaforo,
   await updateChatMessage(token, BRIEF_CHANNEL(), ts, message);
   if (CANAL_POR_AGENTE[agente]) return null;
   const pend = items.filter((i) => i.estado === 'pendiente' && !esRH(i));
-  if (!pend.length && semaforo === '🟢') return { ok: true, ts };
+  if (!pend.length && semaforo !== '🔴') return { ok: true, ts };
   const titulo = `${semaforo} ${jefaDe(agente)} · ${resumen}`.slice(0, 150);
   const blocks: SlackBlock[] = [{ type: 'section', text: { type: 'mrkdwn', text: `*${titulo}*` } } as SlackBlock];
   for (const it of pend.slice(0, 8)) blocks.push(...itemBlocks(it, hoy));
