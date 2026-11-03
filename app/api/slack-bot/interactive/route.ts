@@ -5,7 +5,7 @@ import { postChatMessage } from '@/lib/slack/post';
 import { runKpiGuard, formatGuardRun } from '@/lib/audit/kpi-guard';
 import { runKpiFix, formatFixResult, fixInProgress } from '@/lib/audit/kpi-fix';
 import { setProposalStatus } from '@/lib/estela/estela';
-import { decidir, marcarDecidido, propuestaDe, mensajeDe } from '@/lib/bizops/brief';
+import { decidir, marcarDecidido, propuestaDe, mensajeDe, jefaDe } from '@/lib/bizops/brief';
 
 // Correcciones largas (re-sincronizar réplica + tiendas ≈ 2–4 min) corren en waitUntil después de responder a Slack.
 export const maxDuration = 300;
@@ -40,8 +40,8 @@ export async function POST(request: NextRequest) {
     waitUntil((async () => {
       if (!meta.id || !ruta) return;
       const r = await decidir(meta.id, 'hecho', quien, ruta);
-      if (tok && meta.channel) await postChatMessage(tok, meta.channel, { text: `✏️ ${r.ok ? `${r.agente} guardará en: ${ruta}` : 'No pude guardar la carpeta'}`,
-        blocks: [{ type: 'section', text: { type: 'mrkdwn', text: r.ok ? `✏️ *${r.texto}*\n${r.agente} guardará en: \`${ruta}\`${quien ? ` · ${quien}` : ''}` : `⚠️ No pude guardar: ${r.error}` } }] }, meta.ts);
+      if (tok && meta.channel) await postChatMessage(tok, meta.channel, { text: `✏️ ${r.ok ? `${jefaDe(r.agente)} guardará en: ${ruta}` : 'No pude guardar la carpeta'}`,
+        blocks: [{ type: 'section', text: { type: 'mrkdwn', text: r.ok ? `✏️ *${r.texto}*\n${jefaDe(r.agente)} guardará en: \`${ruta}\`${quien ? ` · ${quien}` : ''}` : `⚠️ No pude guardar: ${r.error}` } }] }, meta.ts);
     })());
     return new NextResponse('', { status: 200 });
   }
@@ -126,7 +126,7 @@ export async function POST(request: NextRequest) {
         const estado = action === 'bizops_hecho' ? 'hecho' : action === 'bizops_manana' ? 'manana' : 'no';
         const r = Number.isFinite(id) ? await decidir(id, estado, who) : { ok: false as const, error: 'id inválido' };
         const etiqueta = !r.ok ? `⚠️ No pude guardar: ${r.error}`
-          : estado === 'hecho' ? `✅ Hecho${who ? ` · ${who}` : ''}` : estado === 'manana' ? `⏭️ Mañana vuelve a salir${who ? ` · ${who}` : ''}` : `✖ No aplica${who ? ` · ${who}` : ''} · ${r.agente} lo anota para aprender`;
+          : estado === 'hecho' ? `✅ Hecho${who ? ` · ${who}` : ''}` : estado === 'manana' ? `⏭️ Mañana vuelve a salir${who ? ` · ${who}` : ''}` : `✖ No aplica${who ? ` · ${who}` : ''} · ${jefaDe(r.agente)} lo anota para aprender`;
         const responseUrl: string | undefined = payload.response_url;
         const blocks = payload.message?.blocks;
         if (responseUrl && Array.isArray(blocks)) {
