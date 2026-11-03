@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
         ...conBotones,
         { type: 'context', elements: [{ type: 'mrkdwn', text: `🤖 ${jefaDe(agente)} · propone, no envía. Pepis decide.` }] },
       ] }, canalDe(agente));
-    } else if (b.publicar && guardados.some((i) => i.estado === 'pendiente')) {
+    } else if (b.publicar && guardados.some((i) => i.estado === 'pendiente' && (rhPropio || !esRH(i)))) {
       posted = await publicar(mensajeInmediato(agente, semaforo, String(b.resumen ?? ''), canalDe(agente) === RH_CHANNEL() ? guardados : guardados.filter((i) => !esRH(i))), canalDe(agente));
     }
     // Pendientes "rh:" de un agente de finanzas (Dalia → Coba): salen al momento en #bizops-rh-agentes, donde los sigue Paola.
