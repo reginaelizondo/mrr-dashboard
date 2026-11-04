@@ -88,6 +88,12 @@ export async function guardarCorrida(agente: string, semaforo: Semaforo, resumen
   }));
   const { data, error } = await sb.from('bizops_items').upsert(rows, { onConflict: 'agente,ref' }).select('*');
   if (error) throw new Error(`bizops_items: ${error.message}`);
+  // Lo que se cierra aquí se cierra también si la jefa o un compañero lo mandó con el mismo ref o el mismo texto (Pepis, 4-nov: Brex salió dos veces)
+  const equipo = [jefaDe(agente), ...(JEFAS[jefaDe(agente)]?.equipo ?? [])];
+  for (const r of rows.filter((x) => x.estado === 'hecho' || x.estado === 'no')) {
+    await sb.from('bizops_items').update({ estado: r.estado, decidido_por: agente, decidido_en: new Date().toISOString() })
+      .in('agente', equipo).in('estado', ['pendiente', 'manana']).or(`ref.eq.${JSON.stringify(r.ref)},texto.eq.${JSON.stringify(r.texto)}`);
+  }
   return (data ?? []) as Item[];
 }
 
@@ -209,7 +215,11 @@ export async function armarBrief(hoy = todayMx()): Promise<{ message: SlackMessa
   const { data: its } = await sb.from('bizops_items').select('*').in('estado', ['pendiente', 'manana']);
   const orden = Object.keys(JEFAS);
   const dowHoy = new Date(`${hoy}T12:00:00Z`).getUTCDay();
-  const abiertos = ((its ?? []) as Item[]).filter((i) => !esRH(i));
+  // Un mismo pendiente mandado por la jefa y por su agente (o con dos refs) sale una sola vez: el más viejo
+  const vistos = new Set<string>();
+  const abiertos = ((its ?? []) as Item[]).filter((i) => !esRH(i))
+    .sort((a, b) => a.primera_vez.localeCompare(b.primera_vez))
+    .filter((i) => { const k = `${jefaDe(i.agente)}|${i.ref}`, t = `${jefaDe(i.agente)}|${i.texto}`; if (vistos.has(k) || vistos.has(t)) return false; vistos.add(k); vistos.add(t); return true; });
   const enEspera = dowHoy === 1 ? 0 : abiertos.filter((i) => enfriado(i, hoy)).length;
   const items = abiertos.filter((i) => dowHoy === 1 || !enfriado(i, hoy)).sort((a, b) => ORDEN[a.prioridad] - ORDEN[b.prioridad] || orden.indexOf(jefaDe(a.agente)) - orden.indexOf(jefaDe(b.agente)) || a.primera_vez.localeCompare(b.primera_vez));
   const { data: runs } = await sb.from('bizops_runs').select('agente, semaforo, resumen, created_at').eq('fecha', hoy).order('created_at', { ascending: false });
