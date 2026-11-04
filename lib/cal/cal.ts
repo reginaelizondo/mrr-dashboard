@@ -29,7 +29,7 @@ export interface CalData { items: CalItem[]; pendientes: string[] }
 export const CAL_CHANNEL = () => process.env.CAL_SLACK_CHANNEL ?? process.env.ESTELA_SLACK_CHANNEL ?? 'C0CAJT405R7';
 const CAL_RH_CHANNEL = () => process.env.BIZOPS_RH_CHANNEL ?? 'C0CAGQN5FKL';
 /** Fechas que ejecuta Paola o que son de RH: van a su canal (regla "todo lo de RH va a #bizops-rh-agentes"). */
-const esRHCal = (i: CalItem) => /^paola/i.test(i.ejecuta) || /n[oó]mina|aguinaldo|evaluaciones? 360|payment freeze|hr policies/i.test(i.titulo);
+const esRHCal = (i: CalItem) => /^paola/i.test(i.ejecuta ?? '') || /paola|\bnps\b|n[oó]mina|aguinaldo|evaluaciones? 360|payment freeze|hr policies/i.test(i.titulo);
 
 export function loadCal(): CalData {
   const file = path.join(process.cwd(), 'data', 'cal', 'compliance.json');
@@ -124,10 +124,11 @@ export function mensajesCal(run: CalRun): Array<{ canal: string; message: SlackM
     vencidas: run.vencidas.filter((x) => f(x.item)),
     proximas45: run.proximas45.filter((x) => f(x.item)),
   });
+  // Finanzas ve todo; lo de RH (comunicados de Paola, NPS, nómina…) sale además en #bizops-rh-agentes (Pepis, 4-nov: en ambos)
   const rh = parte(esRHCal);
   const mensajes = [
-    { canal: CAL_CHANNEL(), message: buildCalMessage(parte((i) => !esRHCal(i))) },
-    { canal: CAL_RH_CHANNEL(), message: buildCalMessage({ ...rh, pendientes: [], esLunes: run.esLunes && rh.proximas45.length > 0 }) },
+    { canal: CAL_CHANNEL(), message: buildCalMessage(run) },
+    { canal: CAL_RH_CHANNEL(), message: buildCalMessage({ ...rh, pendientes: run.pendientes.filter((x) => /paola/i.test(x)), esLunes: run.esLunes && rh.proximas45.length > 0 }) },
   ];
   return mensajes.filter((m): m is { canal: string; message: SlackMessage } => !!m.message);
 }
