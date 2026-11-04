@@ -30,8 +30,20 @@ export async function POST(request: NextRequest) {
     const rhPropio = canalDe(agente) === RH_CHANNEL();
     const yaSalio = await briefYaSalio();
     const hayBotones = guardados.some((i) => i.estado === 'pendiente' && !esRH(i));
+    // Todo lo pendiente es "rh:" (ej. licencias, que ve Paola): la nota va con sus botones a RH, no a finanzas (Pepis, 4-nov)
+    const soloRH = !rhPropio && !hayBotones && guardados.some((i) => i.estado === 'pendiente' && esRH(i));
     const suelta = !!b.publicar || semaforo === '🔴' || rhPropio || (yaSalio && hayBotones);
-    if (nota && !suelta) {
+    let rhYa = false;
+    if (nota && soloRH) {
+      const titulo = `${semaforo} ${jefaDe(agente)} · ${String(b.resumen ?? '')}`.slice(0, 150);
+      const rhItems = guardados.filter((i) => esRH(i) && i.estado === 'pendiente');
+      posted = await publicar({ text: `${titulo}\n${nota}`.slice(0, 2900), blocks: [
+        { type: 'header', text: { type: 'plain_text', text: titulo } },
+        { type: 'section', text: { type: 'mrkdwn', text: nota } },
+        ...(mensajeInmediato(agente, semaforo, 'para RH', rhItems).blocks?.slice(1) ?? []),
+      ] }, RH_CHANNEL());
+      rhYa = true;
+    } else if (nota && !suelta) {
       await guardarNota(agente, semaforo, String(b.resumen ?? ''), nota);
     } else if (nota) {
       // Contexto + botones en un solo mensaje (Pepis, 29-oct: el detalle del VOBO llega a Slack, no a un borrador)
@@ -49,7 +61,7 @@ export async function POST(request: NextRequest) {
     }
     // Pendientes "rh:" de un agente de finanzas (Dalia → Coba): salen al momento en #bizops-rh-agentes, donde los sigue Paola.
     const rh = canalDe(agente) === RH_CHANNEL() ? [] : guardados.filter((i) => esRH(i) && i.estado === 'pendiente');
-    if (rh.length) await publicar(mensajeInmediato(agente, semaforo, 'para RH', rh), RH_CHANNEL());
+    if (rh.length && !rhYa) await publicar(mensajeInmediato(agente, semaforo, 'para RH', rh), RH_CHANNEL());
     if (!posted) posted = await responderEnHiloSiTarde(agente, semaforo, String(b.resumen ?? ''), guardados);
     return NextResponse.json({ ok: true, guardados: guardados.length, posted });
   } catch (e) {
