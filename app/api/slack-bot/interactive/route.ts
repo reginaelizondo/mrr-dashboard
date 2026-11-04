@@ -5,7 +5,7 @@ import { postChatMessage } from '@/lib/slack/post';
 import { runKpiGuard, formatGuardRun } from '@/lib/audit/kpi-guard';
 import { runKpiFix, formatFixResult, fixInProgress } from '@/lib/audit/kpi-fix';
 import { setProposalStatus } from '@/lib/estela/estela';
-import { decidir, marcarDecidido, propuestaDe, mensajeDe, jefaDe } from '@/lib/bizops/brief';
+import { decidir, marcarDecidido, propuestaDe, mensajeDe, jefaDe, guardarEdicion, tomarEdicion } from '@/lib/bizops/brief';
 
 // Correcciones largas (re-sincronizar réplica + tiendas ≈ 2–4 min) corren en waitUntil después de responder a Slack.
 export const maxDuration = 300;
@@ -47,17 +47,24 @@ export async function POST(request: NextRequest) {
   }
   // "✏️ Cambiar texto": se publica el texto editado y queda como respuesta para que el agente aprenda
   if (payload.type === 'view_submission' && payload.view?.callback_id === 'bizops_editar') {
-    const meta = JSON.parse(payload.view.private_metadata || '{}') as { id?: number; channel?: string; ts?: string };
+    const meta = JSON.parse(payload.view.private_metadata || '{}') as { id?: number; channel?: string; ts?: string; e?: number };
     const texto = String(payload.view.state?.values?.msg?.valor?.value ?? '').trim();
     const quien = payload.user?.username ? `@${payload.user.username}` : undefined;
     const tok = process.env.SLACK_BOT_TOKEN;
     waitUntil((async () => {
       if (!meta.id || !texto || !tok) return;
-      const m = mensajeDe((await propuestaDe(meta.id)).propuesta);
+      const p = await propuestaDe(meta.id);
+      const m = mensajeDe(p.propuesta);
       if (!m) return;
-      const r = await postChatMessage(tok, m.canal, { text: texto });
-      if (r.ok) await decidir(meta.id, 'hecho', quien, texto);
-      if (meta.channel) await postChatMessage(tok, meta.channel, { text: r.ok ? `📤 Publicado en #${m.nombre}${quien ? ` · ${quien}` : ''}` : `⚠️ No pude publicar en #${m.nombre}: ${r.error ?? ''}` }, meta.ts);
+      const yaEstaba = p.estado === 'hecho';
+      const r = yaEstaba ? { ok: true as const } : await postChatMessage(tok, m.canal, { text: texto });
+      if (r.ok && !yaEstaba) await decidir(meta.id, 'hecho', quien, texto);
+      const etiqueta = yaEstaba ? '✅ Ya estaba hecho' : r.ok ? `📤 Publicado en #${m.nombre} con tu texto${quien ? ` · ${quien}` : ''}` : `⚠️ No pude publicar en #${m.nombre}: ${'error' in r ? r.error ?? '' : ''}`;
+      // Quita los botones del mensaje original (se guardó al abrir el modal); si ya venció, avisa en el hilo
+      const ed = await tomarEdicion(meta.e);
+      const res = ed?.responseUrl && ed.blocks ? await fetch(ed.responseUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ replace_original: true, text: ed.text ?? 'Brief BizOps', blocks: marcarDecidido(ed.blocks, meta.id, etiqueta) }) }).catch(() => null) : null;
+      if ((!res || !res.ok) && meta.channel) await postChatMessage(tok, meta.channel, { text: etiqueta }, meta.ts);
     })());
     return new NextResponse('', { status: 200 });
   }
@@ -91,10 +98,11 @@ export async function POST(request: NextRequest) {
     const id = Number(payload.actions?.[0]?.value);
     const m = Number.isFinite(id) ? mensajeDe((await propuestaDe(id)).propuesta) : null;
     if (!m) { await reply('⚠️ Ese mensaje ya no está disponible'); return new NextResponse('', { status: 200 }); }
+    const e = await guardarEdicion({ responseUrl: payload.response_url, text: payload.message?.text, blocks: payload.message?.blocks }).catch(() => undefined);
     await fetch('https://slack.com/api/views.open', {
       method: 'POST', headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ trigger_id: payload.trigger_id, view: {
-        type: 'modal', callback_id: 'bizops_editar', private_metadata: JSON.stringify({ id, channel, ts: threadTs }),
+        type: 'modal', callback_id: 'bizops_editar', private_metadata: JSON.stringify({ id, channel, ts: threadTs, e }),
         title: { type: 'plain_text', text: 'Cambiar texto' }, submit: { type: 'plain_text', text: 'Publicar' }, close: { type: 'plain_text', text: 'Cancelar' },
         blocks: [
           { type: 'section', text: { type: 'mrkdwn', text: `Se publica en *#${m.nombre}* al picar Publicar.` } },
@@ -109,10 +117,13 @@ export async function POST(request: NextRequest) {
     try {
       if (action === 'bizops_publicar') {
         const id = Number(payload.actions?.[0]?.value);
-        const m = Number.isFinite(id) ? mensajeDe((await propuestaDe(id)).propuesta) : null;
-        const r = m ? await postChatMessage(token, m.canal, { text: m.texto }) : { ok: false, error: 'mensaje no disponible' };
-        if (r.ok) await decidir(id, 'hecho', who, 'publicado');
-        const etiqueta = r.ok ? `📤 Publicado en #${m!.nombre}${who ? ` · ${who}` : ''}` : `⚠️ No pude publicar: ${r.error ?? ''} (¿el bot está en el canal?)`;
+        const p = Number.isFinite(id) ? await propuestaDe(id) : {};
+        const m = mensajeDe(p.propuesta);
+        // Si ya estaba hecho (lo publicó con otro texto o picó ✅), no se publica dos veces
+        const yaEstaba = p.estado === 'hecho';
+        const r = yaEstaba ? { ok: true as const } : m ? await postChatMessage(token, m.canal, { text: m.texto }) : { ok: false, error: 'mensaje no disponible' };
+        if (r.ok && !yaEstaba) await decidir(id, 'hecho', who, 'publicado');
+        const etiqueta = yaEstaba ? '✅ Ya estaba hecho · no lo volví a publicar' : r.ok ? `📤 Publicado en #${m!.nombre}${who ? ` · ${who}` : ''}` : `⚠️ No pude publicar: ${'error' in r ? r.error ?? '' : ''} (¿el bot está en el canal?)`;
         const responseUrl: string | undefined = payload.response_url;
         const blocks = payload.message?.blocks;
         if (responseUrl && Array.isArray(blocks)) {

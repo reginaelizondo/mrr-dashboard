@@ -131,6 +131,7 @@ function itemBlocks(it: Item, hoy: string): SlackBlock[] {
         elements: [
           { type: 'button', style: 'primary', action_id: 'bizops_publicar', value: String(it.id), text: { type: 'plain_text', text: '📤 Publicar' } },
           { type: 'button', action_id: 'bizops_editar', value: String(it.id), text: { type: 'plain_text', text: '✏️ Cambiar texto' } },
+          { type: 'button', action_id: 'bizops_hecho', value: String(it.id), text: { type: 'plain_text', text: '✅ Ya lo hice' } },
           { type: 'button', action_id: 'bizops_no', value: String(it.id), text: { type: 'plain_text', text: '✖ No' } },
         ],
       },
@@ -320,6 +321,24 @@ export async function responderEnHiloSiTarde(agente: string, semaforo: Semaforo,
 /** Propuesta de un pendiente (para prellenar "✏️ Otra carpeta"). */
 export async function propuestaDe(id: number) {
   const sb = createServerClient();
-  const { data } = await sb.from('bizops_items').select('propuesta, texto').eq('id', id).single();
-  return (data ?? {}) as { propuesta?: string | null; texto?: string };
+  const { data } = await sb.from('bizops_items').select('propuesta, texto, estado').eq('id', id).single();
+  return (data ?? {}) as { propuesta?: string | null; texto?: string; estado?: string };
+}
+
+/** "✏️ Cambiar texto" abre un modal; al publicar hay que quitarle los botones al mensaje original (Pepis, 4-nov:
+ *  publicó con texto cambiado y el item se quedaba con botones). El modal no trae response_url: se guarda aquí al abrirlo. */
+export async function guardarEdicion(d: { responseUrl?: string; text?: string; blocks?: unknown }) {
+  if (!d.responseUrl || !Array.isArray(d.blocks)) return undefined;
+  const sb = createServerClient();
+  const { data } = await sb.from('bizops_runs').insert({ agente: '__editar__', fecha: todayMx(), semaforo: '🟢', resumen: JSON.stringify(d) }).select('id').single();
+  return (data as { id?: number } | null)?.id;
+}
+
+export async function tomarEdicion(id?: number): Promise<{ responseUrl?: string; text?: string; blocks?: SlackBlock[] } | null> {
+  if (!id) return null;
+  const sb = createServerClient();
+  const { data } = await sb.from('bizops_runs').select('resumen').eq('id', id).eq('agente', '__editar__').single();
+  if (!data) return null;
+  await sb.from('bizops_runs').update({ agente: '__editar_ok__' }).eq('id', id);
+  return JSON.parse((data as { resumen: string }).resumen);
 }
