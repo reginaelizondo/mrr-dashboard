@@ -183,9 +183,13 @@ function bandFor(series: DailyRow[], key: KPIKey): Band | null {
   return { weekdayMean, overallMean, sd: Math.sqrt(variance), n: pts.length };
 }
 
+function expectedFor(band: Band | null, dow: number): number | null {
+  return band ? band.weekdayMean[dow] ?? band.overallMean : null;
+}
+
 function flagFor(key: KPIKey, value: number | null, band: Band | null, dow: number): 'mejor' | 'peor' | null {
   if (value === null || !band || band.sd === 0) return null;
-  const expected = band.weekdayMean[dow] ?? band.overallMean;
+  const expected = expectedFor(band, dow) as number;
   const z = (value - expected) / band.sd;
   const rel = relChange(key, value, expected);
   if (rel === null) return null;
@@ -210,13 +214,15 @@ interface Comparison {
   base: number | null;
   sameDay: number | null;
   flag: 'mejor' | 'peor' | null;
+  /** Daily only: the band's expected value (mean of the same weekday, 28 days). The flag is decided against this, not against `base`. */
+  expected?: number | null;
 }
 
 function compareDaily(
   key: KPIKey, y: KPIValues, trailing7: KPIValues, sameDow: KPIValues, band: Band | null, dow: number
 ): Comparison {
   const base = baselineOf(key, trailing7, 7);
-  return { key, value: y[key], base, sameDay: sameDow[key], flag: flagFor(key, y[key], band, dow) };
+  return { key, value: y[key], base, sameDay: sameDow[key], flag: flagFor(key, y[key], band, dow), expected: expectedFor(band, dow) };
 }
 
 function compareWindows(key: KPIKey, curr: KPIValues, prev: KPIValues): Comparison {
@@ -241,6 +247,10 @@ function toFact(c: Comparison): FactComparison {
     vsBaseline: fmtDelta(c.key, c.value, c.base),
     vsSameDay: c.sameDay === null ? null : fmtDelta(c.key, c.value, c.sameDay),
     flag: c.flag,
+    ...(c.expected === undefined ? {} : {
+      tipico: c.expected === null ? null : fmtValue(c.key, c.expected),
+      vsTipico: c.expected === null ? null : fmtDelta(c.key, c.value, c.expected),
+    }),
   };
 }
 
@@ -438,11 +448,16 @@ function findDiscrepancies(v: KPIValues): Discrepancy[] {
 // ---- Narrative fallback ---------------------------------------------------------
 
 /** Who should look at a KPI that left its band, and where. */
-function actionFor(c: Comparison, sameLabel: string): string {
+/** "−14% vs mié. típico": the comparison that raised the band flag (falls back to the 7-day average). */
+function flagDelta(c: Comparison, tipicoLabel: string): string {
+  if (c.expected != null) return `${fmtDelta(c.key, c.value, c.expected) ?? ''} vs ${tipicoLabel}`;
+  return `${fmtDelta(c.key, c.value, c.base) ?? ''} vs prom. 7d`;
+}
+
+function actionFor(c: Comparison, sameLabel: string, tipicoLabel: string): string {
   const k = c.key;
-  const d7 = fmtDelta(k, c.value, c.base) ?? '';
   const dd = c.sameDay === null ? '' : ` · ${fmtDelta(k, c.value, c.sameDay)} ${sameLabel}`;
-  const v = `${KPI_LABELS[k]} ${fmtValue(k, c.value)} (${d7} vs prom. 7d${dd})`;
+  const v = `${KPI_LABELS[k]} ${fmtValue(k, c.value)} (${flagDelta(c, tipicoLabel)}${dd})`;
   const role = ROLE[k] ?? 'General';
   if (c.flag === 'mejor') {
     return `${role}: ${v} — confirmar que se sostiene 2–3 días antes de leerlo como tendencia.`;
@@ -457,18 +472,18 @@ function actionFor(c: Comparison, sameLabel: string): string {
 }
 
 function buildFallbackNarrative(
-  daily: Comparison[], weekly: Comparison[] | null, movers: string[], sameLabel: string, osAlerts: OsWeekly[] = []
+  daily: Comparison[], weekly: Comparison[] | null, movers: string[], sameLabel: string, tipicoLabel: string, osAlerts: OsWeekly[] = []
 ): BriefNarrative {
   const flagged = daily.filter((c) => c.flag);
   const worse = flagged.filter((c) => c.flag === 'peor');
   const better = flagged.filter((c) => c.flag === 'mejor');
-  const describe = (c: Comparison) => `${KPI_LABELS[c.key]} *${fmtValue(c.key, c.value)}* (${fmtDelta(c.key, c.value, c.base) ?? ''} vs prom. 7d)`;
+  const describe = (c: Comparison) => `${KPI_LABELS[c.key]} *${fmtValue(c.key, c.value)}* (${flagDelta(c, tipicoLabel)})`;
 
   const parts: string[] = [];
   if (flagged.length === 0) {
     parts.push('Ayer dentro de rango: ningún KPI operativo salió de su banda estacional de 28 días. `FACT`');
   } else {
-    if (worse.length) parts.push('🔴 Ayer, fuera de banda a la baja: ' + worse.slice(0, 3).map(describe).join('; ') + '. `FACT`');
+    if (worse.length) parts.push('🔴 Ayer, fuera de rango en contra: ' + worse.slice(0, 3).map(describe).join('; ') + '. `FACT`');
     if (better.length) parts.push('🟢 A favor: ' + better.slice(0, 2).map(describe).join('; ') + '. `FACT`');
   }
   // Weekly movers go into the headline itself (not a loose comment under the table).
@@ -484,7 +499,7 @@ function buildFallbackNarrative(
   const seenRole = new Set<string>();
   const acciones: string[] = [];
   for (const c of [...worse, ...better]) {
-    const a = actionFor(c, sameLabel);
+    const a = actionFor(c, sameLabel, tipicoLabel);
     const role = a.split(':')[0];
     if (seenRole.has(role)) continue;
     seenRole.add(role);
@@ -660,8 +675,19 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
     : dims;
   const t7PerDay = { ...totals.trailing7 } as KPIValues;
   for (const k of Object.keys(t7PerDay) as KPIKey[]) if (ADDITIVE.has(k) && t7PerDay[k] !== null) t7PerDay[k] = (t7PerDay[k] as number) / 7;
+  // "miércoles típico" = mean of the same weekday over the 28-day band window (what decides a daily flag)
+  const tipicoDow = dayLabelEs(y).split(' ')[0];
+  const tipicoLabel = `${tipicoDow} típico`;
   const causas: Array<{ key: KPIKey; scope: string; text: string }> = [];
   for (const c of daily.filter((x) => x.flag)) {
+    // The segment breakdown compares against the 7-day average. If that average points the
+    // other way from the band (a weak weekend drags it down), its "cause" would explain a move
+    // that isn't the flagged one — say so instead of printing a contradictory line.
+    const vs7 = relChange(c.key, c.value, c.base), vsTip = relChange(c.key, c.value, c.expected ?? null);
+    if (vs7 !== null && vsTip !== null && Math.sign(vs7) !== Math.sign(vsTip)) {
+      causas.push({ key: c.key, scope: 'ayer', text: `${fmtDelta(c.key, c.value, c.expected ?? null)} vs ${tipicoLabel} (${fmtValue(c.key, c.expected ?? null)}), pero ${fmtDelta(c.key, c.value, c.base)} vs prom. 7d porque los días previos vinieron bajos; el desglose por segmento compara contra el prom. 7d, así que aquí no aplica` });
+      continue;
+    }
     const text = explainMove(c, totals.yesterday, t7PerDay, dailyDims);
     if (text) causas.push({ key: c.key, scope: 'ayer', text });
   }
@@ -705,7 +731,7 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
     fecha: dayLabelEs(today),
     ayer: {
       dia: dayShortEs(y),
-      comparadoCon: `promedio diario de los 7 días previos (${rangeShortEs(t7.start, t7.end)}) y mismo día de la semana pasada (${dayShortEs(addDays(y, -7))})`,
+      comparadoCon: `promedio diario de los 7 días previos (${rangeShortEs(t7.start, t7.end)}) y mismo día de la semana pasada (${dayShortEs(addDays(y, -7))}). El flag NO sale de esas bases: sale de "vsTipico", ayer contra el promedio del mismo día de la semana en las 4 semanas previas ("${tipicoLabel}")`,
       kpis: daily.map(toFact),
     },
     semanaEnCurso: wtd ? {
@@ -739,7 +765,7 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   if (!opts.skipNarrative && !narrativeOff) narrative = await writeBriefNarrative(facts);
   const narrativeSource: 'claude' | 'fallback' = narrative ? 'claude' : 'fallback';
   const sameLabel = `vs ${dayShortEs(addDays(y, -7))}`;
-  narrative ??= buildFallbackNarrative(daily, week ?? wtd, movers, sameLabel, weekly ? osAlerts : []);
+  narrative ??= buildFallbackNarrative(daily, week ?? wtd, movers, sameLabel, tipicoLabel, weekly ? osAlerts : []);
 
   // ---- Render -------------------------------------------------------------------
   // Main message = the executive view: headline, a six-KPI traffic light, top-3
@@ -768,7 +794,8 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   const valDelta = (k: KPIKey, v: number | null, b: number | null) => { const d = fmtDelta(k, v, b); return `${fmtValue(k, v)}${d ? `  ${dot(k, v, b)} ${d}` : ''}`; };
   const compRows = (cs: Comparison[], withSame: boolean) => cs.map((c) => [
     KPI_LABELS[c.key], fmtValue(c.key, c.value), deltaCell(c.key, c.value, c.base),
-    ...(withSame ? [c.sameDay === null ? '—' : deltaCell(c.key, c.value, c.sameDay)] : []), c.flag ? '‼️' : '',
+    ...(withSame ? [c.sameDay === null ? '—' : deltaCell(c.key, c.value, c.sameDay)] : []),
+    c.flag ? `‼️ ${c.expected != null ? `${flagDot(c.flag)} ${fmtDelta(c.key, c.value, c.expected)}` : ''}`.trim() : '',
   ]);
   const weekHdr = (start: string) => dayShortEs(start).split(' ').slice(-1)[0];
   const osTable = () => {
@@ -782,7 +809,8 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
       const c = comps.find((x) => x.key === k);
       if (!c) return [];
       const d = fmtDelta(k, c.value, c.base);
-      return [{ type: 'mrkdwn', text: `*${KPI_LABELS[k]}*\n${fmtValue(k, c.value)}  ${dot(k, c.value, c.base)} ${d ?? 'n/d'} ${baseLabel}${c.flag ? ' ‼️' : ''}` }];
+      const band = c.flag ? (c.expected != null ? `\n‼️ ${flagDot(c.flag)} ${flagDelta(c, tipicoLabel)}` : ' ‼️') : '';
+      return [{ type: 'mrkdwn', text: `*${KPI_LABELS[k]}*\n${fmtValue(k, c.value)}  ${dot(k, c.value, c.base)} ${d ?? 'n/d'} ${baseLabel}${band}` }];
     });
     textParts.push(`*${heading}*`, ...fields.map((f) => '  ' + f.text.replace('\n', ' ')), '');
     return { type: 'section', text: { type: 'mrkdwn', text: `*${heading}*` }, fields };
@@ -816,7 +844,7 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
   }
   mainBlocks.push(sec(`*Qué revisaría hoy*\n` + narrative.queRevisariaHoy.map((a, i) => `${i + 1}. ${a}`).join('\n')));
   mainBlocks.push(ctx(`📊 Abrir en el dashboard: <${linkAyer}|últimos 30 días> · <${linkSemana}|${week ? 'semana pasada' : 'semana en curso'}> · <${linkTendencia}|tendencia 12 semanas> · <${linkDesglose}|desglose>`));
-  mainBlocks.push(ctx(`🧵 Detalle en el hilo (tablas): ayer completo · semana · tendencia 4 semanas · alerta por OS · desglose por plataforma, idioma y país · 🟢/🔴 mejor/peor que la base · ⚪ sin cambio · ‼️ fuera de la banda de 28 días · 🤖 KPI Bot${narrativeSource === 'fallback' ? ' · narrativa automática' : ''}`));
+  mainBlocks.push(ctx(`🧵 Detalle en el hilo (tablas): ayer completo · semana · tendencia 4 semanas · alerta por OS · desglose por plataforma, idioma y país · 🟢/🔴 mejor/peor que la base · ⚪ sin cambio · ‼️ fuera de rango vs el mismo día de la semana en las últimas 4 semanas (de ahí sale el 🔴/🟢 del titular) · 🤖 KPI Bot${narrativeSource === 'fallback' ? ' · narrativa automática' : ''}`));
 
   // --- thread
   textParts.push('——— 🧵 HILO ———', '');
@@ -825,8 +853,8 @@ export async function buildDailyBrief(opts: DailyBriefOptions = {}): Promise<Dai
     text: 'Ayer — detalle',
     blocks: [
       sec(`*Ayer — ${dayShortEs(y)}*  _(vs prom. 7d · ${sameLabel})_` + (narrative.comentarioAyer ? `\n${narrative.comentarioAyer}` : '')),
-      table(['KPI', 'Ayer', 'vs prom. 7d', sameLabel, ''], [['§Adquisición'], ...compRows(dailyAcq, true), ['§Monetización'], ...compRows(dailyMon, true)]),
-      ctx(`🟢/🔴 mejor/peor que la base · ‼️ fuera de la banda de 28 días · 📊 <${linkAyer}|últimos 30 días en el dashboard>`),
+      table(['KPI', 'Ayer', 'vs prom. 7d', sameLabel, `vs ${tipicoLabel}`], [['§Adquisición'], ...compRows(dailyAcq, true), ['§Monetización'], ...compRows(dailyMon, true)]),
+      ctx(`🟢/🔴 mejor/peor que la base · ‼️ fuera de rango vs ${tipicoLabel} (promedio de los ${tipicoDow} de las últimas 4 semanas); solo esa columna decide el ‼️ · 📊 <${linkAyer}|últimos 30 días en el dashboard>`),
     ],
   });
   if (wtd) thread.push({ text: 'Semana en curso', blocks: [

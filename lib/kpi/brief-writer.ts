@@ -23,6 +23,8 @@ export interface FactComparison {
   vsBaseline: string | null; // e.g. "+12%" / "−0.4 pp"
   vsSameDay: string | null;  // vs same weekday last week (daily only)
   flag: 'mejor' | 'peor' | null; // outside the 28-day noise band
+  tipico?: string | null;   // daily only: expected value = mean of the same weekday, last 4 weeks
+  vsTipico?: string | null; // daily only: value vs tipico — the comparison that decides the flag
 }
 
 export interface FactBreakdownRow {
@@ -69,6 +71,7 @@ REGLAS DE CONTENIDO
 - El JSON trae "causas": la descomposición calculada de cada KPI fuera de banda (de qué componente viene el movimiento y qué segmento lo explica). Úsalas: el titular debe decir QUÉ se movió y POR QUÉ, con esas causas. Y trae "tendencia4Semanas": úsala para distinguir un día raro de una tendencia (si un KPI lleva 3–4 semanas en la misma dirección, dilo). Y trae "alertaSemanalOs": por OS, la semana cerrada contra las 4 previas y la conversión de la cohorte de signup a 8 días; si una línea trae 🔴, menciónala en el titular aunque el total se vea bien (el total lo domina iOS).
 - Prioriza en este orden: (1) KPIs marcados con flag (fuera de su banda de ruido de 28 días), (2) lo que mueve dinero: New Subs Sales, CAC, spend, Total Sales, (3) el desglose que explica el movimiento. Lo que está dentro de banda no merece frase, salvo que acumule tendencia.
 - Si nada está fuera de banda, dilo en una frase ("día dentro de rango") y no rellenes.
+- En "ayer", el flag se decide contra "vsTipico" (el promedio del mismo día de la semana en las 4 semanas previas), NO contra "vsBaseline" (promedio 7 días). Cuando cites un KPI de ayer con flag, da su "vsTipico" ("Signups *2,515* (−14% vs mié. típico)"); nunca pongas junto a un 🔴 un "vsBaseline" positivo ni junto a un 🟢 uno negativo, porque se lee como contradicción. Para KPIs donde menos es mejor (CAC, CPNU, CPFT, refunds), "peor" significa que subieron: di "en contra", no "a la baja".
 - "Qué revisaría hoy": 2 a 4 acciones concretas y chequeables, cada una dirigida a un rol: Producto/Tech (signups, FT starts, FT conversion, conversion, New Subs — funnel in-app), Marketing (spend, CPNU, CPFT, CAC — adquisición), General (revenue, renewals, refunds). Cada acción debe nombrar el segmento concreto que sale en "causas" (plataforma, idioma o país), no "revisar en general". Si no hay nada que revisar, una sola línea diciéndolo.
 - Nunca uses lenguaje de alarma ("crisis", "desplome", "alarmante") ni adjetivos vacíos. Frases cortas. Números en negritas con asteriscos simples (*1,745*).
 

@@ -282,6 +282,13 @@ manda el aviso de error al canal de cohortes y solo si eso falla, al webhook.
   mismo día), semana en curso / semana pasada, tendencia de 4 semanas, alerta por OS y desglose por plataforma,
   idioma y país. Si Slack rechaza el bloque, `lib/slack/post.ts` reintenta con la tabla en texto monoespaciado; el
   respaldo por webhook también la manda así.
+- **Banda de ruido y ‼️ (desde 2026-11-05):** un KPI de ayer sale con ‼️ y entra al titular solo si se aleja ≥ 1.5
+  desviaciones y ≥ 10 % del promedio del **mismo día de la semana** en las 4 semanas previas ("miércoles típico").
+  El titular, "Qué revisaría hoy", el semáforo y la última columna de la tabla de ayer muestran ese % ("−14% vs
+  miércoles típico"), no el % vs prom. 7d: antes se mostraba el de 7 días y salía, por ejemplo, Signups 🔴 con "+5%"
+  porque un fin de semana flojo bajaba el promedio. Si las dos bases apuntan en sentidos contrarios, "Por qué se
+  movió" lo dice en vez de dar un desglose por segmento (que compara contra el prom. 7d). "En contra" sustituye a
+  "a la baja", que estaba mal para KPIs donde menos es mejor (CAC, CPNU, CPFT, refunds).
 - **Gráficas PNG dentro del mensaje principal**, debajo de "Lo más importante" (`lib/kpi/brief-charts.tsx`; se suben sin compartir y se insertan con bloques `image` + `slack_file`, reintentando unos segundos mientras Slack procesa el archivo): "spend vs signups, últimos 30 días" (barras = signups, línea = spend en doble eje, más CPNU; ayer vs promedio de los 7 días previos), "últimas 12 semanas" (New Subs, CAC, Conversion Rate,
   Total Contribution) y "por OS" (C.R., CAC y New Subs para iOS y Android; hasta el 21-oct traía la cohorte a 8 días). Mismos datos que el Operativo
   (réplica, vista Corregido); el "vs 4 sem." usa la misma base que la alerta por OS. Se dibujan en el servidor con
