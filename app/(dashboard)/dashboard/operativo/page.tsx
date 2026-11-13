@@ -4,7 +4,8 @@ export const maxDuration = 30;
 import { OperativoContent, type OperativoData, type PeriodRow, type GroupRow, type TodayBlock, type DefPair } from '@/components/dashboard/OperativoContent';
 import { computeKpis, scaleAgg, projectAgg, type AggRow } from '@/lib/kpi/replica';
 import { loadCore, loadDims, loadMeta, loadToday, buildRequest, type PageParams } from '@/lib/kpi/operativo-data';
-import { todayMx, mxDayProgress } from '@/lib/kpi/period';
+import { todayMx, mxDayProgress, isoWeekday } from '@/lib/kpi/period';
+import { loadIntradayCurve } from '@/lib/kpi/intraday-curve';
 export type { Preset } from '@/lib/kpi/operativo-data';
 const pair = (a: AggRow): DefPair => ({ looker: computeKpis(a, 'looker'), fixed: computeKpis(a, 'fixed') });
 // Antes de ~2.4 h del día MX la proyección a ritmo lineal multiplica por >10 y no es informativa.
@@ -24,9 +25,10 @@ export default async function OperativoPage({ searchParams }: { searchParams: Pr
   let data: OperativoData | null = null;
   try {
     const today = todayMx();
-    const [core, dims, meta, todayAggs] = await Promise.all([
+    const [core, dims, meta, todayAggs, curve] = await Promise.all([
       loadCore(filters, range.grain, prior), loadDims(), loadMeta(range.start, range.end),
       loadToday({ region: filters.region ?? [], country: filters.country ?? [], os: filters.os ?? [], language: filters.language ?? [] }, today),
+      loadIntradayCurve(),
     ]);
     const { series, current: cur, previous: prev, breakdown, groupSeries } = core;
     const { status, storeCoverage, guard } = meta;
@@ -40,10 +42,26 @@ export default async function OperativoPage({ searchParams }: { searchParams: Pr
     const fraction = prog && !stale ? prog.fraction : null;
     const tooEarly = fraction !== null && fraction < MIN_FRACTION;
     const canProject = fraction !== null && !tooEarly && fraction > 0;
-    // Afinado: ya-entró-hoy + resto de un día típico (con spend de día típico). Sin base del mismo día
-    // de semana cae al estimado crudo por ritmo (lo que va ÷ fracción).
+    // Afinado: ya-entró-hoy + resto de un día típico (con spend de día típico). Si la curva intradía
+    // (lib/kpi/intraday-curve) tiene suficientes muestras para (weekday, hora_corte), calibra por share
+    // (lo_que_va / s) campo por campo, con fallback automático al método base donde la share no es
+    // confiable. new_subscriptions_sales actúa como proxy para los demás componentes de ventas.
+    const weekday = isoWeekday(today);
+    const curveHour = prog?.hours ?? null;
+    const shareFor = (field: keyof AggRow): number | null => {
+      if (curveHour == null) return null;
+      if (field === 'signups') return curve.getShare(weekday, curveHour, 'signups');
+      if (field === 'new_subscriptions') return curve.getShare(weekday, curveHour, 'new_subscriptions');
+      // Spend keeps baseline (ads delayed): projectAgg ya lo sobrescribe.
+      if (field === 'spend') return null;
+      // Para todo lo demás: la curva de ventas nuevas. Es el KPI que gobierna Net Sales y que el
+      // validador shadow mostró más estable (MAE 4.8%). Fallback automático si no es confiable.
+      return curve.getShare(weekday, curveHour, 'new_subscriptions_sales');
+    };
     const projected = canProject
-      ? (todayAggs.baselineDays ? pair(projectAgg(todayAggs.today, todayAggs.baseline, fraction!)) : pair(scaleAgg(todayAggs.today, 1 / fraction!)))
+      ? (todayAggs.baselineDays
+          ? pair(projectAgg(todayAggs.today, todayAggs.baseline, fraction!, shareFor))
+          : pair(scaleAgg(todayAggs.today, 1 / fraction!)))
       : null;
     const todayBlock: TodayBlock = {
       date: today,

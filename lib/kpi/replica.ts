@@ -93,16 +93,41 @@ export function avgAgg(rows: AggRow[], period = 'total', grp = ''): AggRow {
 }
 
 /**
- * Proyección afinada del cierre del día: lo que YA entró hoy + lo que falta de un día típico del mismo
- * día de semana (la base). No extrapola el ritmo de la mañana (lo que va ÷ fracción), que dispara el
- * estimado cuando el día es pesado temprano. El spend es la excepción: se reporta con ~1 día de retraso,
- * así que el mejor estimado del gasto del día es un día típico completo, no lo poco reportado — de otro
- * modo el CAC saldría muy bajo y el Total Contribution (ventas − spend) inflado.
+ * Proyección afinada del cierre del día. Dos modos, decididos por campo:
+ *
+ *  · Con `curveShare` (fracción del día típico ya realizada para ese KPI a esta hora/weekday,
+ *    de lib/kpi/intraday-curve.ts): `estimado = lo_que_va / curveShare`. El validador shadow
+ *    mostró MAE 3–7× menor vs el método base.
+ *  · Sin curva (o share no confiable): fallback al método afinado — lo que YA entró hoy + lo
+ *    que falta de un día típico del mismo día de semana. No extrapola el ritmo de la mañana
+ *    (lo que va ÷ fracción_reloj), que dispara el estimado cuando el día es pesado temprano.
+ *
+ * El spend es la excepción en ambos modos: se reporta con ~1 día de retraso, así que el mejor
+ * estimado del gasto del día es un día típico completo, no lo poco reportado — de otro modo el
+ * CAC saldría muy bajo y el Total Contribution (ventas − spend) inflado.
+ *
+ * `curveShareFor` recibe una clave de campo (ej. 'new_subscriptions_sales') y devuelve su share
+ * o null. Los campos que no tienen foto propia pueden mapearse por el caller a una share proxy
+ * (típicamente la de new_subscriptions_sales, que gobierna net sales).
  */
-export function projectAgg(today: AggRow, baseline: AggRow, fraction: number): AggRow {
+export function projectAgg(
+  today: AggRow,
+  baseline: AggRow,
+  fraction: number,
+  curveShareFor?: (field: keyof AggRow) => number | null,
+): AggRow {
   const rest = Math.max(0, 1 - fraction);
   const out = emptyAgg(today.period, today.grp);
-  for (const k of AGG_NUMERIC_KEYS) out[k] = today[k] + rest * baseline[k];
+  for (const k of AGG_NUMERIC_KEYS) {
+    const share = curveShareFor ? curveShareFor(k) : null;
+    if (share && share > 0 && share <= 1 && today[k] > 0) {
+      // Si hay curva y el acumulado del día es positivo, calibra por la share.
+      out[k] = today[k] / share;
+    } else {
+      // Fallback (o campo con cumulado 0 todavía): método afinado anterior.
+      out[k] = today[k] + rest * baseline[k];
+    }
+  }
   out.spend = baseline.spend; // el gasto real llega con retraso: usa un día típico completo
   return out;
 }
