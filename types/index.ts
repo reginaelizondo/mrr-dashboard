@@ -43,7 +43,7 @@ export interface MrrDailySnapshot {
   total_commissions: number;
   total_taxes: number;
   total_refunds: number;
-  /** Refunds on the net basis (what the store claws back from the deposit) — subtracted in mrr_net. Migration 041. */
+  /** Refunds on the net basis (what the store claws back from the deposit). Informational: refunded sales are excluded from MRR, not subtracted. Migration 041. */
   total_refunds_net?: number;
   total_disputes: number;
   // Refunds per store (migration 041): `refunds_*` = returned to the customer (gross basis,

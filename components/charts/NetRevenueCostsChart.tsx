@@ -20,11 +20,11 @@ import type { MrrDailySnapshot } from '@/types';
 
 /**
  * Net MRR view: same shape as RevenueCostsChart but uses mrr_net on top
- * (gross − commissions − refunds of the month, migration 041) and stacks all
- * gross→net deductions (commissions + taxes + refunds + disputes) as a single
- * negative bar so the visual identity holds: positive bar + extra (projection)
- * + negative deductions. Refunds in the stack are the gross basis (what the
- * customer got back); mrr_net subtracts the net basis (total_refunds_net).
+ * (gross − commissions) and stacks the gross→net deductions (commissions +
+ * taxes + disputes) as a single negative bar so the visual identity holds:
+ * positive bar + extra (projection) + negative deductions. Refunds are NOT a
+ * deduction: refunded sales are excluded from gross and net in the snapshot,
+ * so the month's refunds appear in the tooltip for reference only.
  */
 
 interface NetRevenueCostsChartProps {
@@ -99,8 +99,11 @@ function CustomTooltip({ active, payload, label }: { active?: boolean; payload?:
         <div className="pl-4 space-y-0.5 text-[11px] text-muted-foreground">
           <div className="flex justify-between gap-3"><span>· Commissions</span><span className="tabular-nums">{formatCurrency(row?.commissions || 0)}</span></div>
           <div className="flex justify-between gap-3"><span>· Taxes</span><span className="tabular-nums">{formatCurrency(row?.taxes || 0)}</span></div>
-          <div className="flex justify-between gap-3"><span>· Refunds</span><span className="tabular-nums">{formatCurrency(row?.refunds || 0)}</span></div>
           <div className="flex justify-between gap-3"><span>· Disputes</span><span className="tabular-nums">{formatCurrency(row?.disputes || 0)}</span></div>
+        </div>
+        <div className="flex justify-between gap-3 text-[11px] text-muted-foreground border-t border-border/40 pt-1 mt-1">
+          <span>Refunds this month (sales already excluded)</span>
+          <span className="tabular-nums">{formatCurrency(row?.refunds || 0)}</span>
         </div>
       </div>
     </div>
@@ -120,7 +123,7 @@ export function NetRevenueCostsChart({ data }: NetRevenueCostsChartProps) {
     const taxes = Number(s.total_taxes || 0);
     const refunds = Number(s.total_refunds || 0);
     const disputes = Number(s.total_disputes || 0);
-    const deductions = commissions + taxes + refunds + disputes;
+    const deductions = commissions + taxes + disputes;
     return {
       date: s.snapshot_date,
       'Net Revenue': actual,

@@ -21,6 +21,15 @@ const PLAN_PERIOD_MONTHS: Record<string, number> = {
  * For example, a yearly charge of $79.99 on 2025-03-15 contributes $79.99/12 = $6.67
  * to every monthly snapshot from 2025-03 through 2026-02.
  *
+ * REFUNDS: a refunded sale counts in NO month, and nothing else is subtracted.
+ * The backend flips a refunded sale 'paid'→'canceled', so it disappears from
+ * `transactions` only if its date is re-synced afterwards (the daily cron
+ * re-syncs 3 days; older ones stay forever). We therefore exclude every charge
+ * linked in `kinedu_refunds`, which makes gross and net consistent across all
+ * months. Do NOT also subtract the month's store refunds from net: most of those
+ * sales are already gone from `transactions`, so that double-counts them
+ * (audited 2026-11-17: net read 9–23% low).
+ *
  * The snapshot is always stored as YYYY-MM-01 (first of month) regardless of input date.
  */
 export async function computeMonthlySnapshot(date: string): Promise<void> {
@@ -59,7 +68,7 @@ export async function computeMonthlySnapshot(date: string): Promise<void> {
       // raw_data JSONB (the original store-report row, ~1-3KB/row, unused here)
       // shrinks the ~370K-row payload ~10x and is what keeps the cron under
       // maxDuration. Keep this list in sync with the fields read below.
-      .select('id,transaction_type,transaction_date,plan_type,plan_name,source,region,amount_gross,amount_net,commission_amount,is_new_subscription,is_renewal,is_trial_conversion')
+      .select('id,external_id,transaction_type,transaction_date,plan_type,plan_name,source,region,amount_gross,amount_net,commission_amount,is_new_subscription,is_renewal,is_trial_conversion')
       .eq('transaction_type', 'charge')
       .gte('transaction_date', lookbackStr)
       .lt('transaction_date', monthEndStr)
@@ -84,13 +93,40 @@ export async function computeMonthlySnapshot(date: string): Promise<void> {
 
   console.log(`[Snapshot ${monthStartStr}] Fetched ${charges.length} charges (lookback from ${lookbackStr})`);
 
+  // Every refunded sale, by its exact backend link (kinedu_refunds.sale_id = sales.id;
+  // charges carry external_id 'kinedu_sale_<id>'). Fails loudly: computing without it
+  // would silently overstate MRR.
+  const refundedSaleIds = new Set<string>();
+  let lastSaleId = 0;
+  for (;;) {
+    const { data: refundPage, error: refundedError } = await supabase
+      .from('kinedu_refunds')
+      .select('sale_id')
+      .gt('sale_id', lastSaleId)
+      .order('sale_id', { ascending: true })
+      .limit(PAGE_SIZE);
+    if (refundedError) {
+      throw new Error(`Snapshot kinedu_refunds query error: ${refundedError.message}`);
+    }
+    if (!refundPage || refundPage.length === 0) break;
+    for (const r of refundPage) refundedSaleIds.add(`kinedu_sale_${r.sale_id}`);
+    lastSaleId = Number(refundPage[refundPage.length - 1].sale_id);
+    if (refundPage.length < PAGE_SIZE) break;
+  }
+
   // ─── Data quality filters (align with Tableau's DBT pipeline) ───
+  // 0. Exclude refunded sales (see REFUNDS in the function doc)
   // 1. Exclude test charges (plan_name contains "Test")
   // 2. Exclude non-subscription Stripe charges (ebooks, masterclass, invoices)
   //    → Tableau tracks these separately as "other_sales"
   // 3. Exclude plan_type='other' (unclassified charges)
   const beforeFilter = charges.length;
+  let refundedExcluded = 0;
   const filteredCharges = charges.filter((t) => {
+    if (t.external_id && refundedSaleIds.has(t.external_id)) {
+      refundedExcluded++;
+      return false;
+    }
     const planName = (t.plan_name || '').toLowerCase();
     // Exclude test charges
     if (planName.includes('test')) return false;
@@ -109,7 +145,7 @@ export async function computeMonthlySnapshot(date: string): Promise<void> {
   for (let fi = 0; fi < filteredCharges.length; fi++) {
     charges.push(filteredCharges[fi]);
   }
-  console.log(`[Snapshot ${monthStartStr}] After quality filters: ${charges.length} of ${beforeFilter} (excluded ${beforeFilter - charges.length})`);
+  console.log(`[Snapshot ${monthStartStr}] After quality filters: ${charges.length} of ${beforeFilter} (excluded ${beforeFilter - charges.length}, of which ${refundedExcluded} refunded sales)`);
 
   // Fetch refunds, taxes, disputes for THIS month only (point-in-time)
   const { data: monthTx, error: monthError } = await supabase
@@ -129,7 +165,9 @@ export async function computeMonthlySnapshot(date: string): Promise<void> {
   // Refunds of THIS month per store, from `store_daily` (what each store reports per
   // day, synced hourly — migration 037/041). Two bases: `paid` = returned to the
   // customer (gross, what total_refunds always showed); `net` = what the store
-  // claws back from our deposit (no commission) — this is what mrr_net subtracts.
+  // claws back from our deposit (no commission). INFORMATIONAL ONLY: shown on the
+  // Refunds card and export, never subtracted from MRR (refunded sales are already
+  // excluded above).
   // (The old source — 'refund' rows in `transactions` — was a one-off load that
   // stopped at 2026-05, so total_refunds silently read $0 after that.)
   const { data: refundRows, error: refundError } = await supabase.rpc('store_refunds_by_store', {
@@ -212,12 +250,12 @@ export async function computeMonthlySnapshot(date: string): Promise<void> {
   const googleCharges = activeCharges.filter((t) => t.source === 'google');
   const stripeCharges = activeCharges.filter((t) => t.source === 'stripe');
 
-  // MRR from active charges (spreading). Gross and commissions are untouched;
-  // NET = gross − commissions − refunds (net basis) of the month, per store.
+  // MRR from active charges (spreading). NET = gross − commissions; refunded
+  // sales are not in activeCharges at all, so there is nothing left to subtract.
   const mrrGross = mrrSum(activeCharges, 'amount_gross');
-  const appleNet = mrrSum(appleCharges, 'amount_net') - refundsBySource.apple.net;
-  const googleNet = mrrSum(googleCharges, 'amount_net') - refundsBySource.google.net;
-  const stripeNet = mrrSum(stripeCharges, 'amount_net') - refundsBySource.stripe.net;
+  const appleNet = mrrSum(appleCharges, 'amount_net');
+  const googleNet = mrrSum(googleCharges, 'amount_net');
+  const stripeNet = mrrSum(stripeCharges, 'amount_net');
   const otherSourceNet = mrrSum(
     activeCharges.filter((t) => t.source !== 'apple' && t.source !== 'google' && t.source !== 'stripe'),
     'amount_net'
@@ -230,7 +268,7 @@ export async function computeMonthlySnapshot(date: string): Promise<void> {
   const refundCount = refundsBySource.apple.n + refundsBySource.google.n + refundsBySource.stripe.n;
   const totalDisputes = sumField(disputes, 'amount_gross');
 
-  console.log(`[Snapshot ${monthStartStr}] MRR Net (after refunds): $${mrrNet.toFixed(2)} | Apple: $${appleNet.toFixed(2)} | Google: $${googleNet.toFixed(2)} | Stripe: $${stripeNet.toFixed(2)} | Refunds net: $${totalRefundsNet.toFixed(2)} (gross $${totalRefunds.toFixed(2)})`);
+  console.log(`[Snapshot ${monthStartStr}] MRR Net (refunded sales excluded): $${mrrNet.toFixed(2)} | Apple: $${appleNet.toFixed(2)} | Google: $${googleNet.toFixed(2)} | Stripe: $${stripeNet.toFixed(2)} | Store refunds this month (info): net $${totalRefundsNet.toFixed(2)}, gross $${totalRefunds.toFixed(2)}`);
 
   // By region
   const usCanadaCharges = activeCharges.filter((t) => t.region === 'us_canada');

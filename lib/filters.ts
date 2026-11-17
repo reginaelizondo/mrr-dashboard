@@ -22,7 +22,8 @@ const SOURCE_NET_FIELDS: Record<Source, keyof MrrDailySnapshot> = {
 };
 
 // Refunds per store (migration 041): gross basis (returned to the customer) and
-// net basis (what the store claws back from the deposit — subtracted in *_net).
+// net basis (what the store claws back from the deposit). Informational only —
+// refunded sales are excluded from MRR in the snapshot, never subtracted here.
 const SOURCE_REFUNDS_FIELDS: Record<Source, keyof MrrDailySnapshot> = {
   apple: 'refunds_apple',
   google: 'refunds_google',
@@ -84,15 +85,13 @@ export function applyFilters(
       filtered.mrr_net = sources.reduce(
         (sum, s) => sum + Number(snapshot[SOURCE_NET_FIELDS[s]] || 0), 0
       );
-      // Per-store net already has that store's refunds (net basis) subtracted
-      // (migration 041), so commissions = gross − net − refunds_net.
       filtered.total_refunds = sources.reduce(
         (sum, s) => sum + Number(snapshot[SOURCE_REFUNDS_FIELDS[s]] || 0), 0
       );
       filtered.total_refunds_net = sources.reduce(
         (sum, s) => sum + Number(snapshot[SOURCE_REFUNDS_NET_FIELDS[s]] || 0), 0
       );
-      filtered.total_commissions = filtered.mrr_gross - filtered.mrr_net - filtered.total_refunds_net;
+      filtered.total_commissions = filtered.mrr_gross - filtered.mrr_net;
 
       // Zero out excluded source fields
       for (const src of ALL_SOURCES) {

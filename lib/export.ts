@@ -58,7 +58,7 @@ export async function exportToExcel(
     'Commissions',
     'Taxes',
     'Refunds',
-    'Refunds (net basis, deducted from Net)',
+    'Refunds (net basis, info only)',
     'Disputes',
     'New Subs',
     'Renewals',
