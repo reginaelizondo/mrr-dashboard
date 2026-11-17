@@ -20,6 +20,7 @@ export const maxDuration = 300; // 5 minutes
  *
  * Example usage:
  *   curl -X POST http://localhost:3001/api/sync/google-upload \
+ *     -H "Authorization: Bearer $CRON_SECRET" \
  *     -H "Content-Type: application/json" \
  *     -d '{"dir":"/Users/pepisavalos/Downloads/google-earnings"}'
  */

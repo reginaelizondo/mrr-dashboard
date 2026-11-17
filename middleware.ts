@@ -5,13 +5,32 @@ import type { SessionData } from '@/lib/auth/session';
 export async function middleware(request: NextRequest) {
   const response = NextResponse.next();
 
-  // Skip auth for login page, API auth, cron endpoints, and static files
   const { pathname, searchParams } = request.nextUrl;
+
+  // /api/sync/* escribe los datos financieros (recarga fuentes, recalcula snapshots).
+  // Exige sesión del dashboard (botones de sync) o Authorization: Bearer CRON_SECRET
+  // (curl / scripts). Va antes del embed_token a propósito: ese token NO da acceso aquí.
+  if (pathname.startsWith('/api/sync')) {
+    const cronSecret = process.env.CRON_SECRET;
+    if (cronSecret && request.headers.get('authorization') === `Bearer ${cronSecret}`) {
+      return response;
+    }
+    const session = await getIronSession<SessionData>(request, response, {
+      password: process.env.SESSION_SECRET!,
+      cookieName: 'mrr-dashboard-session',
+    });
+    if (session.isAuthenticated) {
+      return response;
+    }
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Skip auth for login page, API auth, cron endpoints, and static files
+  // (/api/cron/* valida Bearer CRON_SECRET en cada ruta)
   if (
     pathname.startsWith('/login') ||
     pathname.startsWith('/api/auth') ||
     pathname.startsWith('/api/cron') ||
-    pathname.startsWith('/api/sync') ||
     pathname.startsWith('/api/slack-bot') ||
     pathname.startsWith('/api/bizops') || // propia auth: Bearer BIZOPS_BRIEF_SECRET
     pathname.startsWith('/_next') ||

@@ -353,11 +353,14 @@ El dashboard se actualiza automaticamente cada dia a las **6:00 AM UTC** via Ver
 
 ### Actualizacion manual
 
+> **Auth**: todas las rutas `/api/sync/*` requieren sesion del dashboard (cookie de login) o el header `Authorization: Bearer {CRON_SECRET}`. Sin eso responden 401.
+
 #### Opcion 1: Sync individual por source
 
 **Apple** - Sync un mes especifico:
 ```bash
 curl -X POST https://TU-URL-VERCEL/api/sync/apple \
+  -H "Authorization: Bearer $CRON_SECRET" \
   -H "Content-Type: application/json" \
   -d '{"month": "2026-03"}'
 ```
@@ -365,6 +368,7 @@ curl -X POST https://TU-URL-VERCEL/api/sync/apple \
 **Google** - Sync un mes especifico:
 ```bash
 curl -X POST https://TU-URL-VERCEL/api/sync/google \
+  -H "Authorization: Bearer $CRON_SECRET" \
   -H "Content-Type: application/json" \
   -d '{"yearMonth": "202603"}'
 ```
@@ -372,6 +376,7 @@ curl -X POST https://TU-URL-VERCEL/api/sync/google \
 **Stripe** - Sync un dia especifico:
 ```bash
 curl -X POST https://TU-URL-VERCEL/api/sync/stripe \
+  -H "Authorization: Bearer $CRON_SECRET" \
   -H "Content-Type: application/json" \
   -d '{"date": "2026-03-04"}'
 ```
@@ -384,6 +389,7 @@ Recalcula snapshots a partir de los datos de `transactions` que ya existen en la
 
 ```bash
 curl -X POST https://TU-URL-VERCEL/api/sync/recompute-snapshots \
+  -H "Authorization: Bearer $CRON_SECRET" \
   -H "Content-Type: application/json" \
   -d '{"startMonth": "2024-01", "endMonth": "2026-03"}'
 ```
@@ -409,6 +415,7 @@ npm run dev
 
 # 2. Recomputar snapshots
 curl -X POST http://localhost:3000/api/sync/recompute-snapshots \
+  -H "Authorization: Bearer $CRON_SECRET" \
   -H "Content-Type: application/json" \
   -d '{"startMonth": "2024-01", "endMonth": "2026-03"}'
 ```
@@ -425,21 +432,25 @@ Proceso manual si el cron no lo capturo:
 ```bash
 # Sync Apple marzo 2026
 curl -X POST https://TU-URL-VERCEL/api/sync/apple \
+  -H "Authorization: Bearer $CRON_SECRET" \
   -H "Content-Type: application/json" \
   -d '{"month": "2026-03"}'
 
 # Sync Google marzo 2026
 curl -X POST https://TU-URL-VERCEL/api/sync/google \
+  -H "Authorization: Bearer $CRON_SECRET" \
   -H "Content-Type: application/json" \
   -d '{"yearMonth": "202603"}'
 
 # Sync Stripe (cada dia de marzo, o solo los dias faltantes)
 curl -X POST https://TU-URL-VERCEL/api/sync/stripe \
+  -H "Authorization: Bearer $CRON_SECRET" \
   -H "Content-Type: application/json" \
   -d '{"date": "2026-03-01"}'
 
 # Recomputar snapshot del mes
 curl -X POST https://TU-URL-VERCEL/api/sync/recompute-snapshots \
+  -H "Authorization: Bearer $CRON_SECRET" \
   -H "Content-Type: application/json" \
   -d '{"startMonth": "2026-03", "endMonth": "2026-03"}'
 ```
