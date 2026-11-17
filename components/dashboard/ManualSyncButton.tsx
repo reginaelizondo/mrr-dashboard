@@ -68,7 +68,7 @@ export function ManualSyncButton() {
         onClick={handleSync}
         disabled={isLoading}
         className={`h-7 gap-1.5 text-xs font-medium transition-colors ${colorClass}`}
-        title="Sincronizar datos manualmente (~3 min)"
+        title="Sincronizar datos manualmente (~6 min)"
       >
         <RefreshCw className={`h-3 w-3 ${isLoading ? 'animate-spin' : ''}`} />
         {isLoading ? 'Sincronizando…' : 'Sync manual'}

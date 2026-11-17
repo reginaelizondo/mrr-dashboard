@@ -11,7 +11,10 @@ import { getSession } from '@/lib/auth/session';
 import { countSyncedRecords } from '@/lib/sync/sync-log';
 import { repriceAppleIntroSkus } from '@/lib/sync/reprice-intro';
 
-export const maxDuration = 300;
+// 800s (Pro + Fluid compute), igual que /api/cron/daily. Con 300 la corrida se
+// cortaba justo antes de terminar (sync ~20s + 3 snapshots de ~100s ≈ 310s): el
+// botón mostraba "No se pudo conectar al servidor" y sync_log quedaba en 'running'.
+export const maxDuration = 800;
 
 export async function POST(_req: NextRequest) {
   const session = await getSession();
